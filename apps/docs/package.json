@@ -12,14 +12,14 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"fumadocs-core": "^16.0.0",
+		"fumadocs-core": "^16.12.1",
 		"fumadocs-mdx": "^15.0.0",
 		"fumadocs-twoslash": "^3.0.0",
-		"fumadocs-ui": "^16.0.0",
-		"lucide-react": "^0.460.0",
-		"next": "^16.2.9",
-		"react": "^19.0.0",
-		"react-dom": "^19.0.0",
+		"fumadocs-ui": "^16.12.1",
+		"lucide-react": "^0.577.0",
+		"next": "^16.2.11",
+		"react": "^19.2.8",
+		"react-dom": "^19.2.8",
 		"twoslash": "^0.3.0"
 	},
 	"devDependencies": {
@@ -30,7 +30,7 @@
 		"@types/react-dom": "^19.0.0",
 		"drizzle-orm": "^0.45.2",
 		"nestjs-drizzle-crud": "workspace:*",
-		"postcss": "^8.5.10",
+		"postcss": "^8.5.23",
 		"tailwindcss": "^4.0.0",
 		"typescript": "^5.9.3"
 	}
