@@ -46,12 +46,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      # No `cache: pnpm` here: this job runs no `pnpm install` (audit reads the
-      # lockfile directly), so an empty store makes setup-node's post-run cache
-      # save fail on a new lockfile.
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 24
+          cache: pnpm
+      # `pnpm audit` reads the lockfile and needs no node_modules, but setup-node
+      # v5 saves the pnpm store in its post step. Without an install the store
+      # does not exist and that save fails the job after a green audit, so do the
+      # install and let the cache work as intended.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Audit production deps (fail on high/critical)
         run: pnpm audit --prod --audit-level high

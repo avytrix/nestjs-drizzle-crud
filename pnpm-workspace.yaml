@@ -9,6 +9,15 @@ minimumReleaseAge: 10080
 blockExoticSubdeps: true
 trustPolicy: no-downgrade
 
+# The quarantine is a supply-chain control, not a reason to sit on a known
+# vulnerability. These are excluded because the version we need is the security
+# patch itself, published inside the window. Remove an entry once its fix has
+# aged past seven days.
+minimumReleaseAgeExclude:
+  - next # 16.2.12 patches the middleware bypass, App Router DoS and two SSRFs
+  - "@next/*" # the swc binaries are versioned in lockstep with next
+  - postcss # 8.5.23 patches GHSA-fxqj-rqcc-2cmp
+
 onlyBuiltDependencies:
   - "@swc/core"
   - esbuild
@@ -19,6 +28,6 @@ onlyBuiltDependencies:
 # flags. All of these come in under apps/docs via next; the published package
 # has no runtime dependencies of its own.
 overrides:
-  postcss: ">=8.5.10" # GHSA-qx2v-qp2m-jg93
+  postcss: ">=8.5.23" # GHSA-qx2v-qp2m-jg93, GHSA-fxqj-rqcc-2cmp
   nanoid: ">=3.3.17" # GHSA-2v37-7h3g-55p8, pulled via next > postcss
   sharp: ">=0.35.0" # libvips advisories, pulled via next
