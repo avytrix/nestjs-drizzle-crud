@@ -97,7 +97,7 @@ Each service is registered as its own provider and is independently constructed.
 
 ## `@CrudService` decorator
 
-You can also attach per-entity config to the service class itself with the `@CrudService` decorator. The `forFeature` `config` field still wins when both are set — the merge order is **global defaults → decorator metadata → `forFeature` config**.
+You can also attach per-entity config to the service class itself with the `@CrudService` decorator. The `forFeature` `config` field still wins when both are set. The merge order is **global defaults → decorator metadata → `forFeature` config**.
 
 ```ts
 import { CrudService } from 'nestjs-drizzle-crud';
@@ -134,5 +134,5 @@ export class ConfigInspector {
 
 ## Next
 
-- → [Defining services — empty subclass + custom methods](/docs/defining-services)
+- → [Defining services: empty subclass + custom methods](/docs/defining-services)
 - → [Reference: SqlCrudConfig type](/docs/config-types)

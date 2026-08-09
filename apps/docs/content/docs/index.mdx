@@ -1,11 +1,11 @@
 ---
 title: Introduction
-description: A complete, type-safe CRUD abstraction for Drizzle ORM in NestJS — configure the connection once, extend one base class per entity, and inherit full CRUD.
+description: "A complete, type-safe CRUD abstraction for Drizzle ORM in NestJS: configure the connection once, extend one base class per entity, and inherit full CRUD."
 ---
 
 ## What it is
 
-`nestjs-drizzle-crud` is a thin abstraction over [Drizzle ORM](https://orm.drizzle.team/) that gives every NestJS service a complete, type-safe CRUD surface — `find`, `findOne`, `findAll`, `create`, `update`, `delete`, `softDelete`, `restore`, `massCreate`, `massUpdate`, `massDelete`, `fullTextSearch`, plus filtering, pagination, relations, hooks and transactions — by extending a single generic base class.
+`nestjs-drizzle-crud` is a thin abstraction over [Drizzle ORM](https://orm.drizzle.team/) that gives every NestJS service a complete, type-safe CRUD surface by extending a single generic base class: `find`, `findOne`, `findAll`, `create`, `update`, `delete`, `softDelete`, `restore`, `massCreate`, `massUpdate`, `massDelete` and `fullTextSearch`, plus filtering, pagination, relations, hooks and transactions.
 
 It works with both **PostgreSQL** and **MySQL** and handles the dialect differences (PostgreSQL's `RETURNING` vs MySQL's `insertId`) for you, so your service code is identical across databases.
 
@@ -25,7 +25,7 @@ For each entity, create an empty service class that extends `SqlBaseCrudService<
 
 </Steps>
 
-That's the entire library surface. Everything else — soft delete, bulk ops, full-text search, hooks, transactions, relations — is enabled through configuration, not new APIs to learn.
+That is the entire library surface. Everything else, including soft delete, bulk ops, full-text search, hooks, transactions and relations, is enabled through configuration rather than new APIs to learn.
 
 ## When to use it
 
@@ -36,7 +36,7 @@ Use `nestjs-drizzle-crud` when you want:
 - Type-safe query and result types inferred from your Drizzle schema.
 - Soft delete, audit timestamps, and filtering/sorting out of the box.
 - Bulk operations that roll back atomically when one row fails.
-- A library that doesn't hide Drizzle — you can drop down to raw `db.select()` whenever you need to.
+- A library that doesn't hide Drizzle. You can drop down to raw `db.select()` whenever you need to.
 
 ## When **not** to use it
 
@@ -89,6 +89,12 @@ import { UsersService } from './users.service';
 export class UsersModule {}
 ```
 
-That's it — your `UsersService` already exposes `find`, `findOne`, `findAll`, `create`, `update`, `delete`, `softDelete`, `restore`, `massCreate`, `massUpdate`, `count`, `exists`, `executeSqlTransaction`, and `fullTextSearch` (Postgres), all typed against `User`.
+That's it. Your `UsersService` already exposes `find`, `findOne`, `findAll`, `create`, `update`, `delete`, `softDelete`, `restore`, `massCreate`, `massUpdate`, `count`, `exists`, `executeSqlTransaction`, and `fullTextSearch` (Postgres), all typed against `User`.
 
 Ready to wire it up? Head to the [Quick start](/docs/quick-start) for a complete 5-minute walkthrough, or read [Installation](/docs/installation) for the full peer-dependency matrix.
+
+## Getting help and supporting the project
+
+Questions go to [GitHub Discussions](https://github.com/myviliha/viliha-drizzle-crud/discussions), and the [Getting help](/docs/getting-help) page covers how to report a bug and answers the questions that come up most.
+
+The package is MIT licensed and free. If it saves you time, [sponsoring it](/docs/sponsor) is what keeps it maintained.

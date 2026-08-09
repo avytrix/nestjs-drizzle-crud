@@ -12,10 +12,10 @@ import { SqlBaseCrudService } from 'nestjs-drizzle-crud';
 type User = { id: number; name: string; email: string };
 type Profile = { id: number; userId: number; bio: string };
 class UsersService extends SqlBaseCrudService<User, Omit<User, 'id'>, Partial<User>, Partial<User>> {
-  // Called from a service method — executeSqlTransaction is protected.
+  // Called from a service method: executeSqlTransaction is protected.
   doIt(profiles: ProfilesService) {
     return this.executeSqlTransaction(async (tx) => {
-      const user = await this.create({ name: 'Ada', email: '[email protected]' }, { transaction: tx });
+      const user = await this.create({ name: 'Ada', email: 'ada@example.com' }, { transaction: tx });
       await profiles.create({ userId: user.id, bio: 'Mathematician' }, { transaction: tx });
       return user;
     });
@@ -62,7 +62,7 @@ await users.executeSqlTransaction(async (tx) => {
 });
 ```
 
-The `tx` is the standard Drizzle transaction handle — anything you can do with `db` you can do with `tx`, and it'll be enlisted in the same transaction.
+The `tx` is the standard Drizzle transaction handle. Anything you can do with `db` you can do with `tx`, and it'll be enlisted in the same transaction.
 
 ## Nesting
 
@@ -78,17 +78,17 @@ The `tx` is the standard Drizzle transaction handle — anything you can do with
 
 ## When to use transactions
 
-- **Cross-service atomicity** — creating a `User` and a `Profile` in one atomic unit.
-- **Read-modify-write consistency** — read a row, decide based on its value, write back, all in one transaction.
-- **Bulk operations that need external side effects in the same atomic unit** — see [Bulk operations](/docs/bulk-operations).
+- **Cross-service atomicity**. Creating a `User` and a `Profile` in one atomic unit.
+- **Read-modify-write consistency**. Read a row, decide based on its value, write back, all in one transaction.
+- **Bulk operations that need external side effects in the same atomic unit**. See [Bulk operations](/docs/bulk-operations).
 
 ## When **not** to use transactions
 
-- **Read-only queries** — `findAll`, `count`, `findOne` don't need a transaction.
-- **Independent writes** — if the operations can fail or succeed independently, separate transactions are usually better (smaller blast radius on failure).
-- **Long-running operations** — transactions hold locks. Don't include network calls, queue publishes, or unbounded `await`s inside a transaction.
+- **Read-only queries**, `findAll`, `count`, `findOne` don't need a transaction.
+- **Independent writes**. If the operations can fail or succeed independently, separate transactions are usually better (smaller blast radius on failure).
+- **Long-running operations**. Transactions hold locks. Don't include network calls, queue publishes, or unbounded `await`s inside a transaction.
 
 ## Next
 
-- → [Bulk operations — transactional by default, but `executeSqlTransaction` is for cross-service work](/docs/bulk-operations)
-- → [Lifecycle hooks — `before*` / `after*` fire on every CRUD call, including those inside transactions](/docs/hooks-validation)
+- → [Bulk operations: transactional by default, but `executeSqlTransaction` is for cross-service work](/docs/bulk-operations)
+- → [Lifecycle hooks, `before*` / `after*` fire on every CRUD call, including those inside transactions](/docs/hooks-validation)

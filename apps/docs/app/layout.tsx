@@ -12,7 +12,7 @@ const inter = Inter({
 	variable: "--font-inter",
 });
 
-const ogTitle = `${siteConfig.name} — ${siteConfig.tagline}`;
+const ogTitle = `${siteConfig.name}: ${siteConfig.tagline}`;
 
 export const metadata: Metadata = {
 	metadataBase: new URL(siteConfig.url),

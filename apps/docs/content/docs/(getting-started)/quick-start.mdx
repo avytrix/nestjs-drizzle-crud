@@ -29,7 +29,7 @@ export type User = typeof users.$inferSelect;
 ```
 
 <Callout type="info">
-  The `createdAt` / `updatedAt` / `deletedAt` columns are conventional — the
+  The `createdAt` / `updatedAt` / `deletedAt` columns are conventional. The
   package detects them by name. See
   [Timestamps](/docs/timestamps) and
   [Soft delete](/docs/soft-delete) for alternatives.
@@ -79,7 +79,7 @@ export class UsersService extends SqlBaseCrudService<
 <Callout type="warn">
   The service is an **empty subclass**. Do **not** inject the db, do **not**
   pass `dialect` or `db` to `super(...)`, and do **not** add a
-  `@Inject('DRIZZLE_DB')` constructor — `forFeature` constructs the service for
+  `@Inject('DRIZZLE_DB')` constructor, `forFeature` constructs the service for
   you. The table is bound in `forFeature`, **not** in the service.
 </Callout>
 
@@ -155,7 +155,7 @@ export class UsersController {
 }
 ```
 
-`@Param('id', ParseIntPipe)` works because the `id` column is `serial`. If you switch to a `uuid` primary key, **remove `ParseIntPipe`** — see [Primary keys](/docs/primary-keys).
+`@Param('id', ParseIntPipe)` works because the `id` column is `serial`. If you switch to a `uuid` primary key, **remove `ParseIntPipe`**. See [Primary keys](/docs/primary-keys).
 
 </Steps>
 

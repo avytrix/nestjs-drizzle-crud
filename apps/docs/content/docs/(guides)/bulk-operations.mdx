@@ -1,6 +1,6 @@
 ---
 title: Bulk operations
-description: massCreate, massUpdate, massSoftDelete, massRestore, massDelete — all transactional with rollback on failure.
+description: "massCreate, massUpdate, massSoftDelete, massRestore, massDelete: all transactional with rollback on failure."
 ---
 
 Bulk operations run inside a single database transaction. If any row fails, the entire operation is rolled back and a `BulkOperationException` is thrown, carrying the per-row errors.
@@ -25,7 +25,7 @@ await service.massDelete([1, 2, 3]);
 
 ## Transactional semantics
 
-All bulk methods wrap their work in a single transaction. If any row fails (constraint violation, FK error, validation, etc.), the transaction is rolled back — no partial writes are visible to subsequent reads.
+All bulk methods wrap their work in a single transaction. If any row fails (constraint violation, FK error, validation, etc.), the transaction is rolled back. No partial writes are visible to subsequent reads.
 
 <Callout type="info">
   A bulk operation that succeeds returns its full result. A bulk operation
@@ -56,7 +56,7 @@ Catch `BulkOperationException` to surface per-row errors to the client. Otherwis
 
 The standard `beforeCreate` / `afterCreate` (and the corresponding update / delete / softDelete / restore hooks) fire **once per row**, in array order. A `massCreate([a, b, c])` calls `beforeCreate` three times before the insert, then the insert, then `afterCreate` three times.
 
-If any row's `beforeCreate` throws, the operation is aborted before the insert — no rows are written.
+If any row's `beforeCreate` throws, the operation is aborted before the insert. No rows are written.
 
 ## Passing options
 
@@ -75,13 +75,13 @@ See [Transactions](/docs/transactions) for the full pattern.
 
 Bulk methods don't paginate. They accept the full array in memory and execute it as a single transaction. For very large bulk operations (thousands of rows), consider:
 
-- **Chunking on the caller side** — process arrays in batches of 100–500 rows and call `massCreate` per batch.
-- **Switching to a streaming insert** — write a custom method that uses Drizzle's `db.insert(...).values(chunk).execute()` chain with explicit chunking.
+- **Chunking on the caller side**. Process arrays in batches of 100–500 rows and call `massCreate` per batch.
+- **Switching to a streaming insert**. Write a custom method that uses Drizzle's `db.insert(...).values(chunk).execute()` chain with explicit chunking.
 
-The cap is on the database side, not the package — single transactions holding thousands of row locks can starve other connections.
+The cap is on the database side, not the package. Single transactions holding thousands of row locks can starve other connections.
 
 ## Next
 
-- → [Transactions — `executeSqlTransaction` for cross-service atomicity](/docs/transactions)
-- → [Errors — `BulkOperationException` → 400 mapping and per-row error details](/docs/errors)
-- → [Hooks & validation — per-row hooks during bulk ops](/docs/hooks-validation)
+- → [Transactions, `executeSqlTransaction` for cross-service atomicity](/docs/transactions)
+- → [Errors, `BulkOperationException` → 400 mapping and per-row error details](/docs/errors)
+- → [Hooks & validation: per-row hooks during bulk ops](/docs/hooks-validation)

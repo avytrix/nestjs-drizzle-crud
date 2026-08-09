@@ -19,7 +19,7 @@ The four generics correspond to:
 
 | Generic | Default | Use |
 | --- | --- | --- |
-| `T` | — | The entity row type (typically `typeof table.$inferSelect`). |
+| `T` |  | The entity row type (typically `typeof table.$inferSelect`). |
 | `CreateDto` | `Partial<T>` | The shape accepted by `create()` and `massCreate()`. |
 | `UpdateDto` | `Partial<T>` | The shape accepted by `update()` and `massUpdate()`. |
 | `FilterDto` | `Partial<T>` | The shape accepted by `findAll(filters)` and `count(filters)`. |
@@ -54,7 +54,7 @@ type User = { id: number; name: string; email: string };
 declare class S extends SqlBaseCrudService<User, User, Partial<User>, Partial<User>> {}
 declare const s: S;
 // ---cut---
-const user = s.findOne({ email: '[email protected]' });
+const user = s.findOne({ email: 'ada@example.com' });
 ```
 
 ### `findAll` signature
@@ -166,10 +166,10 @@ interface SqlOperationOptions {
 }
 ```
 
-`relations` eager-loads relations declared in the entity's config — see [Relations](/docs/relations).
+`relations` eager-loads relations declared in the entity's config. See [Relations](/docs/relations).
 
 ## Next
 
-- → [Errors — HTTP status code mapping for every exception](/docs/errors)
-- → [Config types — `SqlCrudConfig` and `DrizzleCrudConfig`](/docs/config-types)
-- → [Exports — the full public API surface](/docs/exports)
+- → [Errors: hTTP status code mapping for every exception](/docs/errors)
+- → [Config types, `SqlCrudConfig` and `DrizzleCrudConfig`](/docs/config-types)
+- → [Exports: the full public API surface](/docs/exports)

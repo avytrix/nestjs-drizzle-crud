@@ -11,8 +11,10 @@
 		"timestamps",
 		"bulk-operations",
 		"transactions",
+		"row-locks",
 		"full-text-search",
 		"hooks-validation",
+		"errors",
 		"testing"
 	]
 }

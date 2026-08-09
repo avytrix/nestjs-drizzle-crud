@@ -30,11 +30,11 @@ DrizzleCrudModule.forRoot(config: DrizzleCrudConfig): DynamicModule
   if you pass neither, or both.
 
   If your tables have no `created_at` / `updated_at` / `deleted_at` columns,
-  set `defaults: { softDelete: false, timestamps: false }` — otherwise
+  set `defaults: { softDelete: false, timestamps: false }`. Otherwise
   inserts will reference columns that don't exist.
 </Callout>
 
-## PostgreSQL — let the module build the connection
+## PostgreSQL: let the module build the connection
 
 ```ts accent=nest title="app.module.ts"
 import { Module } from '@nestjs/common';
@@ -67,7 +67,7 @@ The module imports the `postgres` driver on your behalf and builds a Drizzle ins
 
 ## Build the connection yourself (any dialect, recommended for MySQL)
 
-If you want full control over the connection — pool size, SSL, advanced `mysql2` options, or you're on MySQL — pre-build the Drizzle instance and pass it as `db`:
+If you want full control over the connection (pool size, SSL, advanced `mysql2` options), or you are on MySQL, pre-build the Drizzle instance and pass it as `db`:
 
 ```ts accent=nest title="app.module.ts (Postgres)"
 import { drizzle } from 'drizzle-orm/postgres-js';
@@ -114,7 +114,7 @@ export class AppModule {}
 
 <Callout type="info">
   When you pass `db`, the module does **not** close the connection on
-  shutdown — it's your responsibility. This makes it easy to share the same
+  shutdown. Closing it is your responsibility, and that makes it easy to share the same
   pool across other Drizzle consumers (custom services, raw queries,
   migrations).
 </Callout>
@@ -124,7 +124,7 @@ export class AppModule {}
 | Option | Default | What it does |
 | --- | --- | --- |
 | `caseSensitive` | `false` | When `false`, bare string filter values are compiled to `lower(column) = lower(value)` (case-insensitive exact match). When `true`, bare strings use plain equality (collation-dependent). Use the explicit `{ like }` / `{ ilike }` operators for pattern matching. |
-| `useReturning` | `true` (Postgres) / `false` (MySQL) | Use `RETURNING` after `INSERT` to fetch the created row. MySQL doesn't support `RETURNING` — leave it off. |
+| `useReturning` | `true` (Postgres) / `false` (MySQL) | Use `RETURNING` after `INSERT` to fetch the created row. MySQL does not support `RETURNING`, so leave it off. |
 | `jsonSupport` | `true` | Enables JSON column handling in filters and selects. |
 | `enableFullTextSearch` | `false` | Opt-in for `fullTextSearch()`. Throws if called when `false`. |
 
@@ -151,5 +151,5 @@ If your config comes from `ConfigService` (env validation, secrets, dynamic conf
 
 ## Next
 
-- → [forRootAsync — config from ConfigService](/docs/for-root-async)
-- → [forFeature — bind services to tables](/docs/for-feature)
+- → [forRootAsync: config from ConfigService](/docs/for-root-async)
+- → [forFeature: bind services to tables](/docs/for-feature)

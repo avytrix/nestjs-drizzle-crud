@@ -46,7 +46,7 @@ export function QuickConfigSnippet() {
 				))}
 			</ol>
 			<p className="mt-4 text-center text-sm text-fd-muted-foreground">
-				That&apos;s it — <code className="font-mono">UsersService</code> now has{" "}
+				That&apos;s it. <code className="font-mono">UsersService</code> now has{" "}
 				<code className="font-mono">find</code>,{" "}
 				<code className="font-mono">create</code>,{" "}
 				<code className="font-mono">update</code>,{" "}

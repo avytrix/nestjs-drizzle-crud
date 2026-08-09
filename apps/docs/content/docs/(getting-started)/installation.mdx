@@ -10,7 +10,7 @@ npm i nestjs-drizzle-crud
 ```
 
 <Callout type="info">
-  **Latest version: 3.1.0.** The package is published under
+  **Latest version: 3.2.2.** The package is published under
   [`nestjs-drizzle-crud`](https://www.npmjs.com/package/nestjs-drizzle-crud) on npm.
   A [`CHANGELOG.md`](https://www.npmjs.com/package/nestjs-drizzle-crud?activeTab=code) is shipped in the npm tarball
   and mirrored at [Changelog](/docs/changelog).
@@ -26,7 +26,7 @@ The package is unopinionated about which database driver you use. Install only w
 npm i @nestjs/common @nestjs/core drizzle-orm reflect-metadata
 ```
 
-### PostgreSQL — required **only** if you use `connectionString`
+### PostgreSQL: required **only** if you use `connectionString`
 
 When you pass `connectionString` to `forRoot({ dialect: 'postgresql' })`, the module builds the Drizzle connection itself using the [`postgres`](https://www.npmjs.com/package/postgres) driver.
 
@@ -40,9 +40,9 @@ npm i postgres
   your app, otherwise the build will fail with a missing-peer error.
 </Callout>
 
-### MySQL — required (always, for MySQL)
+### MySQL: required (always, for MySQL)
 
-MySQL has no `RETURNING` support, so the package can't build a connection for you from a connection string. You must install `mysql2` and pass a pre-built `db` to `forRoot`. See [Configure once — forRoot](/docs/for-root) for the full pattern.
+MySQL has no `RETURNING` support, so the package can't build a connection for you from a connection string. You must install `mysql2` and pass a pre-built `db` to `forRoot`. See [the forRoot guide](/docs/for-root) for the full pattern.
 
 ```npm
 npm i mysql2
@@ -50,7 +50,7 @@ npm i mysql2
 
 ### If you pre-build the Drizzle instance (any dialect)
 
-If you build the Drizzle instance yourself and pass it to `forRoot` as `db`, you can skip the module's internal driver setup entirely — which means you don't need `postgres` even on PostgreSQL.
+If you build the Drizzle instance yourself and pass it to `forRoot` as `db`, you can skip the module's internal driver setup entirely, which means you do not need `postgres` even on PostgreSQL.
 
 ```ts accent=nest
 import { drizzle } from 'drizzle-orm/postgres-js';
@@ -81,16 +81,16 @@ The package relies on `Reflect.getMetadata` to read per-service configuration. M
 
 `nestjs-drizzle-crud` follows semver:
 
-- **Patch** (3.0.x → 3.0.y) — bug fixes, no API changes.
-- **Minor** (3.x.0 → 3.y.0) — new methods or new options, fully backwards-compatible.
-- **Major** (3.y.0 → 4.0.0) — breaking changes to the public API.
+- **Patch** (3.0.x → 3.0.y). Bug fixes, no API changes.
+- **Minor** (3.x.0 → 3.y.0). New methods or new options, fully backwards-compatible.
+- **Major** (3.y.0 → 4.0.0). Breaking changes to the public API.
 
-This site currently documents **v3.1.0**. The peer dependency `drizzle-orm` is pinned to `>=0.28.0 <1.0.0`.
+This site currently documents **v3.2.2**. The peer dependency `drizzle-orm` is pinned to `>=0.28.0 <1.0.0`.
 
 See the [Changelog](/docs/changelog) for release-by-release behavior changes.
 
 ## Next
 
-You have the package installed. The next page walks through a complete 5-step setup — schema → `forRoot` → service → `forFeature` → controller — in under five minutes.
+You have the package installed. The next page walks through the complete five-step setup in under five minutes: schema, `forRoot`, service, `forFeature`, controller.
 
 → [Quick start](/docs/quick-start)

@@ -3,7 +3,7 @@ title: Defining services
 description: The empty-subclass pattern, generics, and how to add custom methods without breaking the framework wiring.
 ---
 
-The `SqlBaseCrudService` base class is designed so the vast majority of services are empty subclasses. The connection, dialect, table, and per-entity configuration are all injected by `forFeature` — your service file usually contains no logic.
+The `SqlBaseCrudService` base class is designed so the vast majority of services are empty subclasses. The connection, dialect, table, and per-entity configuration are all injected by `forFeature`. Your service file usually contains no logic.
 
 ## The minimum
 
@@ -46,7 +46,7 @@ export class UsersService extends SqlBaseCrudService<
 ```
 
 <Callout type="info">
-  The `FilterDto` is **not** used to auto-build a query — it's the type
+  The `FilterDto` is **not** used to auto-build a query. It's the type
   signature of the `findAll` filter argument. Use it to constrain which
   columns can be filtered from controllers. See
   [Filtering](/docs/filtering) for the actual filter syntax.
@@ -54,7 +54,7 @@ export class UsersService extends SqlBaseCrudService<
 
 ## Adding custom methods
 
-Override nothing — just add your own methods. They have full access to `this.config` (the resolved `SqlCrudConfig`) and `this.config.db` (the Drizzle instance), so anything you can do in raw Drizzle is available inside the service.
+Override nothing. Just add your own methods. They have full access to `this.config` (the resolved `SqlCrudConfig`) and `this.config.db` (the Drizzle instance), so anything you can do in raw Drizzle is available inside the service.
 
 ```ts title="users/users.service.ts"
 import { eq } from 'drizzle-orm';
@@ -102,7 +102,7 @@ export class UsersService extends SqlBaseCrudService<User> {
 }
 ```
 
-The module constructs the service for you with the correct config. If you need the Drizzle instance inside a custom method, use `this.config.db` — it points to the same instance.
+The module constructs the service for you with the correct config. If you need the Drizzle instance inside a custom method, use `this.config.db`. It points to the same instance.
 
 <Callout type="warn">
   Adding a constructor that calls `super({ ... })` is a legacy pattern. The
@@ -123,11 +123,11 @@ The module constructs the service for you with the correct config. If you need t
 
 Reach for these when the pattern breaks down:
 
-- **You need a service that queries across multiple tables.** Don't try to glue this onto `SqlBaseCrudService` — write a normal Nest service that injects `DRIZZLE_DB` and uses raw Drizzle.
+- **You need a service that queries across multiple tables.** Don't try to glue this onto `SqlBaseCrudService`. Write a normal Nest service that injects `DRIZZLE_DB` and uses raw Drizzle.
 - **You need streaming rows.** `findAll` materializes the result. For large result sets, inject `DRIZZLE_DB` and use Drizzle's streaming APIs.
 - **You need GraphQL resolvers.** The service methods are plain async functions and can be called from any resolver layer.
 
 ## Next
 
-- → [Filtering — the full filter object spec](/docs/filtering)
-- → [Hooks & validation — overriding `beforeCreate`, `validateUpdate`, ...](/docs/hooks-validation)
+- → [Filtering: the full filter object spec](/docs/filtering)
+- → [Hooks & validation: overriding `beforeCreate`, `validateUpdate`, ...](/docs/hooks-validation)

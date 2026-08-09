@@ -3,7 +3,7 @@ title: Errors
 description: HTTP status code mapping for every exception thrown by SqlBaseCrudService, with the per-method reference.
 ---
 
-Every exception in `nestjs-drizzle-crud` extends `@nestjs/common`'s `HttpException`. Nest's default exception filter maps the subclass to an HTTP status code automatically — no configuration required. You can `instanceof` the exports in a custom exception filter and the mapping will hold.
+Every exception in `nestjs-drizzle-crud` extends `@nestjs/common`'s `HttpException`. Nest's default exception filter maps the subclass to an HTTP status code automatically. No configuration required. You can `instanceof` the exports in a custom exception filter and the mapping will hold.
 
 ## Status code table
 
@@ -11,39 +11,41 @@ Every exception in `nestjs-drizzle-crud` extends `@nestjs/common`'s `HttpExcepti
 | --- | --- | --- |
 | **404 Not Found** | `EntityNotFoundException` | `update`, `restore`, `massUpdate`, `massRestore` when the row doesn't exist (or is soft-deleted, when soft-delete is enabled). |
 | **409 Conflict** | `DuplicateEntityException` | `create`, `update` when a unique constraint is violated (Postgres SQLSTATE `23505`). |
+| **409 Conflict** | `EntityInUseException` | `delete` blocked because other rows still reference this one (`23503`, with `ON DELETE RESTRICT` or `NO ACTION`). |
+| **400 Bad Request** | `ForeignKeyViolationException` | `create`, `update` referencing a parent row that does not exist (`23503`). The message names the offending column. |
 | **400 Bad Request** | `ValidationFailedException` | Throw this from your `validateCreate` / `validateUpdate` hooks. |
 | **400 Bad Request** | `BulkOperationException` | Any bulk method whose transaction rolled back. Carries per-row errors. |
-| **400 Bad Request** | `BadRequestException` | Bad pagination / sort / filter input — see [Pagination & sorting — Clamping & fail-fast](/docs/pagination-sorting#clamping-fail-fast). |
+| **400 Bad Request** | `BadRequestException` | Bad pagination / sort / filter input, see [Pagination & sorting, Clamping & fail-fast](/docs/pagination-sorting#clamping-fail-fast). |
 | **500 Internal Server Error** | `DatabaseConnectionException` | The connection couldn't be established. |
 | **500 Internal Server Error** | `TransactionException` | `executeSqlTransaction` hit a transaction-level error. |
 
 <Callout type="info">
-  All seven are re-exported from the package root — see [Exports](/docs/exports).
+  All nine are re-exported from the package root. See [Exports](/docs/exports).
 </Callout>
 
 ## Per-method reference
 
-### Reads — never throw `EntityNotFoundException`
+### Reads: never throw `EntityNotFoundException`
 
-`find`, `findOne`, `findAll`, `exists`, `count`, and `fullTextSearch` return `null` / `false` / empty for missing rows. They never throw `EntityNotFoundException` — callers decide how to respond.
+`find`, `findOne`, `findAll`, `exists`, `count`, and `fullTextSearch` return `null` / `false` / empty for missing rows. They never throw `EntityNotFoundException`. Callers decide how to respond.
 
 A "missing" row includes soft-deleted rows when soft-delete is enabled.
 
-### Writes — when each method throws
+### Writes: when each method throws
 
 | Method | 404 | 409 | 400 |
 | --- | --- | --- | --- |
-| `create(dto)` | — | unique violation | hook rejection (`ValidationFailedException`) |
-| `update(id, dto)` | row missing or soft-deleted | unique violation | hook rejection |
-| `delete(id)` | row missing or soft-deleted | — | — |
-| `softDelete(id)` | row missing or soft-deleted | — | — |
-| `restore(id)` | row missing | — | — |
+| `create(dto)` |  | unique violation | hook rejection (`ValidationFailedException`), missing FK target |
+| `update(id, dto)` | row missing or soft-deleted | unique violation | hook rejection, missing FK target |
+| `delete(id)` | row missing or soft-deleted | still referenced by other rows |  |
+| `softDelete(id)` | row missing or soft-deleted |  |  |
+| `restore(id)` | row missing |  |  |
 
 `restore` returns the restored row (Postgres `RETURNING`); `update` returns the updated row.
 
 ### Bulk methods
 
-Every bulk method (`massCreate`, `massUpdate`, `massSoftDelete`, `massRestore`, `massDelete`) runs in a single transaction. Any failure throws `BulkOperationException` (→ 400) and rolls back the entire operation — no partial writes. The exception's `errors` field carries the per-row cause for diagnostics.
+Every bulk method (`massCreate`, `massUpdate`, `massSoftDelete`, `massRestore`, `massDelete`) runs in a single transaction. Any failure throws `BulkOperationException` (→ 400) and rolls back the entire operation. No partial writes. The exception's `errors` field carries the per-row cause for diagnostics.
 
 ### `executeSqlTransaction`
 
@@ -89,10 +91,10 @@ export class CrudExceptionFilter implements ExceptionFilter {
 }
 ```
 
-If you don't write a custom filter, Nest's default filter already maps the subclass to the status code — you get correct 404 / 409 / 400 / 500 out of the box.
+If you don't write a custom filter, Nest's default filter already maps the subclass to the status code. You get correct 404 / 409 / 400 / 500 out of the box.
 
 ## Next
 
-- → [Pagination & sorting — when input is clamped vs. when it throws](/docs/pagination-sorting#clamping-fail-fast)
-- → [Soft delete — what `find` / `update` see vs. what they throw](/docs/soft-delete)
-- → [Exports — the full list of typed exceptions](/docs/exports)
+- → [Pagination & sorting: when input is clamped vs. when it throws](/docs/pagination-sorting#clamping-fail-fast)
+- → [Soft delete: what `find` / `update` see vs. what they throw](/docs/soft-delete)
+- → [Exports: the full list of typed exceptions](/docs/exports)

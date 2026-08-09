@@ -1,0 +1,65 @@
+---
+title: Getting help
+description: Where to ask questions about nestjs-drizzle-crud, how to report a bug, how to report a security issue, and answers to the questions that come up most.
+---
+
+Ask usage questions in [GitHub Discussions](https://github.com/myviliha/viliha-drizzle-crud/discussions), report reproducible defects as [issues](https://github.com/myviliha/viliha-drizzle-crud/issues), and report security problems privately. This page covers each route and the questions that come up most.
+
+## Where to ask
+
+| You want to | Go to |
+| --- | --- |
+| Ask how to do something | [Discussions](https://github.com/myviliha/viliha-drizzle-crud/discussions) |
+| Report a bug you can reproduce | [Issues](https://github.com/myviliha/viliha-drizzle-crud/issues/new/choose) |
+| Request a feature | [Issues](https://github.com/myviliha/viliha-drizzle-crud/issues/new/choose), feature request template |
+| Report a security vulnerability | Follow [SECURITY.md](https://github.com/myviliha/viliha-drizzle-crud/blob/main/SECURITY.md). Do not open a public issue. |
+| Contribute code | [CONTRIBUTING.md](https://github.com/myviliha/viliha-drizzle-crud/blob/main/CONTRIBUTING.md) |
+| Fund the work | [Sponsor](/docs/sponsor) |
+
+## Reporting a bug well
+
+A good report gets fixed in one round trip. Include:
+
+1. The package version, the dialect, and the NestJS and Drizzle versions.
+2. The Drizzle table definition for the entity involved, trimmed to the relevant columns.
+3. The `forRoot` and `forFeature` config for that entity.
+4. The call you made and what came back, including the exception class and HTTP status.
+5. The SQL if you have it. Drizzle logging (`drizzle(client, { logger: true })`) prints the statement the service built.
+
+## Frequently asked questions
+
+### Why does `findAll` return an object instead of an array?
+
+`findAll` returns `{ data, total, page, limit }` because pagination is on by default. `total` comes from a second count query that applies the same filters and search, so it stays correct as you page.
+
+### Why is my `like` filter not matching anything?
+
+`like` and `ilike` take the wildcards you supply. `{ name: { ilike: 'jo' } }` matches the exact string `jo`; you want `{ name: { ilike: 'jo%' } }`. A bare string value such as `{ name: 'jo' }` is an exact match, and by default a case-insensitive one.
+
+### Why did my insert fail on a column that does not exist?
+
+Soft delete and package-managed timestamps write to `deleted_at`, `created_at` and `updated_at`. If your tables do not have those columns, disable them: `defaults: { softDelete: false, timestamps: false }`. See [Soft delete](/docs/soft-delete) and [Timestamps](/docs/timestamps).
+
+### Can I use has-many or many-to-many relations?
+
+Not through `relations`. The package supports many-to-one and one-to-one (belongs-to) only. Model collections with your own method over `this.config.db`, which stays available for anything the base service does not cover. See [Relations](/docs/relations).
+
+### Do I need to inject the database into my service?
+
+No. `forFeature` builds the service and hands it the config, including the Drizzle instance. Adding `@Injectable()` or an `@Inject(DRIZZLE_DB)` constructor breaks that registration. See [Defining services](/docs/defining-services).
+
+### Does it work with MySQL?
+
+Yes, with two caveats. MySQL has no `RETURNING`, so the package re-reads written rows, and you supply UUID keys yourself on insert. Full-text search is PostgreSQL only. Everything else is identical across dialects.
+
+### How do I run raw Drizzle queries?
+
+Use `this.config.db` inside your service, or inject `DRIZZLE_DB` anywhere in your app. The package never hides Drizzle, so a hand-written query for a report sits next to the generated CRUD without ceremony.
+
+### Is it production ready?
+
+It runs against a real PostgreSQL database in CI through an example NestJS app, on top of unit tests for the query builders. Read the [changelog](/docs/changelog) before upgrading; the 3.x line is PostgreSQL-first, and MySQL-specific paths are tracked separately.
+
+## Keeping it maintained
+
+Every answer here, and every guide on this site, is unpaid work given away under MIT. If the package is doing a job for you, [sponsoring it](/docs/sponsor) is what keeps that going.

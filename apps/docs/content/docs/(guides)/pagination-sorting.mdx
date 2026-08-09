@@ -3,7 +3,7 @@ title: Pagination & sorting
 description: The findAll() return shape, default sort, and the sortBy/sortOrder options.
 ---
 
-`findAll(filters?, pagination?, options?)` returns a paginated result envelope — **not** a bare array.
+`findAll(filters?, pagination?, options?)` returns a paginated result envelope, **not** a bare array.
 
 ## Return shape
 
@@ -55,11 +55,11 @@ await service.findAll(
 );
 ```
 
-`sortBy` accepts a string or an array. When an array is passed, `sortOrder` is ignored — each column carries its own order via the entity's `defaultSort` definition (see below).
+`sortBy` accepts a string or an array. When an array is passed, `sortOrder` is ignored. Each column carries its own order via the entity's `defaultSort` definition (see below).
 
 ### Default sort per entity
 
-Define an ordered list of columns in `forFeature` config — they're applied as the `ORDER BY` clause when no explicit `sortBy` is passed. The first column is the primary sort, the rest are tiebreakers.
+Define an ordered list of columns in `forFeature` config. They're applied as the `ORDER BY` clause when no explicit `sortBy` is passed. The first column is the primary sort, the rest are tiebreakers.
 
 ```ts accent=nest title="posts/posts.module.ts"
 DrizzleCrudModule.forFeature([
@@ -80,7 +80,7 @@ DrizzleCrudModule.forFeature([
 // ORDER BY position ASC, created_at DESC
 await service.findAll();
 
-// ORDER BY name DESC  — the default is replaced, not appended
+// ORDER BY name DESC : the default is replaced, not appended
 await service.findAll({}, { sortBy: 'name' });
 ```
 
@@ -105,7 +105,7 @@ DrizzleCrudModule.forRoot({
 });
 ```
 
-Per-column `order` defaults to `'asc'` when you don't specify it. Unknown columns in `defaultSort` are skipped and emit a `[nestjs-drizzle-crud] defaultSort references unknown column "<col>"; skipping.` warning at startup — they never throw. (Caller-supplied `sortBy` is different: it throws on unknown columns, see below.)
+Per-column `order` defaults to `'asc'` when you don't specify it. Unknown columns in `defaultSort` are skipped and emit a `[nestjs-drizzle-crud] defaultSort references unknown column "<col>"; skipping.` warning at startup. They never throw. (Caller-supplied `sortBy` is different: it throws on unknown columns, see below.)
 
 ## Cap on `limit`
 
@@ -136,15 +136,15 @@ Pagination and sorting inputs are normalized before they reach SQL. Bad input is
 | `limit > maxLimit` | `maxLimit` |
 | `page` / `limit` not a finite number | `1` / `defaultLimit` |
 
-A `LIMIT 0` or negative `OFFSET` can never reach SQL — every value is clamped via the package's shared `resolvePagination` helper.
+A `LIMIT 0` or negative `OFFSET` can never reach SQL. Every value is clamped via the package's shared `resolvePagination` helper.
 
 **Throws `BadRequestException` (→ 400):**
 
 | Input | Why |
 | --- | --- |
-| Caller `sortBy` not a column on the table | Mirrors the unknown-column guard — typos surface immediately instead of returning unsorted data. |
+| Caller `sortBy` not a column on the table | Mirrors the unknown-column guard, typos surface immediately instead of returning unsorted data. |
 | Caller `sortOrder` other than `'asc'` / `'desc'` | Without the guard, anything other than `'desc'` silently sorted ascending. |
-| `{ gt / gte / lt / lte: NaN }` or `{ …: Infinity }` | Reaches SQL as an opaque 500; rejected as 400 instead. Affects numeric columns only — date / string operands pass through unchanged. |
+| `{ gt / gte / lt / lte: NaN }` or `{ …: Infinity }` | Reaches SQL as an opaque 500; rejected as 400 instead. Affects numeric columns only, date / string operands pass through unchanged. |
 
 For the full per-method exception table (404 / 409 / 400 / 500 mapping), see [Errors](/docs/errors).
 
@@ -154,5 +154,5 @@ The package does **not** ship cursor-based pagination out of the box. `findAll` 
 
 ## Next
 
-- → [Relations — eager loading via `options.relations`](/docs/relations)
-- → [Bulk operations — transactional pagination-free reads](/docs/bulk-operations)
+- → [Relations: eager loading via `options.relations`](/docs/relations)
+- → [Bulk operations: transactional pagination-free reads](/docs/bulk-operations)

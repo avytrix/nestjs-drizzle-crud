@@ -20,7 +20,7 @@ export function baseOptions(): BaseLayoutProps {
 					href={npmUrl}
 					target="_blank"
 					rel="noreferrer noopener"
-					className="text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
+					className="ml-3 text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
 				>
 					npm
 				</a>
@@ -29,6 +29,7 @@ export function baseOptions(): BaseLayoutProps {
 		links: [
 			{ text: "Documentation", url: "/docs", active: "nested-url" },
 			{ text: "Changelog", url: "/docs/changelog" },
+			{ text: "Sponsor", url: "/docs/sponsor" },
 			{ text: "GitHub", url: githubUrl, external: true },
 		],
 	};

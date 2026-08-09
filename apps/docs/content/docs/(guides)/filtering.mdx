@@ -1,6 +1,6 @@
 ---
 title: Filtering
-description: Build filter objects for findAll() and count() — bare strings, arrays, operators, and the exact-vs-pattern gotcha.
+description: "Build filter objects for findAll() and count(): bare strings, arrays, operators, and the exact-vs-pattern gotcha."
 ---
 
 `findAll(filters)` and `count(filters)` accept a plain object keyed by column name. Unknown keys and `null` / `undefined` values are silently ignored, so it's safe to pass a `Partial<Entity>` straight from a query string.
@@ -20,7 +20,7 @@ await service.findAll({
   A bare string is an **exact** match. When `sql.caseSensitive` is `false`
   (the default) the package compiles it to `lower(column) = lower(value)`,
   so the match is case-insensitive and `%` / `_` / `\` in the value are
-  treated as literal data — never wildcards. For partial / pattern
+  treated as literal data, never wildcards. For partial / pattern
   matching, use the explicit `ilike` operator with your own `%`
   wildcards:
 
@@ -37,10 +37,10 @@ For anything beyond equality, wrap the value in an object with operator keys:
 ```ts
 await service.findAll({
   age: { gte: 18, lt: 65 },       // 18 <= age < 65
-  email: { neq: '[email protected]' },    // not the system account
-  name: { ilike: 'jo%' },         // pattern match — you supply the wildcards
+  email: { neq: 'system@example.com' },    // not the system account
+  name: { ilike: 'jo%' },         // pattern match: you supply the wildcards
   deletedAt: { isNull: true },     // only non-deleted rows
-  state: { name: 'Karnataka' },    // filter by related column — see Relations
+  state: { name: 'Karnataka' },    // filter by related column: see Relations
 });
 ```
 
@@ -165,7 +165,7 @@ await service.findAll({
 Multi-level filtering works through the intermediate FK column:
 
 ```ts
-// cities where state.country_id = 3 — no direct relation to countries required
+// cities where state.country_id = 3: no direct relation to countries required
 await service.findAll({
   state: { countryId: 3 },
 });
@@ -173,5 +173,5 @@ await service.findAll({
 
 ## Next
 
-- → [Pagination & sorting — `findAll` shape and default sort](/docs/pagination-sorting)
-- → [Relations — eager loading and related-column filters](/docs/relations)
+- → [Pagination & sorting, `findAll` shape and default sort](/docs/pagination-sorting)
+- → [Relations: eager loading and related-column filters](/docs/relations)

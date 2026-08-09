@@ -3,7 +3,7 @@ title: Row-level locks
 description: PostgreSQL SELECT ... FOR UPDATE / SHARE / NO KEY UPDATE on find, findOne, and findAll via SqlOperationOptions.
 ---
 
-On PostgreSQL, `find`, `findOne`, and `findAll` accept a row-level lock in their third argument (`SqlOperationOptions`). The package wraps the generated `SELECT` with Drizzle's `.for(...)` clause. On MySQL the lock options are no-ops — the option is silently ignored, and no `FOR UPDATE` is generated.
+On PostgreSQL, `find`, `findOne`, and `findAll` accept a row-level lock in their third argument (`SqlOperationOptions`). The package wraps the generated `SELECT` with Drizzle's `.for(...)` clause. On MySQL the lock options are no-ops. The option is silently ignored, and no `FOR UPDATE` is generated.
 
 ## When to use
 
@@ -13,20 +13,20 @@ Read-modify-write patterns where you need to **prevent another transaction from 
 - Locking a `posts` row while computing a slug.
 - Anything where a stale read would cause a lost-update bug.
 
-If you only need to fetch data and write it later, prefer `executeSqlTransaction` and call `select(...).for('update')` directly — locks are scoped to the transaction and released on commit or rollback.
+If you only need to fetch data and write it later, prefer `executeSqlTransaction` and call `select(...).for('update')` directly. Locks are scoped to the transaction and released on commit or rollback.
 
 ## Options
 
-Two fields on `SqlOperationOptions` — both Postgres-only:
+Two fields on `SqlOperationOptions`. Both Postgres-only:
 
 | Field | Type | SQL it produces |
 | --- | --- | --- |
 | `lock` | `'update' \| 'share' \| 'none'` | `FOR UPDATE` / `FOR SHARE` / (omitted) |
 | `forNoKeyUpdate` | `boolean` | `FOR NO KEY UPDATE` |
 
-`lock: 'none'` is the default — pass it explicitly to override a service-level default. `lock` and `forNoKeyUpdate` are mutually exclusive; `forNoKeyUpdate` wins if both are set.
+`lock: 'none'` is the default. Pass it explicitly to override a service-level default. `lock` and `forNoKeyUpdate` are mutually exclusive; `forNoKeyUpdate` wins if both are set.
 
-`FOR NO KEY UPDATE` is like `FOR UPDATE` but does **not** block other transactions from inserting FK-target rows — useful when you're locking a parent row but children may legitimately appear (e.g. appending audit-log entries).
+`FOR NO KEY UPDATE` is like `FOR UPDATE` but does **not** block other transactions from inserting FK-target rows. Useful when you're locking a parent row but children may legitimately appear (e.g. appending audit-log entries).
 
 ## Examples
 
@@ -47,16 +47,16 @@ const activeRows = await accounts.findAll(
 ```ts accent=nest
 const parent = await posts.findOne({ slug }, { forNoKeyUpdate: true });
 // SELECT ... FOR NO KEY UPDATE
-// — other transactions can still INSERT child rows referencing this parent
+// other transactions can still INSERT child rows referencing this parent
 ```
 
 ## Caveats
 
-- **MySQL** — the options are accepted but ignored. No `FOR UPDATE` is added. If you need MySQL locking, drop down to a custom method.
+- **MySQL**. The options are accepted but ignored. No `FOR UPDATE` is added. If you need MySQL locking, drop down to a custom method.
 - **No assertions under contention.** The package's unit tests cover the code path (the option reaches Drizzle's `.for(...)`); contention behavior is the database's contract, not ours. Verify with a concurrent integration test before relying on it.
-- **Read methods only.** `create` / `update` / `delete` / `softDelete` / `restore` have their own transaction model — they don't take a `lock` option. Use `executeSqlTransaction` and a `find(..., { lock })` inside it if you need to lock across reads and writes.
+- **Read methods only.** `create` / `update` / `delete` / `softDelete` / `restore` have their own transaction model. They don't take a `lock` option. Use `executeSqlTransaction` and a `find(..., { lock })` inside it if you need to lock across reads and writes.
 
 ## Next
 
-- → [Transactions — `executeSqlTransaction` for multi-statement locks](/docs/transactions)
-- → [API reference — full `SqlOperationOptions` signature](/docs/api#sqloperationoptions)
+- → [Transactions, `executeSqlTransaction` for multi-statement locks](/docs/transactions)
+- → [API reference: full `SqlOperationOptions` signature](/docs/api#sqloperationoptions)

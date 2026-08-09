@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "nestjs-drizzle-crud — Type-safe CRUD for Drizzle ORM in NestJS";
+export const alt = "nestjs-drizzle-crud: type-safe CRUD for Drizzle ORM in NestJS";
 export const dynamic = "force-static";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
@@ -87,7 +87,7 @@ export default function Image() {
 							display: "flex",
 						}}
 					>
-						v3.1.0
+						v3.2.2
 					</div>
 				</div>
 			</div>

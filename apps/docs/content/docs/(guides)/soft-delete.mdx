@@ -81,7 +81,7 @@ Same as `softDelete` but in a single transaction. If any of the IDs don't exist,
 ```ts
 // excludes rows with deleted_at IS NOT NULL
 await users.find(42);
-await users.findOne({ email: '[email protected]' });
+await users.findOne({ email: 'ada@example.com' });
 await users.findAll({});
 await users.count({});
 ```
@@ -117,7 +117,7 @@ The package exposes both `softDelete` and `delete`:
 
 | Method | Behavior |
 | --- | --- |
-| `delete(id, options?)` | Hard delete — removes the row. Skips soft-delete checks. |
+| `delete(id, options?)` | Hard delete, removes the row. Skips soft-delete checks. |
 | `softDelete(id, options?)` | Sets `deleted_at = now()`. Reads afterwards exclude it. |
 | `massDelete(ids, options?)` | Hard delete, transactional. |
 | `massSoftDelete(ids, options?)` | Soft delete, transactional. |
@@ -126,6 +126,6 @@ Use `delete` when you really want the row gone (e.g. GDPR right-to-erasure flows
 
 ## Next
 
-- → [Timestamps — package-managed vs DB-managed `created_at` / `updated_at`](/docs/timestamps)
-- → [Errors — `EntityNotFoundException` → 404 when `restore` finds nothing](/docs/errors)
-- → [Lifecycle hooks — `beforeSoftDelete` / `afterSoftDelete` for cross-cutting concerns](/docs/hooks-validation)
+- → [Timestamps: package-managed vs DB-managed `created_at` / `updated_at`](/docs/timestamps)
+- → [Errors, `EntityNotFoundException` → 404 when `restore` finds nothing](/docs/errors)
+- → [Lifecycle hooks, `beforeSoftDelete` / `afterSoftDelete` for cross-cutting concerns](/docs/hooks-validation)

@@ -3,15 +3,31 @@
 @import "fumadocs-ui/css/preset.css";
 @import "fumadocs-twoslash/twoslash.css";
 
+/* Drizzle-sharp corners, applied once at the scale instead of per component.
+   Fumadocs styles itself with `rounded-md/lg/xl`, which resolve to these
+   Tailwind v4 theme variables, so remapping them here makes the whole docs
+   surface (cards, code blocks, callouts, search dialog, sidebar rows) match the
+   2 px radius the home page already uses. `rounded-full` is unaffected, and the
+   two deliberate 8 px exceptions ask for it literally (`rounded-[8px]`). */
+@theme {
+	--radius-xs: 2px;
+	--radius-sm: 2px;
+	--radius-md: 2px;
+	--radius-lg: 2px;
+	--radius-xl: 2px;
+	--radius-2xl: 4px;
+	--radius-3xl: 4px;
+}
+
 :root {
 	/* Primary: NestJS brand red #E0234E */
 	--color-fd-primary: oklch(0.588 0.218 16.1);
 	--fd-primary-rgb: 224 35 78;
-	/* Secondary: Drizzle green #C5F74F — used sparingly (homepage pill, footer rule, OG accent) */
+	/* Secondary: Drizzle green #C5F74F, used sparingly (homepage pill, footer rule, OG accent) */
 	--color-fd-drizzle: oklch(0.911 0.197 124.6);
 	--fd-drizzle-rgb: 197 247 79;
 
-	/* Drizzle-style surface tokens (light defaults — overridden in .dark) */
+	/* Drizzle-style surface tokens (light defaults, overridden in .dark) */
 	--fd-surface-muted: #fafafa;
 	--fd-border-muted: #efefef;
 	--fd-border-hover: #d1d5db;
@@ -28,7 +44,7 @@
 	--fd-pill-bg: #111111;
 }
 
-/* Code-fence accent borders — read from `accent=nest|drizzle` meta in MDX fences.
+/* Code-fence accent borders read from `accent=nest|drizzle` meta in MDX fences.
    The `data-accent` lands on the Fumadocs-rendered `<figure>` wrapper that holds
    the Shiki code block (rounded, overflow-hidden). The inset box-shadow
    follows the rounded corners. */
@@ -47,6 +63,110 @@ figure[data-accent="nest"] {
 }
 #nd-nav nav button[aria-label="Toggle Theme"] {
 	border-radius: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   Docs surface: the same design language as the home page, applied to the
+   Fumadocs-rendered pages. Everything below is keyed off stable ids
+   (#nd-sidebar, #nd-toc, #nd-page) or prose element selectors, so a Fumadocs
+   minor upgrade cannot silently drop the styling.
+   --------------------------------------------------------------------------- */
+
+/* Headings: same tracking and color as the home page sections. */
+#nd-page h1,
+#nd-page h2,
+#nd-page h3,
+#nd-page h4 {
+	letter-spacing: var(--fd-heading-tracking);
+	color: var(--fd-heading-color);
+}
+
+/* Section rule above every h2, so a long guide reads as bands, not one column. */
+#nd-page .prose h2 {
+	margin-top: 3rem;
+	padding-top: 1.5rem;
+	border-top: 1px solid var(--fd-border-muted);
+}
+#nd-page .prose h2:first-child {
+	margin-top: 0;
+	padding-top: 0;
+	border-top: 0;
+}
+
+/* Prose links carry the primary red with a hairline underline. */
+#nd-page .prose a:not([data-card]):not(.not-prose a) {
+	color: var(--color-fd-primary);
+	text-decoration-color: color-mix(
+		in oklch,
+		var(--color-fd-primary) 35%,
+		transparent
+	);
+	text-underline-offset: 3px;
+	transition: text-decoration-color 150ms ease;
+}
+#nd-page .prose a:not([data-card]):hover {
+	text-decoration-color: var(--color-fd-primary);
+}
+
+/* Inline code matches the hero's inline code chip. */
+#nd-page .prose :not(pre) > code {
+	background-color: var(--fd-surface-muted);
+	border: 1px solid var(--fd-border-muted);
+	border-radius: 2px;
+	padding: 0.1rem 0.3rem;
+	font-weight: 400;
+}
+
+/* Tables: hairlines, muted header, no rounded corners. */
+#nd-page .prose table {
+	border: 1px solid var(--fd-border-muted);
+	border-radius: 2px;
+	overflow: hidden;
+}
+#nd-page .prose th {
+	background-color: var(--fd-surface-muted);
+	font-weight: 600;
+	letter-spacing: -0.198px;
+}
+#nd-page .prose th,
+#nd-page .prose td {
+	border-color: var(--fd-border-muted);
+}
+
+/* Code blocks and callouts share the hairline border. */
+#nd-page figure[data-rehype-pretty-code-figure],
+#nd-page pre {
+	border-color: var(--fd-border-muted);
+}
+
+/* Cards (the index page grid) hover the same way as the home feature grid. */
+#nd-page a[data-card] {
+	border-color: var(--fd-border-muted);
+	transition:
+		border-color 200ms ease,
+		background-color 200ms ease;
+}
+#nd-page a[data-card]:hover {
+	border-color: var(--fd-border-hover);
+}
+
+/* Sidebar: hairline separators, red active row, sharp corners. */
+#nd-sidebar {
+	border-color: var(--fd-border-muted);
+}
+#nd-sidebar a[data-active="true"] {
+	color: var(--color-fd-primary);
+	background-color: color-mix(
+		in oklch,
+		var(--color-fd-primary) 8%,
+		transparent
+	);
+	box-shadow: inset 2px 0 0 var(--color-fd-primary);
+}
+
+/* Table of contents: the active heading picks up the primary red. */
+#nd-toc a[data-active="true"] {
+	color: var(--color-fd-primary);
 }
 
 @layer base {

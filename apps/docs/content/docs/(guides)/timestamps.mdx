@@ -1,9 +1,9 @@
 ---
 title: Timestamps
-description: Package-managed vs schema/DB-managed created_at and updated_at — and why DB-managed is recommended.
+description: Package-managed vs schema and DB-managed created_at and updated_at, and why DB-managed is recommended.
 ---
 
-The package can automatically stamp `created_at` and `updated_at` on every write, or you can let your database manage them. The two approaches are mutually exclusive — pick one per project.
+The package can automatically stamp `created_at` and `updated_at` on every write, or you can let your database manage them. The two approaches are mutually exclusive. Pick one per project.
 
 ## Package-managed (convenient)
 
@@ -30,7 +30,7 @@ config: { timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' } }
 
 <Callout type="warn" title="Application clock, partial coverage">
   Package-managed timestamps use the application server's clock, not the
-  database's. They also only apply to writes through the package — raw
+  database's. They also only apply to writes through the package. Raw
   SQL, migrations, and other code paths won't set them. For
   authoritative, wall-clock-accurate, all-write-path timestamps, use
   schema/DB-managed.
@@ -38,7 +38,7 @@ config: { timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' } }
 
 ## Schema/DB-managed (recommended)
 
-For authoritative timestamps — database time, every write path — define them in your Drizzle schema and **leave the package's `timestamps` disabled**:
+For authoritative timestamps (database time, on every write path), define them in your Drizzle schema and **leave the package's `timestamps` disabled**:
 
 ```ts accent=drizzle title="db/schema.ts"
 import { pgTable, serial, varchar, timestamp } from 'drizzle-orm/pg-core';
@@ -62,7 +62,7 @@ export const users = pgTable('users', {
 ```
 
 - `defaultNow()` lets the database set `created_at` on insert.
-- `$onUpdate(() => new Date())` makes Drizzle bump `updated_at` on every update — including the package's own `update()`.
+- `$onUpdate(() => new Date())` makes Drizzle bump `updated_at` on every update, including the package's own `update()`.
 
 For `updated_at` that's authoritative even for raw SQL (e.g. a script that runs `UPDATE users SET name = ...` directly), add a Postgres trigger or a MySQL `ON UPDATE CURRENT_TIMESTAMP` clause:
 
@@ -114,17 +114,17 @@ The package will not touch the timestamp columns. The database owns them.
 
 ## When package-managed is the right choice
 
-- **Tests** — you can mock the application clock for deterministic timestamps.
-- **Single-writer apps** — every write goes through the package, so coverage isn't an issue.
-- **Time zone handling is the app's job** — you've already wrapped your DB driver to use UTC.
+- **Tests**. You can mock the application clock for deterministic timestamps.
+- **Single-writer apps**. Every write goes through the package, so coverage isn't an issue.
+- **Time zone handling is the app's job**. You've already wrapped your DB driver to use UTC.
 
 ## When DB-managed is the right choice (default recommendation)
 
-- **Multiple writers** — other services, scripts, manual SQL.
-- **Multi-region / replicated databases** — you want a single clock source.
-- **Production** — give the database the last word on time.
+- **Multiple writers**. Other services, scripts, manual SQL.
+- **Multi-region / replicated databases**. You want a single clock source.
+- **Production**. Give the database the last word on time.
 
 ## Next
 
-- → [Soft delete — the third timestamp, `deleted_at`](/docs/soft-delete)
-- → [Lifecycle hooks — overriding `beforeCreate` to set custom fields](/docs/hooks-validation)
+- → [Soft delete: the third timestamp, `deleted_at`](/docs/soft-delete)
+- → [Lifecycle hooks: overriding `beforeCreate` to set custom fields](/docs/hooks-validation)

@@ -1,6 +1,6 @@
 ---
 title: Full-text search
-description: PostgreSQL tsvector / tsquery via fullTextSearch() — ranked, paginated, with a clean result envelope.
+description: "PostgreSQL tsvector / tsquery via fullTextSearch(): ranked, paginated, with a clean result envelope."
 ---
 
 The package ships a single `fullTextSearch()` method on `SqlBaseCrudService`. It builds a `to_tsvector(...) @@ plainto_tsquery(...)` expression across the columns you pass, orders by `ts_rank`, and returns the same `{ data, total, page, limit }` envelope as `findAll`.
@@ -13,7 +13,7 @@ The package ships a single `fullTextSearch()` method on `SqlBaseCrudService`. It
 
 <Callout type="info" title="Soft-delete aware">
   When soft-delete is enabled on the entity, soft-deleted rows are
-  excluded from both the data and total — matching the behavior of
+  excluded from both the data and the total, matching the behavior of
   `findAll` and `count`.
 </Callout>
 
@@ -30,20 +30,20 @@ DrizzleCrudModule.forRoot({
 });
 ```
 
-You also need either an `english` (or other language) tsvector index on the columns you're searching, or a generated `tsvector` column. Drizzle has helpers for both — see the [Drizzle docs on full-text search](https://orm.drizzle.team/docs/full-text-search) for the schema side.
+You also need either an `english` (or other language) tsvector index on the columns you're searching, or a generated `tsvector` column. Drizzle has helpers for both. See the [Drizzle docs on full-text search](https://orm.drizzle.team/docs/full-text-search) for the schema side.
 
 ## Usage
 
 ```ts
 const { data, total, page, limit } = await users.fullTextSearch(
-  'john doe',            // search term — passed to plainto_tsquery
+  'john doe',            // search term: passed to plainto_tsquery
   ['name', 'email', 'bio'], // columns to search across
   { page: 1, limit: 20 },   // optional pagination
 );
 
 // data:  20 rows ordered by ts_rank
 // total: total number of matching rows
-// page:  resolved (clamped) page — 1-indexed
+// page:  resolved (clamped) page: 1-indexed
 // limit: resolved (clamped) limit
 ```
 
@@ -116,5 +116,5 @@ class UsersService extends SqlBaseCrudService<User> {
 
 ## Next
 
-- → [Filtering — structured filters plus `options.search`](/docs/filtering)
-- → [Defining services — custom methods that combine full-text with structured filters](/docs/defining-services)
+- → [Filtering: structured filters plus `options.search`](/docs/filtering)
+- → [Defining services: custom methods that combine full-text with structured filters](/docs/defining-services)

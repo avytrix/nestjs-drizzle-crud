@@ -1,9 +1,9 @@
 ---
 title: Testing
-description: TestCrudFactory builds mock db, table, and entity instances for fast unit tests — no real database required.
+description: "TestCrudFactory builds mock db, table, and entity instances for fast unit tests: no real database required."
 ---
 
-The package ships a `TestCrudFactory` with helpers to construct a working service backed by an in-memory Drizzle instance. The result is a fast unit test that exercises the real base class — `findAll`, `create`, hooks, transactions, the lot — without spinning up Postgres or MySQL.
+The package ships a `TestCrudFactory` with helpers to construct a working service backed by an in-memory Drizzle instance. The result is a fast unit test that exercises the real base class, `findAll`, `create`, hooks, transactions, the lot, without spinning up Postgres or MySQL.
 
 ## The four helpers
 
@@ -36,9 +36,9 @@ export const buildUsersServiceFixture = () => {
 
 | Method | Returns | Notes |
 | --- | --- | --- |
-| `createMockDb()` | Drizzle instance | A `pglite` (in-memory Postgres) or stub instance. Supports the subset of the Drizzle API the package uses. |
-| `createMockTable(schemaTable)` | Drizzle table | Wraps your schema table for use in tests. |
-| `createMockEntity(overrides?)` | `Partial<T>` | A row with sensible defaults. Useful as a fixture. |
+| `createMockDb()` | Stub db | Jest mock functions for the subset of the Drizzle API the package calls. Runs no SQL. |
+| `createMockTable()` | Stub table | A column-name map (`id`, `name`, `email`, `created_at`, `updated_at`, `deleted_at`). Takes no arguments. |
+| `createMockEntity(overrides?)` | Row fixture | A row with sensible defaults, merged with your overrides. |
 | `createTestService(Service, db, table, config?)` | `T` | Constructs the service with the merged config. |
 
 ## A complete test
@@ -70,11 +70,11 @@ describe('UsersService', () => {
   });
 
   it('creates and finds a user', async () => {
-    const user = await service.create({ name: 'Ada', email: '[email protected]' });
+    const user = await service.create({ name: 'Ada', email: 'ada@example.com' });
     expect(user.name).toBe('Ada');
 
     const found = await service.find(user.id);
-    expect(found?.email).toBe('[email protected]');
+    expect(found?.email).toBe('ada@example.com');
   });
 
   it('throws on update of missing row', async () => {
@@ -84,7 +84,7 @@ describe('UsersService', () => {
   });
 
   it('excludes soft-deleted rows from findAll', async () => {
-    const u = await service.create({ name: 'A', email: '[email protected]' });
+    const u = await service.create({ name: 'A', email: 'ada@example.com' });
     await service.softDelete(u.id);
 
     const { data, total } = await service.findAll({});
@@ -119,8 +119,8 @@ Hooks are just methods on the service. The simplest way to verify they fire is t
 ```ts
 it('calls beforeCreate with the input', async () => {
   const spy = jest.spyOn(service as any, 'beforeCreate');
-  await service.create({ name: 'Ada', email: '[email protected]' });
-  expect(spy).toHaveBeenCalledWith({ name: 'Ada', email: '[email protected]' });
+  await service.create({ name: 'Ada', email: 'ada@example.com' });
+  expect(spy).toHaveBeenCalledWith({ name: 'Ada', email: 'ada@example.com' });
 });
 ```
 
@@ -136,11 +136,18 @@ class TestUsersService extends UsersService {
 
 ## What `createMockDb` actually does
 
-In 3.0.2, `createMockDb` returns an in-memory Drizzle instance backed by [`pglite`](https://github.com/electric-sql/pglite) — a real Postgres compiled to WebAssembly. This means the tests use the **same SQL dialect** as production, the same `RETURNING` semantics, and the same column types. The trade-off is a small startup cost on the first test in a file.
+`createMockDb()` returns a hand-built stub whose methods are Jest mock functions (`select`, `insert`, `update`, `delete`, and the chainable `from` / `where` / `limit` / `offset` / `orderBy` / `returning`). It runs no SQL. You decide what a query resolves to by setting the mock's return value, which is what makes these tests fast and deterministic.
 
-If you need faster tests with weaker guarantees (e.g. for a CI that runs thousands of unit tests), write your own mock by implementing the subset of the Drizzle API the package calls — but pglite is the recommended path.
+Two consequences to plan for:
+
+- **It needs a Jest environment.** The factory calls the global `jest`, so it works inside a Jest test file and nowhere else.
+- **It does not verify your SQL.** A stub cannot catch a wrong column name, a bad cast, or a constraint violation. Cover those with an end-to-end test against a real database, the way this project's own `apps/api` e2e suite does.
+
+`createMockTable()` returns a plain object whose keys stand in for columns (`id`, `name`, `email`, `created_at`, `updated_at`, `deleted_at`), and `createMockEntity(overrides?)` returns a row fixture you can override field by field.
+
+If you want tests that exercise real SQL without a server, point `createTestService` at your own in-memory Drizzle instance, for example [`pglite`](https://github.com/electric-sql/pglite), instead of the stub. The factory takes any `db` you hand it.
 
 ## Next
 
-- → [Reference: API — every method's full signature](/docs/api)
-- → [For AI agents — condensed package facts for code generation](/docs/llm-notes)
+- → [API reference: every method's full signature](/docs/api)
+- → [For AI agents: condensed package facts for code generation](/docs/llm-notes)

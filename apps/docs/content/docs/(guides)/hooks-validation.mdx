@@ -1,6 +1,6 @@
 ---
 title: Lifecycle hooks & validation
-description: before/after hooks, validateCreate/validateUpdate, and DTO-to-entity mappers — all optional overrides.
+description: "before/after hooks, validateCreate/validateUpdate, and DTO-to-entity mappers: all optional overrides."
 ---
 
 The base class exposes a small set of `protected` methods you can override in your service. Each is optional and has a sensible default (no-op or pass-through).
@@ -23,13 +23,13 @@ class UsersService extends SqlBaseCrudService<User, CreateUserDto, UpdateUserDto
 }
 ```
 
-Both `validateCreate` and `validateUpdate` may return `void` or throw. Any throw is propagated to the caller and aborts the write — no insert, no update.
+Both `validateCreate` and `validateUpdate` may return `void` or throw. Any throw is propagated to the caller and aborts the write. No insert, no update.
 
 <Callout type="info">
   Validation runs **before** `beforeCreate` / `beforeUpdate` and before
   the SQL. Use it for fast, synchronous input validation. For heavier
   work (DB lookups, async checks), use `beforeCreate` / `beforeUpdate`
-  instead — they'll run in the same code path but won't be confused with
+  instead. They'll run in the same code path but won't be confused with
   input shape validation.
 </Callout>
 
@@ -132,5 +132,5 @@ All hooks are `protected` so they can't be called from outside the class. They'r
 
 ## Next
 
-- → [Testing — using `TestCrudFactory` with hooks](/docs/testing)
-- → [Transactions — hooks fire inside transactions too](/docs/transactions)
+- → [Testing: using `TestCrudFactory` with hooks](/docs/testing)
+- → [Transactions: hooks fire inside transactions too](/docs/transactions)

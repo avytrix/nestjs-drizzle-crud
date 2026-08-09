@@ -1,6 +1,6 @@
 ---
 title: Primary keys
-description: serial, int, bigint, bigserial, and uuid — RETURNING vs insertId, and the ParseIntPipe warning.
+description: "serial, int, bigint, bigserial, and uuid: RETURNING vs insertId, and the ParseIntPipe warning."
 ---
 
 Each entity declares its primary key via two fields in the `forFeature` config:
@@ -15,10 +15,10 @@ Each entity declares its primary key via two fields in the `forFeature` config:
 The default. Use this for any numeric primary key, regardless of size:
 
 ```ts
-// serial — int4, default
+// serial: int4, default
 { service: UsersService, table: users }
 
-// bigserial — int8
+// bigserial: int8
 {
   service: EventsService,
   table: events,
@@ -53,13 +53,13 @@ Works fully. The created row is returned via `RETURNING` with the DB-generated U
 
 ### MySQL
 
-MySQL has no `RETURNING`. The package needs to know the UUID to re-read the row. **Supply the UUID in your create payload** — the service will use it as the lookup key:
+MySQL has no `RETURNING`. The package needs to know the UUID to re-read the row. **Supply the UUID in your create payload**. The service will use it as the lookup key:
 
 ```ts
 const newTag = await tagsService.create({ id: crypto.randomUUID(), name: 'urgent' });
 ```
 
-Auto-increment keys on MySQL continue to use the driver's `insertId` automatically — only UUIDs require the explicit value.
+Auto-increment keys on MySQL continue to use the driver's `insertId` automatically. Only UUIDs require the explicit value.
 
 <Callout type="warn" title="Don't use ParseIntPipe on uuid routes">
   With UUID primary keys, route params are strings. `@Param('id', ParseIntPipe)` will reject every valid request with a 400. Use either no pipe or `ParseUUIDPipe`:
@@ -92,12 +92,12 @@ The CRUD methods on each service are typed against the right column shape automa
 
 ## Choosing between serial and uuid
 
-- **`serial`** — simpler, smaller index, faster joins. Predictable for debugging.
-- **`uuid`** — safer for distributed systems (no auto-increment collisions when merging data), safer for public-facing IDs (no enumeration), but larger index and slightly slower joins.
+- **`serial`**. Simpler, smaller index, faster joins. Predictable for debugging.
+- **`uuid`**. Safer for distributed systems (no auto-increment collisions when merging data), safer for public-facing IDs (no enumeration), but larger index and slightly slower joins.
 
 For internal entities (join tables, audit logs), `serial` is usually fine. For entities that get exposed in URLs or APIs to other systems, `uuid` is the safer default.
 
 ## Next
 
-- → [Soft delete — independent of primary key, but the restore() return type depends on it](/docs/soft-delete)
-- → [Defining services — custom methods that take advantage of the typed PK](/docs/defining-services)
+- → [Soft delete: independent of primary key, but the restore() return type depends on it](/docs/soft-delete)
+- → [Defining services: custom methods that take advantage of the typed PK](/docs/defining-services)

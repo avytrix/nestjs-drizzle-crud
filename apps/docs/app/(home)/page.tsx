@@ -5,6 +5,7 @@ import { QuickConfigSnippet } from "@/components/home/quick-config-snippet";
 import { FeatureGrid } from "@/components/home/feature-grid";
 import { CompatibleWith } from "@/components/home/compatible-with";
 import { LatestReleases } from "@/components/home/latest-releases";
+import { SponsorCta } from "@/components/home/sponsor-cta";
 import { Footer } from "@/components/home/footer";
 
 export default function HomePage() {
@@ -22,7 +23,7 @@ export default function HomePage() {
 						<code className="rounded-[2px] bg-[var(--fd-surface-muted)] px-1.5 py-0.5 font-mono text-base text-fd-foreground">
 							AppModule
 						</code>
-						. Every entity gets the full CRUD surface — type-safe,
+						. Every entity gets the full CRUD surface, type-safe,
 						dialect-aware, and ready to extend.
 					</p>
 					<HeroTagChips />
@@ -53,6 +54,10 @@ export default function HomePage() {
 					Latest releases
 				</h2>
 				<LatestReleases />
+			</section>
+
+			<section className="container mx-auto max-w-6xl px-6 pb-20">
+				<SponsorCta />
 			</section>
 
 			<Footer />

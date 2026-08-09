@@ -29,7 +29,27 @@ export const docs = defineDocs({
 
 export default defineConfig({
 	mdxOptions: {
-		remarkNpmOptions: {},
+		// pnpm is this project's package manager, so its tab comes first and is
+		// what a reader copies by default. Every ```npm block in content/docs is a
+		// plain `npm i <packages>` line, so the conversions stay this simple.
+		remarkNpmOptions: {
+			persist: { id: "package-manager" },
+			packageManagers: [
+				{
+					name: "pnpm",
+					command: (cmd) => cmd.replace(/^npm i(nstall)? /, "pnpm add "),
+				},
+				{ name: "npm", command: (cmd) => cmd },
+				{
+					name: "yarn",
+					command: (cmd) => cmd.replace(/^npm i(nstall)? /, "yarn add "),
+				},
+				{
+					name: "bun",
+					command: (cmd) => cmd.replace(/^npm i(nstall)? /, "bun add "),
+				},
+			],
+		},
 		rehypeCodeOptions: {
 			themes: {
 				light: "github-light",

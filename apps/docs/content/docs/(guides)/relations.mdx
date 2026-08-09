@@ -72,7 +72,7 @@ Use the relation name as a filter key with a nested object of the **related tabl
 // all cities whose state is named 'Karnataka' (case-insensitive exact)
 await cities.findAll({ state: { name: 'Karnataka' } });
 
-// all cities in a country — filter on the intermediate table's FK column
+// all cities in a country: filter on the intermediate table's FK column
 await cities.findAll({ state: { countryId: 3 } });
 
 // combine with normal column filters and operators
@@ -116,7 +116,7 @@ await cities.findAll(
 );
 ```
 
-Each relation is a single `LEFT JOIN`. Be aware of join-explosion risk — the more relations you eager-load on a large query, the slower it gets.
+Each relation is a single `LEFT JOIN`. Be aware of join-explosion risk. The more relations you eager-load on a large query, the slower it gets.
 
 ## Combining with `select`
 
@@ -134,11 +134,11 @@ await cities.findAll(
 ## Limitations
 
 - **No has-many.** If you need to load `cities` for a `state`, write a custom method on `StatesService` that uses raw Drizzle to query the inverse join.
-- **No many-to-many.** Same — use a join table and a custom method.
+- **No many-to-many.** Same story: use a join table and a custom method.
 - **No nested relations in `options.relations`.** Pass each relation name as a flat string. Eager-loading a relation-of-a-relation requires a custom method.
 - **Joins are always `LEFT`.** Inner-join semantics aren't supported out of the box; filter by `id: { isNotNull: true }` after the join if you need to drop the unmatched rows.
 
 ## Next
 
-- → [Primary keys — including uuid, which affects relation FKs](/docs/primary-keys)
-- → [Filtering — the full filter spec including operator reference](/docs/filtering)
+- → [Primary keys: including uuid, which affects relation FKs](/docs/primary-keys)
+- → [Filtering: the full filter spec including operator reference](/docs/filtering)

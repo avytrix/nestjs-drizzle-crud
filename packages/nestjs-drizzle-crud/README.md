@@ -1,10 +1,34 @@
 # nestjs-drizzle-crud
 
+[![docs](https://img.shields.io/badge/docs-crud.viliha.com-E0234E)](https://crud.viliha.com)
+[![npm](https://img.shields.io/npm/v/nestjs-drizzle-crud?color=E0234E)](https://www.npmjs.com/package/nestjs-drizzle-crud)
+[![license](https://img.shields.io/npm/l/nestjs-drizzle-crud)](./LICENSE)
+[![Sponsor @myviliha](https://img.shields.io/badge/Sponsor-%40myviliha-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/myviliha)
+
+## ❤️ Sponsoring is what keeps this package free
+
+A CRUD layer sounds simple until you own it in production: dialect differences,
+driver result shapes, error codes that have to become the right HTTP status,
+counts that stay correct once filters and joins are in play. This package
+absorbs that work and gives it away under MIT.
+
+Keeping it current with NestJS, Drizzle and TypeScript releases is ongoing, and
+sponsors are what make keeping it free sustainable.
+
+**Even $1 a month helps.** It funds bug fixes, new guides, and the next release.
+
+> Sponsors get a spot on the [sponsor page](https://crud.viliha.com/docs/sponsor)
+> and our genuine thanks.
+
+### 👉 [Sponsor on GitHub →](https://github.com/sponsors/myviliha) &nbsp;·&nbsp; thank you 🙏
+
+---
+
 A complete, type-safe CRUD abstraction layer for [Drizzle ORM](https://orm.drizzle.team/) in [NestJS](https://nestjs.com/) applications.
 
-**[Documentation](https://crud.viliha.com)** · **[npm](https://www.npmjs.com/package/nestjs-drizzle-crud)** · **[GitHub](https://github.com/myviliha/viliha-drizzle-crud)**
+**[Documentation](https://crud.viliha.com)** · **[npm](https://www.npmjs.com/package/nestjs-drizzle-crud)** · **[GitHub](https://github.com/myviliha/viliha-drizzle-crud)** · **[Sponsor](https://github.com/sponsors/myviliha)**
 
-Configure the database connection **once**, then every entity gets full CRUD (find / create / update / delete / soft-delete / bulk / pagination / filtering / full-text search) by extending one base class — no per-service connection wiring.
+Configure the database connection **once**, then every entity gets full CRUD (find / create / update / delete / soft-delete / bulk / pagination / filtering / full-text search) by extending one base class. No per-service connection wiring.
 
 ```typescript
 // 1. configure once (app.module.ts)
@@ -43,23 +67,24 @@ DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
 - [Lifecycle hooks & validation](#lifecycle-hooks--validation)
 - [Testing](#testing)
 - [For AI agents / LLM tools](#for-ai-agents--llm-tools)
+- [Support](#support)
 
 ---
 
 ## Features
 
-- 🚀 **Complete CRUD** — `find`, `findOne`, `findAll`, `create`, `update`, `delete`, and more
-- 🧩 **Configure once** — `forRoot()` owns the connection; services only declare a table
-- ⚡ **Type-safe** — generics over your entity, create/update DTOs and filter types
-- 🗃️ **PostgreSQL & MySQL** — dialect-aware (`RETURNING` vs `insertId`)
-- 🔄 **Soft delete** — opt-in soft delete with `restore`
-- 📦 **Bulk operations** — mass create/update/delete inside a transaction
-- 🔍 **Rich filtering** — equality, `in`, comparison operators, `like`/`ilike`, null checks
-- 🔎 **Full-text search** — PostgreSQL `tsvector`/`tsquery`
-- 🔗 **Relations** — many-to-one eager loading and filtering by related columns
-- 🔑 **Flexible primary keys** — `serial` / `int` / `bigint` / `bigserial` / `uuid`
-- 🪝 **Hooks & validation** — `before*`/`after*` hooks, `validateCreate`/`validateUpdate`
-- 🧪 **Test utilities** — mock db/table/entity factories
+- 🚀 **Complete CRUD**, `find`, `findOne`, `findAll`, `create`, `update`, `delete`, and more
+- 🧩 **Configure once**, `forRoot()` owns the connection; services only declare a table
+- ⚡ **Type-safe**. Generics over your entity, create/update DTOs and filter types
+- 🗃️ **PostgreSQL & MySQL**. Dialect-aware (`RETURNING` vs `insertId`)
+- 🔄 **Soft delete**. Opt-in soft delete with `restore`
+- 📦 **Bulk operations**. Mass create/update/delete inside a transaction
+- 🔍 **Rich filtering**. Equality, `in`, comparison operators, `like`/`ilike`, null checks
+- 🔎 **Full-text search**. PostgreSQL `tsvector`/`tsquery`
+- 🔗 **Relations**. Many-to-one eager loading and filtering by related columns
+- 🔑 **Flexible primary keys**, `serial` / `int` / `bigint` / `bigserial` / `uuid`
+- 🪝 **Hooks & validation**, `before*`/`after*` hooks, `validateCreate`/`validateUpdate`
+- 🧪 **Test utilities**. Mock db/table/entity factories
 
 ---
 
@@ -297,7 +322,7 @@ Anything in `config` overrides the project defaults for that entity. The shape i
 
 ## Defining services
 
-The minimal service is an empty class — connection, dialect and defaults are
+The minimal service is an empty class. Connection, dialect and defaults are
 injected by the module:
 
 ```typescript
@@ -394,7 +419,7 @@ interface SqlOperationOptions {
 }
 ```
 
-> `relations` eager-loads relations declared in the entity's config — see [Relations](#relations).
+> `relations` eager-loads relations declared in the entity's config. See [Relations](#relations).
 
 ---
 
@@ -408,7 +433,7 @@ await service.findAll({
   status: 'active',                // string: exact match (case-insensitive when sql.caseSensitive === false)
   role: ['admin', 'editor'],       // array: IN (...)
   age: { gte: 18, lt: 65 },        // comparison operators
-  name: { ilike: 'jo%' },          // pattern match — you supply the wildcards
+  name: { ilike: 'jo%' },          // pattern match: you supply the wildcards
   deleted_at: { isNull: true },    // null checks
 });
 ```
@@ -419,14 +444,14 @@ await service.findAll({
 |---|---|
 | `gt` / `gte` / `lt` / `lte` | `>` `>=` `<` `<=` |
 | `neq` | `<>` |
-| `like` / `ilike` | `LIKE` / `ILIKE` — **pass your own `%` wildcards** |
+| `like` / `ilike` | `LIKE` / `ILIKE`, **pass your own `%` wildcards** |
 | `in` | `IN (...)` |
 | `isNull` / `isNotNull` | `IS NULL` / `IS NOT NULL` |
 
 > A bare string value is an **exact** match. When `sql.caseSensitive` is `false`
 > (the default) it compares `lower(column) = lower(value)`, so the match is
 > case-insensitive and `%` / `_` / `\` in the value are treated as literal
-> characters — not wildcards. For partial/pattern matching, use the explicit
+> characters. Not wildcards. For partial/pattern matching, use the explicit
 > `like` / `ilike` operators and supply your own wildcards.
 
 ---
@@ -446,7 +471,7 @@ await service.findAll(
 ### Default sort
 
 When the caller passes no `sortBy`, `findAll` falls back to the entity's
-`defaultSort` — an ordered list of columns applied as the `ORDER BY` (primary
+`defaultSort`. An ordered list of columns applied as the `ORDER BY` (primary
 sort first, then tiebreakers). An explicit `sortBy` **replaces** the default
 entirely. Per-column `order` defaults to `'asc'`; unknown columns are skipped.
 
@@ -509,7 +534,7 @@ table's** columns. Supports the same [operators](#filtering) as normal filters:
 // all cities whose state is named 'Karnataka' (case-insensitive exact)
 await cities.findAll({ state: { name: 'Karnataka' } });
 
-// all cities in a country — filter on the intermediate table's FK column
+// all cities in a country: filter on the intermediate table's FK column
 await cities.findAll({ state: { country_id: 3 } });
 
 // combine with normal column filters and operators
@@ -518,7 +543,7 @@ await cities.findAll({ name: { ilike: 'B%' }, state: { country_id: 3 } });
 
 > **Scope:** only **many-to-one / one-to-one** (belongs-to) relations are
 > supported. Has-many collection loading and many-to-many (join tables) are not
-> handled — model those with a custom service method using `this.config.db`, or
+> handled. Model those with a custom service method using `this.config.db`, or
 > orchestrate across services in a controller.
 >
 > **Multi-level filtering** works through the intermediate table's columns
@@ -547,9 +572,9 @@ Each entity declares its primary key via `primaryKey` (column name, default
 `primaryKeyType` accepts `'serial' | 'bigserial' | 'int' | 'bigint' | 'uuid'`.
 On PostgreSQL the created row (including a DB-generated UUID) is returned via
 `RETURNING`. On MySQL (no `RETURNING`), provide the UUID in your create payload
-so the row can be re-read — auto-increment keys use the driver's `insertId`.
+so the row can be re-read. Auto-increment keys use the driver's `insertId`.
 
-> Remember: with UUID keys, route params are strings — don't apply
+> Remember: with UUID keys, route params are strings. Don't apply
 > `ParseIntPipe` in your controller.
 
 ---
@@ -587,7 +612,7 @@ DrizzleCrudModule.forRoot({
 ```
 
 > Caveat: this uses the **application** clock and only applies to writes that go
-> **through the package** — raw SQL, migrations or other code paths won't set
+> **through the package**. Raw SQL, migrations or other code paths won't set
 > the values.
 
 ### Schema/DB-managed (recommended)
@@ -712,23 +737,24 @@ Concise, accurate facts for code generation. Prefer these over guessing.
 1. `DrizzleCrudModule.forRoot({ dialect, connectionString | db, schema, defaults })` once in `AppModule`.
 2. `DrizzleCrudModule.forFeature([{ service, table, config? }])` in each feature module.
 
-**A service is an empty subclass — do NOT inject the db or pass `dialect`/`db`:**
+**A service is an empty subclass. Do NOT inject the db or pass `dialect`/`db`:**
 ```typescript
 export class XService extends SqlBaseCrudService<X, CreateXDto, UpdateXDto, XFilterDto> {}
 ```
 
 **Rules / gotchas:**
 - Generics order: `SqlBaseCrudService<Entity, CreateDto, UpdateDto, FilterDto>`. All but `Entity` default to `Partial<Entity>`.
-- Do **not** add an `@Inject('DRIZZLE_DB')` constructor — `forFeature` constructs the service for you. Adding a constructor that calls `super({...})` is the legacy/manual pattern and is unnecessary.
+- Do **not** add an `@Inject('DRIZZLE_DB')` constructor, `forFeature` constructs the service for you. Adding a constructor that calls `super({...})` is the legacy/manual pattern and is unnecessary.
 - The table is passed in `forFeature`, **not** in the service.
 - If tables lack timestamp/soft-delete columns, set `defaults: { softDelete: false, timestamps: false }`, else inserts will reference non-existent columns.
-- `findAll` returns `{ data, total, page, limit }` — not a bare array.
+- `findAll` returns `{ data, total, page, limit }`. Not a bare array.
 - Filter operators live inside an object value: `{ age: { gte: 18 } }`. `like`/`ilike` require caller-supplied `%` wildcards; a bare string is exact match.
 - `delete`/`softDelete` return `boolean`; `update`/`restore` return the entity and throw `EntityNotFoundException` when missing.
+- Postgres error codes are translated for you: `23505` unique -> 409, `22001`/`23514`/`22003` bad value -> 400, `23503` on create/update (missing FK target) -> 400 `ForeignKeyViolationException`, `23503` on delete (still referenced) -> 409 `EntityInUseException`.
 - Relations (many-to-one only): declare in forFeature `config.relations = { relName: { table, localKey, references? } }`. Then eager-load via `options.relations: ['relName']` (nested object on the result, `null` if unmatched) and filter via `findAll({ relName: { col: value } })` (same operators; multi-level via the intermediate table's columns, e.g. `state.country_id`). No has-many/many-to-many.
-- Primary keys: `primaryKey` (default `'id'`) + `primaryKeyType` (`'serial' | 'bigserial' | 'int' | 'bigint' | 'uuid'`) per entity in forFeature config. UUID works on Postgres via RETURNING; with uuid keys, route params are strings — don't use `ParseIntPipe`.
+- Primary keys: `primaryKey` (default `'id'`) + `primaryKeyType` (`'serial' | 'bigserial' | 'int' | 'bigint' | 'uuid'`) per entity in forFeature config. UUID works on Postgres via RETURNING; with uuid keys, route params are strings. Don't use `ParseIntPipe`.
 - Full-text search is PostgreSQL-only.
-- Exports: `SqlBaseCrudService`, `DrizzleCrudModule`, `DRIZZLE_DB`, `DRIZZLE_CRUD_CONFIG`, `TestCrudFactory`, exceptions (`EntityNotFoundException`, `BulkOperationException`, …), and types (`SqlCrudConfig`, `SqlOperationOptions`, `DrizzleCrudConfig`, `CrudFeature`, `SqlDialect`, `PrimaryKeyType`).
+- Exports: `SqlBaseCrudService`, `DrizzleCrudModule`, `DRIZZLE_DB`, `DRIZZLE_CRUD_CONFIG`, `TestCrudFactory`, exceptions (`EntityNotFoundException`, `DuplicateEntityException`, `ForeignKeyViolationException`, `EntityInUseException`, `ValidationFailedException`, `BulkOperationException`, `DatabaseConnectionException`, `TransactionException`), and types (`SqlCrudConfig`, `SqlOperationOptions`, `DrizzleCrudConfig`, `CrudFeature`, `SqlDialect`, `PrimaryKeyType`).
 
 ### `SqlCrudConfig`
 
@@ -746,6 +772,21 @@ interface SqlCrudConfig {
   relations?: Record<string, { table: any; localKey: string; references?: string }>;
 }
 ```
+
+---
+
+## Support
+
+- **Docs:** [crud.viliha.com](https://crud.viliha.com), including a
+  [FAQ and where-to-ask guide](https://crud.viliha.com/docs/getting-help).
+- **Questions:** [GitHub Discussions](https://github.com/myviliha/viliha-drizzle-crud/discussions).
+- **Bugs:** [open an issue](https://github.com/myviliha/viliha-drizzle-crud/issues/new/choose)
+  with the version, dialect, table definition and the call you made.
+- **Security:** follow [SECURITY.md](https://github.com/myviliha/viliha-drizzle-crud/blob/main/SECURITY.md),
+  never a public issue.
+- **AI agents:** this package ships `AGENT.md`. Point your coding agent at it with
+  `cp node_modules/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md`.
+- **Sponsor:** [github.com/sponsors/myviliha](https://github.com/sponsors/myviliha).
 
 ---
 

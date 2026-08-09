@@ -29,12 +29,14 @@ Every export below is available from the package root: `import { ... } from 'nes
 
 ## Exceptions
 
-All exceptions extend `@nestjs/common`'s `HttpException`, so Nest's default exception filter maps them to HTTP status codes automatically. They are real classes — use `instanceof` checks in your exception filters. See [Errors](/docs/errors) for the per-method reference.
+All exceptions extend `@nestjs/common`'s `HttpException`, so Nest's default exception filter maps them to HTTP status codes automatically. They are real classes. Use `instanceof` checks in your exception filters. See [Errors](/docs/errors) for the per-method reference.
 
 | Export | HTTP | Description |
 | --- | --- | --- |
 | `EntityNotFoundException` | 404 | Thrown by `update`, `restore`, `massUpdate`, `massRestore` when the row doesn't exist. |
 | `DuplicateEntityException` | 409 | Thrown by `create` / `update` when a unique constraint is violated (Postgres SQLSTATE `23505`). |
+| `ForeignKeyViolationException` | 400 | Thrown by `create` / `update` when a supplied foreign key references no existing row (`23503`). Names the offending column. |
+| `EntityInUseException` | 409 | Thrown by `delete` when other rows still reference this one (`23503`, `ON DELETE RESTRICT` or `NO ACTION`). |
 | `ValidationFailedException` | 400 | Throw this from your `validateCreate` / `validateUpdate` hooks to reject bad input. |
 | `BulkOperationException` | 400 | Thrown by any bulk method when the transaction rolls back. Carries per-row errors. |
 | `DatabaseConnectionException` | 500 | Thrown when the connection can't be established. |
@@ -44,13 +46,13 @@ All exceptions extend `@nestjs/common`'s `HttpException`, so Nest's default exce
 
 | Export | Kind |
 | --- | --- |
-| `ICrudService` | `interface` — the abstract shape `SqlBaseCrudService` implements. |
-| `CrudFeature` | `type` — the input to `forFeature`. |
-| `DrizzleCrudConfig` | `type` — input to `forRoot` / `forRootAsync`. |
-| `SqlCrudConfig` | `interface` — the per-entity merged config. |
-| `SqlOperationOptions` | `interface` — the third argument to most methods, including `search` for `findAll` and `count`. |
-| `RelationConfig` | `interface` — describes one relation in `relations`. |
-| `RelationsConfig` | `type` — a record of `RelationConfig`. |
+| `ICrudService` | `interface`, the abstract shape `SqlBaseCrudService` implements. |
+| `CrudFeature` | `type`, the input to `forFeature`. |
+| `DrizzleCrudConfig` | `type`, input to `forRoot` / `forRootAsync`. |
+| `SqlCrudConfig` | `interface`, the per-entity merged config. |
+| `SqlOperationOptions` | `interface`, the third argument to most methods, including `search` for `findAll` and `count`. |
+| `RelationConfig` | `interface`, describes one relation in `relations`. |
+| `RelationsConfig` | `type`, a record of `RelationConfig`. |
 | `SqlDialect` | `'postgresql' \| 'mysql'`. |
 | `PrimaryKeyType` | `'serial' \| 'bigserial' \| 'int' \| 'bigint' \| 'uuid'`. |
 | `SortColumn` | `{ column, order }`. |
@@ -81,7 +83,7 @@ import {
 } from 'nestjs-drizzle-crud';
 ```
 
-All of these are pass-throughs to `drizzle-orm` — the package doesn't wrap or extend them.
+All of these are pass-throughs to `drizzle-orm`. The package doesn't wrap or extend them.
 
 ## Test utilities
 
@@ -99,9 +101,9 @@ The following are internal to the package and should not be imported directly:
 - `DrizzleCrudModule`'s internal `connectionProviders` / `buildEntityConfig` / `normalizeConfig` helpers.
 - The internal `DRIZZLE_RAW_CONFIG` token.
 
-If you find yourself reaching for these, open a feature request — the public API may need a hook.
+If you find yourself reaching for these, open a feature request. The public API may need a hook.
 
 ## Next
 
-- → [Config types — `SqlCrudConfig` and `DrizzleCrudConfig`](/docs/config-types)
-- → [For AI agents — condensed package facts for code generation](/docs/llm-notes)
+- → [Config types, `SqlCrudConfig` and `DrizzleCrudConfig`](/docs/config-types)
+- → [For AI agents: condensed package facts for code generation](/docs/llm-notes)

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 
-const STORAGE_KEY = "docs-banner-dismissed-v310";
+const STORAGE_KEY = "docs-banner-dismissed-v322";
 
 export function TopBanner() {
 	const [visible, setVisible] = useState(false);
@@ -24,10 +24,10 @@ export function TopBanner() {
 					href="/docs/changelog"
 					className="flex-1 truncate text-center text-fd-muted-foreground transition-colors hover:text-fd-foreground"
 				>
-					<span className="font-semibold text-fd-foreground">v3.1.0 released</span>
+					<span className="font-semibold text-fd-foreground">v3.2.2 released</span>
 					<span className="mx-2 hidden sm:inline">·</span>
 					<span className="hidden sm:inline">
-						findAll and count now support cross-column search →
+						Foreign-key violations map to 400 and 409 again →
 					</span>
 					<span className="sm:hidden">· Changelog →</span>
 				</Link>

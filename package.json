@@ -11,9 +11,12 @@
 		"build": "turbo run build",
 		"test": "turbo run test",
 		"typecheck": "turbo run typecheck",
-		"dev": "turbo run dev",
+		"dev": "turbo run dev --filter=nestjs-drizzle-crud-docs",
+		"dev:api": "turbo run dev --filter=api",
+		"dev:all": "turbo run dev",
 		"lint": "biome lint .",
-		"format": "biome format --write ."
+		"format": "biome format --write .",
+		"release": "pnpm --filter nestjs-drizzle-crud release"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.4",

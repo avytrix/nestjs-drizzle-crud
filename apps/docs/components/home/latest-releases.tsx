@@ -3,22 +3,22 @@ import { ArrowRight } from "lucide-react";
 
 const RELEASES = [
 	{
+		version: "3.2.2",
+		date: "Aug 9, 2026",
+		title: "Foreign-key mapping restored",
+		body: "ForeignKeyViolationException and EntityInUseException are exported again. A create or update pointing at a missing parent row returns 400, and a delete blocked by dependent rows returns 409, instead of a raw 500.",
+	},
+	{
+		version: "3.2.1",
+		date: "Jul 17, 2026",
+		title: "Docs site and packaging",
+		body: "The package homepage now points at crud.viliha.com, and the READMEs link the docs, npm, and GitHub. No runtime change, and the foreign-key regression it carried is fixed in 3.2.2.",
+	},
+	{
 		version: "3.1.0",
 		date: "Jun 29, 2026",
 		title: "findAll and count support list search",
 		body: "Pass options.search to search across configured columns while keeping filters, pagination, sorting, relation filters, and total count in the same query path.",
-	},
-	{
-		version: "3.0.4",
-		date: "Jun 21, 2026",
-		title: "Bad client input maps to 400",
-		body: "Postgres data exceptions such as too-long values, CHECK violations, and numeric overflow now map to ValidationFailedException instead of leaking as raw 500s.",
-	},
-	{
-		version: "3.0.3",
-		date: "Jun 20, 2026",
-		title: "Case-insensitive string filters are exact",
-		body: "A bare-string filter now compiles to lower(col) = lower(val). The % / _ / \\ characters in the value are treated as literal data, not wildcards.",
 	},
 ];
 
@@ -29,7 +29,7 @@ export function LatestReleases() {
 				<Link
 					key={r.version}
 					href="/docs/changelog"
-					className="block rounded-lg border border-[var(--fd-border-muted)] bg-[var(--fd-surface-muted)] p-5 text-fd-foreground transition-colors hover:border-[var(--fd-border-hover)] hover:bg-fd-accent/40"
+					className="block rounded-[8px] border border-[var(--fd-border-muted)] bg-[var(--fd-surface-muted)] p-5 text-fd-foreground transition-colors hover:border-[var(--fd-border-hover)] hover:bg-fd-accent/40"
 				>
 					<div className="mb-1.5 flex items-baseline gap-2">
 						<span className="text-base font-semibold tracking-[-0.198px] text-fd-foreground">

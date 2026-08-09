@@ -2,17 +2,18 @@ import type { Metadata } from "next";
 
 export const siteConfig = {
 	name: "nestjs-drizzle-crud",
-	version: "3.2.1",
+	version: "3.2.2",
 	tagline: "Type-safe CRUD for Drizzle ORM in NestJS",
 	description:
-		"Type-safe CRUD for Drizzle ORM in NestJS — configure the connection once, and every entity gets full CRUD: find, create, update, soft-delete, bulk ops, pagination, filtering, relations and full-text search.",
+		"Type-safe CRUD for Drizzle ORM in NestJS. Configure the connection once, and every entity gets full CRUD: find, create, update, soft-delete, bulk ops, pagination, filtering, relations and full-text search.",
 	url: process.env.NEXT_PUBLIC_SITE_URL ?? "https://crud.viliha.com",
 	github: "https://github.com/myviliha/viliha-drizzle-crud",
 	npm: "https://www.npmjs.com/package/nestjs-drizzle-crud",
+	sponsor: "https://github.com/sponsors/myviliha",
 	author: "Suman Bonakurthi",
 	license: "MIT",
 	repoPath: "blob/main/content/docs",
-	// Target search terms — merged into every page's keywords.
+	// Target search terms, merged into every page's keywords.
 	keywords: [
 		"nestjs",
 		"drizzle",
@@ -39,7 +40,7 @@ export const siteConfig = {
 
 export type SiteConfig = typeof siteConfig;
 
-const ogTitle = `${siteConfig.name} — ${siteConfig.tagline}`;
+const ogTitle = `${siteConfig.name}: ${siteConfig.tagline}`;
 
 /**
  * Per-page metadata factory. Returns Next.js `Metadata` with a canonical URL,
