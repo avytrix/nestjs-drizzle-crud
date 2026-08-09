@@ -68,7 +68,8 @@ External contributors work from a **fork**; you do not need write access.
 7. Fill in the PR template. CI (lint, typecheck, build, test) runs automatically and must pass.
 8. A maintainer reviews. Address feedback by pushing more commits to the same branch.
 
-> `main` is protected: changes land only through reviewed PRs with green CI. No direct pushes.
+> Maintainers may push to `main` directly, but only on a tree whose verify set
+> just passed. Contributions from outside the org always land through a PR.
 
 ## Changelog and docs are part of the change
 
@@ -96,14 +97,17 @@ agent.
 
 ## Releasing (maintainers)
 
+The normal path is a tag. `.github/workflows/release.yml` re-runs the verify set
+and publishes to npm with provenance:
+
 ```bash
 pnpm lint && pnpm typecheck && pnpm build && pnpm test   # must be green first
-pnpm release                                             # pnpm publish from packages/nestjs-drizzle-crud
+# bump packages/nestjs-drizzle-crud/package.json + CHANGELOG.md, commit, then:
+git tag v3.2.2 && git push origin v3.2.2
 ```
 
-`pnpm release` runs `prepublishOnly` (build plus tests) before publishing. The
-usual path is a GitHub Release, which triggers `.github/workflows/release.yml`
-and publishes with npm provenance; `pnpm release` is the manual fallback.
+`pnpm release` is the manual fallback. It runs `prepublishOnly` (build plus
+tests) and publishes from `packages/nestjs-drizzle-crud`, without provenance.
 
 ## Reporting security issues
 

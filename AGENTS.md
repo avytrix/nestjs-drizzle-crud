@@ -137,11 +137,24 @@ Prefer the smallest change that solves the problem. Reach for the standard libra
   6. Update the changelog and every doc the change touches, and bump the package version if the change ships in the package.
 
   **Finishing**
-  7. Open a PR against `main` and fill in the template. `main` is protected, so changes land through a reviewed PR with green CI, never a direct push.
+  7. Merge into `main`, push, then delete the branch (local and remote).
   8. One task, one branch. Follow-up work for the same task goes on the same branch. If a second branch already exists and both are unmerged, rebase it onto the first and continue there, so `main` never gets a half consistent merge.
 
-- Releases publish from a GitHub Release (`.github/workflows/release.yml`), which builds, tests and publishes `nestjs-drizzle-crud` with npm provenance. Tag only a commit whose verify set is green.
-- The manual fallback is `pnpm release` from the repo root, which runs `pnpm publish` in the package after `prepublishOnly` rebuilds and re-tests it. Use pnpm for everything here; there is no npm-based path in this repo.
+- **Pushing to `main` is allowed.** It is allowed because step 5 is done, not instead of it. Never push a tree you have not just verified, and never leave `main` red: if something lands broken, fix it forward immediately rather than waiting to be asked. External contributors still work from a fork and a PR (see `CONTRIBUTING.md`).
+
+## Release and CI/CD
+
+- **Every workflow pins its actions to a commit SHA**, with the version in a trailing comment. Dependabot bumps them monthly (`chore(ci)` prefix). Never reintroduce a floating `@v4` tag.
+- **CI** (`ci.yml`) runs lint, typecheck, build and test on Node 20 and 24 for every push and PR to `main`. **CodeQL**, **Semgrep**, **Gitleaks** and a production `pnpm audit` run alongside it.
+- **Docs** deploy from `deploy-docs.yml` on push to `main`: a static export to GitHub Pages served at the `CNAME` domain.
+- **Releases publish on a `v*` tag**, not on a GitHub Release. The workflow re-runs the verify set, writes the npm token to `~/.npmrc` explicitly (pnpm does not reliably read `NODE_AUTH_TOKEN`), and publishes with provenance:
+
+  ```bash
+  # after the version bump and changelog entry are committed and green
+  git tag v3.2.2 && git push origin v3.2.2
+  ```
+
+- The manual fallback is `pnpm release` from the repo root, which runs `pnpm publish` in the package after `prepublishOnly` rebuilds and re-tests it. It publishes without provenance, so prefer the tag. Use pnpm for everything here; there is no npm-based path in this repo.
 
 ## Performance defaults
 

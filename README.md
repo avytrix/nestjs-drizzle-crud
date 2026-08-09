@@ -94,10 +94,12 @@ pnpm dev:all                                 # docs and api together
 
 `pnpm dev` runs the docs site, the same way it does in the other Viliha repos.
 
-Publishing the package manually (maintainers), after the verify set is green:
+Publishing (maintainers), after the verify set is green. A `v*` tag is the normal
+path; `pnpm release` is the manual fallback:
 
 ```bash
-pnpm release     # pnpm publish from packages/nestjs-drizzle-crud
+git tag v3.2.2 && git push origin v3.2.2   # release.yml publishes with provenance
+pnpm release                                # or publish straight from the package
 ```
 
 ## Working with AI agents
@@ -143,9 +145,11 @@ Copy `apps/api/.env.example` to `apps/api/.env` and set `DATABASE_URL`.
   served at [crud.viliha.com](https://crud.viliha.com). One-time setup is
   Settings → Pages → Source = GitHub Actions. Add `DATABASE_URL` as a repo secret
   to run the api e2e in CI.
-- **Release** (`release.yml`): publishes
+- **Release** (`release.yml`): on a `v*` tag, re-runs the verify set and publishes
   [`nestjs-drizzle-crud`](https://www.npmjs.com/package/nestjs-drizzle-crud) to npm
-  with provenance on a GitHub Release (needs `NPM_TOKEN`).
+  with provenance (needs the `NPM_TOKEN` secret).
+- **Security**: CodeQL, Semgrep, Gitleaks and a production `pnpm audit` on every
+  push and PR. Every action is pinned to a commit SHA and bumped by Dependabot.
 
 ## Contributing
 
