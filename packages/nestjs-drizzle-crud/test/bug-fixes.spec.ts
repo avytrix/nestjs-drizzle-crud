@@ -18,7 +18,9 @@ import { PgDialect, pgTable, serial, varchar } from "drizzle-orm/pg-core";
 import { SqlBaseCrudService } from "../src/core/abstract/sql-base-crud.service";
 import {
 	DuplicateEntityException,
+	EntityInUseException,
 	EntityNotFoundException,
+	ForeignKeyViolationException,
 	ValidationFailedException,
 } from "../src/exceptions/crud.exceptions";
 import { TestCrudFactory } from "../src/test-utils/test-factory";
@@ -424,5 +426,99 @@ describe("F5: findAll supports cross-column search options", () => {
 		expect(dataQuery.where).toHaveBeenCalledTimes(1);
 		expect(countQuery.where).toHaveBeenCalledTimes(1);
 		expect(res).toMatchObject({ total: 1, page: 1, limit: 20 });
+	});
+});
+
+describe("FK violations (23503) map by direction, restored in 3.2.2", () => {
+	const mockTable = TestCrudFactory.createMockTable();
+
+	function fkError(detail?: string, wrapped = false) {
+		const err = new Error("fk");
+		return wrapped
+			? Object.assign(err, { cause: { code: "23503", detail } })
+			: Object.assign(err, { code: "23503", detail });
+	}
+
+	it("maps a create referencing a missing parent row to 400", async () => {
+		const insert: any = {
+			values: jest.fn(() => insert),
+			returning: jest.fn(() =>
+				Promise.reject(
+					fkError('Key (region_id)=(99) is not present in table "regions".'),
+				),
+			),
+		};
+		const db: any = { insert: jest.fn(() => insert) };
+		const svc = TestCrudFactory.createTestService(Svc, db, mockTable);
+
+		await expect((svc as any).create({ name: "x" })).rejects.toBeInstanceOf(
+			ForeignKeyViolationException,
+		);
+	});
+
+	it("names the offending column from the driver detail", async () => {
+		const svc = TestCrudFactory.createTestService(Svc, {}, mockTable);
+		const ex = (svc as any).toForeignKeyException(
+			fkError('Key (region_id)=(99) is not present in table "regions".'),
+		);
+
+		expect(ex.message).toContain("region_id");
+		expect(ex.getStatus()).toBe(400);
+	});
+
+	it("falls back to 'reference' when the detail is missing", async () => {
+		const svc = TestCrudFactory.createTestService(Svc, {}, mockTable);
+		const ex = (svc as any).toForeignKeyException(fkError());
+
+		expect(ex.message).toContain("reference");
+	});
+
+	it("reads the code off a wrapped DrizzleQueryError cause", () => {
+		const svc = TestCrudFactory.createTestService(Svc, {}, mockTable);
+
+		expect((svc as any).isForeignKeyViolation(fkError(undefined, true))).toBe(
+			true,
+		);
+		expect(
+			(svc as any).isForeignKeyViolation(
+				Object.assign(new Error("other"), { code: "23505" }),
+			),
+		).toBe(false);
+	});
+
+	it("maps a blocked delete to 409 EntityInUseException", async () => {
+		const del: any = {
+			where: jest.fn(() =>
+				Promise.reject(
+					fkError('Key (id)=(1) is still referenced from table "cities".'),
+				),
+			),
+		};
+		const db: any = {
+			select: jest.fn(() => chain([{ id: 1, name: "x", email: "y" }])),
+			delete: jest.fn(() => del),
+		};
+		const svc = TestCrudFactory.createTestService(Svc, db, mockTable, {
+			softDelete: { enabled: false, column: "deleted_at" },
+		});
+
+		await expect((svc as any).delete(1)).rejects.toBeInstanceOf(
+			EntityInUseException,
+		);
+	});
+
+	it("lets a non-FK delete error bubble unchanged", async () => {
+		const del: any = {
+			where: jest.fn(() => Promise.reject(new Error("connection lost"))),
+		};
+		const db: any = {
+			select: jest.fn(() => chain([{ id: 1, name: "x", email: "y" }])),
+			delete: jest.fn(() => del),
+		};
+		const svc = TestCrudFactory.createTestService(Svc, db, mockTable, {
+			softDelete: { enabled: false, column: "deleted_at" },
+		});
+
+		await expect((svc as any).delete(1)).rejects.toThrow("connection lost");
 	});
 });

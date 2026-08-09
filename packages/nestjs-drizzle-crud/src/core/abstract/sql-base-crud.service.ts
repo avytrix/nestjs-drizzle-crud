@@ -23,7 +23,9 @@ import { BadRequestException } from "@nestjs/common";
 import {
 	BulkOperationException,
 	DuplicateEntityException,
+	EntityInUseException,
 	EntityNotFoundException,
+	ForeignKeyViolationException,
 	ValidationFailedException,
 } from "../../exceptions/crud.exceptions";
 import type {
@@ -187,7 +189,7 @@ export abstract class SqlBaseCrudService<
 	}
 
 	// Start a SELECT with the right projection. An explicit projection is needed
-	// whenever a JOIN is applied (eager load OR relation filter) — otherwise a
+	// whenever a JOIN is applied (eager load OR relation filter), otherwise a
 	// plain `select()` + join makes Drizzle nest rows per table
 	// ({ table: {...}, joined: {...} }). When there are no joins this matches the
 	// original all-columns / partial-select behaviour.
@@ -331,8 +333,9 @@ export abstract class SqlBaseCrudService<
 	// server fault: value too long (22001), failed CHECK (23514), numeric out of
 	// range (22003). These otherwise surface as a raw 500; map them to 400 so the
 	// caller sees a client error (mirrors the unique-violation -> 409 mapping).
-	// (NOT-NULL / FK violations are intentionally left to bubble: they usually
-	// indicate a programming/config error, not a recoverable bad value.)
+	// (NOT-NULL violations are intentionally left to bubble: they usually
+	// indicate a programming/config error, not a recoverable bad value. FK
+	// violations are handled separately below.)
 	protected isDataException(error: any): boolean {
 		const code = error?.code ?? error?.cause?.code;
 		return code === "22001" || code === "23514" || code === "22003";
@@ -346,6 +349,23 @@ export abstract class SqlBaseCrudService<
 			"22003": "a numeric value is out of range",
 		};
 		return new ValidationFailedException(messages[code] ?? "invalid value");
+	}
+
+	// Postgres foreign-key violation (23503). The direction decides the status:
+	// on create/update the caller referenced a parent row that does not exist
+	// (400), on delete other rows still reference this one (409).
+	protected isForeignKeyViolation(error: any): boolean {
+		const code = error?.code ?? error?.cause?.code;
+		return code === "23503";
+	}
+
+	protected toForeignKeyException(error: any): ForeignKeyViolationException {
+		const detail: string = error?.detail ?? error?.cause?.detail ?? "";
+		const m = detail.match(/Key \((?<field>.+?)\)=/);
+		return new ForeignKeyViolationException(
+			this.getEntityName(),
+			m?.groups?.field ?? "reference",
+		);
 	}
 
 	// Apply a row-level lock to a SELECT builder (Postgres only; no-op elsewhere).
@@ -537,6 +557,9 @@ export abstract class SqlBaseCrudService<
 			if (this.isUniqueViolation(error)) throw this.toDuplicateException(error);
 			// Bad client input (too long / failed check / out of range) -> 400.
 			if (this.isDataException(error)) throw this.toDataException(error);
+			// A reference to a row that does not exist is bad input too -> 400.
+			if (this.isForeignKeyViolation(error))
+				throw this.toForeignKeyException(error);
 			throw error;
 		}
 	}
@@ -583,6 +606,8 @@ export abstract class SqlBaseCrudService<
 		} catch (error) {
 			if (this.isUniqueViolation(error)) throw this.toDuplicateException(error);
 			if (this.isDataException(error)) throw this.toDataException(error);
+			if (this.isForeignKeyViolation(error))
+				throw this.toForeignKeyException(error);
 			throw error;
 		}
 	}
@@ -670,11 +695,19 @@ export abstract class SqlBaseCrudService<
 			.delete(this.config.table)
 			.where(eq(this.config.table[this.config.primaryKey], id));
 
-		const result = await deleteQuery;
-		const success = this.wasAffected(result);
+		try {
+			const result = await deleteQuery;
+			const success = this.wasAffected(result);
 
-		if (success && !hooks.skipAfter) await this.afterDelete(id);
-		return success;
+			if (success && !hooks.skipAfter) await this.afterDelete(id);
+			return success;
+		} catch (error) {
+			// Dependent rows still reference this one (ON DELETE RESTRICT /
+			// NO ACTION), which is a conflict, not a server fault -> 409.
+			if (this.isForeignKeyViolation(error))
+				throw new EntityInUseException(this.getEntityName());
+			throw error;
+		}
 	}
 
 	// Bulk Operations

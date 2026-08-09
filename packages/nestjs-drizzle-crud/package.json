@@ -1,12 +1,14 @@
 {
 	"name": "nestjs-drizzle-crud",
-	"version": "3.2.1",
+	"version": "3.2.2",
 	"description": "A complete CRUD abstraction layer for Drizzle ORM in NestJS applications",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"files": [
 		"dist/**/*",
 		"README.md",
+		"AGENT.md",
+		"CLAUDE.template.md",
 		"CHANGELOG.md",
 		"LICENSE"
 	],
@@ -15,7 +17,8 @@
 		"build": "tsc -p tsconfig.build.json",
 		"build:watch": "tsc -p tsconfig.build.json --watch",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
-		"prepublishOnly": "npm run build && npm test",
+		"prepublishOnly": "pnpm run build && pnpm test",
+		"release": "pnpm publish --access public --no-git-checks",
 		"test": "jest",
 		"test:watch": "jest --watch",
 		"test:cov": "jest --coverage",
@@ -46,6 +49,10 @@
 		"url": "https://github.com/myviliha/viliha-drizzle-crud/issues"
 	},
 	"homepage": "https://crud.viliha.com",
+	"funding": {
+		"type": "github",
+		"url": "https://github.com/sponsors/myviliha"
+	},
 	"peerDependencies": {
 		"@nestjs/common": ">=10.0.0",
 		"@nestjs/core": ">=10.0.0",

@@ -50,7 +50,9 @@ export {
 	BulkOperationException,
 	DatabaseConnectionException,
 	DuplicateEntityException,
+	EntityInUseException,
 	EntityNotFoundException,
+	ForeignKeyViolationException,
 	TransactionException,
 	ValidationFailedException,
 } from "./exceptions/crud.exceptions";

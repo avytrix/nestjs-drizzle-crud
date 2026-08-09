@@ -8,6 +8,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Scope note: the 3.0.x line is PostgreSQL-first. MySQL-specific paths (non-`RETURNING`
 restore, `ER_DUP_ENTRY` mapping, dialect locking) are tracked separately and unchanged here.
 
+## [3.2.2] - 2026-08-09
+
+### Fixed
+- **Restored the foreign-key mapping that 3.2.1 lost.** `ForeignKeyViolationException` and
+  `EntityInUseException` are exported again, and a Postgres `23503` is translated by direction:
+  **400** when `create`/`update` reference a parent row that does not exist (the offending column
+  is parsed out of the driver `detail`), **409** when a `delete` is blocked by rows that still
+  reference this one. Non-FK errors on the delete path still bubble unchanged. Anyone who upgraded
+  from 3.2.0 to 3.2.1 and started seeing 500s on bad references should move to this release.
+- Covered by six specs in `test/bug-fixes.spec.ts`, including the wrapped `DrizzleQueryError`
+  shape and the missing-`detail` fallback.
+
+## [3.2.1] - 2026-07-17
+
+### Changed
+- Packaging and documentation only: `homepage` now points at
+  [crud.viliha.com](https://crud.viliha.com), and the package and repository READMEs link the
+  docs site, npm and GitHub. No runtime code changed.
+
+### Known issue
+- **The foreign-key mapping added in 3.2.0 is missing from this build.** The move to the
+  Turborepo monorepo carried over a source tree from before 3.2.0, so `ForeignKeyViolationException`
+  and `EntityInUseException` are not exported and a `23503` bubbles as a 500 again. **Fixed in
+  3.2.2**, so upgrade rather than pinning here. The 3.1.1 and 3.2.0 entries below were lost in the
+  same move and are restored here from the published tarballs.
+
+## [3.2.0] - 2026-07-09
+
+### Added
+- **Foreign-key violations (Postgres `23503`) now map to a typed HTTP error instead of a raw 500**,
+  and the direction decides the status:
+  - `create`/`update` referencing a parent row that does not exist → **400**
+    `ForeignKeyViolationException` (a client-supplied reference that points at nothing is bad input).
+    The offending column is parsed out of the driver `detail` (e.g. `language_id`).
+  - `delete` blocked because other rows still reference this one (`ON DELETE RESTRICT`/`NO ACTION`)
+    → **409** `EntityInUseException`.
+- Both exceptions are exported from the package root.
+
+### Changed
+- `delete` now wraps its statement execution so a `23503` on the delete side is translated (was
+  previously left to bubble as a 500). Non-FK errors still bubble unchanged.
+- Reverses the prior deliberate choice to let FK violations bubble: a client-supplied FK is a
+  recoverable bad value, not a programming error. NOT-NULL violations are still left to bubble.
+
+## [3.1.1] - 2026-07-03
+
+### Changed
+- Package metadata only, no code changes: repository and issues URLs now point to
+  [myviliha/viliha-drizzle-crud](https://github.com/myviliha/viliha-drizzle-crud), and the
+  homepage points to the docs site at [crud.viliha.com](https://crud.viliha.com/).
+
 ## [3.1.0] - 2026-06-29
 
 ### Added
@@ -38,7 +89,7 @@ Correctness fix found while validating the package from a fresh NestJS consumer
 ### Fixed
 - **Case-insensitive string filters are now EXACT, not wildcard patterns.** A plain string
   value in a `findAll`/`count` filter (e.g. `{ name: "foo" }`) is documented as a
-  case-insensitive *exact* match, but compiled to `ilike(column, value)` — so a value containing
+  case-insensitive *exact* match, but compiled to `ilike(column, value)`. So a value containing
   `%`, `_` or `\` was silently treated as a `LIKE` pattern and returned non-matching rows
   (e.g. `{ title: "a_b" }` matched `"aXb"`; `{ title: "a%" }` matched everything). It now compiles
   to `lower(column) = lower(value)`, so those characters are treated as literal data. The explicit
@@ -50,7 +101,7 @@ Residual-edge hardening found by an end-to-end HTTP probe of 3.0.1 (all LOW seve
 no behavior change to the happy path). Verified by 35 HTTP assertions on Neon + 49 jest specs.
 
 ### Changed
-- **`fullTextSearch` now returns the same envelope as `findAll`** — `{ data, total, page, limit }`
+- **`fullTextSearch` now returns the same envelope as `findAll`**, `{ data, total, page, limit }`
   instead of `{ data, total }`. `page`/`limit` are the resolved (clamped) values; the query is
   still only constrained when the caller passes `pagination`. Callers paginating search results
   can now read back the page/limit they got.
@@ -80,7 +131,7 @@ Correctness pass: typed exceptions now map to real HTTP status codes, plus sever
 - **`fullTextSearch` excludes soft-deleted rows** (added the `IS NULL` guard on the soft-delete
   column to both the data and count queries, matching `findAll`/`count`).
 - **Pagination clamping.** `page < 1`, `limit <= 0`, and `limit > maxLimit` are clamped via a shared
-  `resolvePagination` helper — no more negative `OFFSET` or `LIMIT 0`.
+  `resolvePagination` helper. No more negative `OFFSET` or `LIMIT 0`.
 - **Unknown sort column fails fast.** A caller-supplied `sortBy` not on the table throws
   `BadRequestException`; an unknown column in a configured `defaultSort` is warned and skipped.
 - **`restore()` returns the restored row** on the Postgres `RETURNING` path (no longer re-`find()`s,

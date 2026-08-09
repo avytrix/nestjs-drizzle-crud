@@ -43,7 +43,7 @@ class TestCrudService extends SqlBaseCrudService<
 		if (!data.name) throw new Error("Name is required");
 	}
 
-	protected async validateUpdate(id: any, data: TestUpdateDto): Promise<void> {
+	protected async validateUpdate(_id: any, data: TestUpdateDto): Promise<void> {
 		if (data.name && data.name.length < 2) throw new Error("Name too short");
 	}
 

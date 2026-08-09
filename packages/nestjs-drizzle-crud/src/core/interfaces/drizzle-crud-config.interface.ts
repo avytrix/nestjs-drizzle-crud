@@ -4,7 +4,7 @@ export interface DrizzleCrudConfig {
 	// Database configuration
 	dialect: SqlDialect;
 
-	// Connection — provide ONE of:
+	// Connection: provide ONE of:
 	//  - `db`: an already-constructed Drizzle instance, or
 	//  - `connectionString`: the module builds the connection itself
 	//    (postgresql via `postgres` + drizzle-orm/postgres-js).
