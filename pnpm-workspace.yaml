@@ -2,12 +2,23 @@ packages:
   - "apps/*"
   - "packages/*"
 
+# Supply-chain settings. A new version is only resolvable after it has been
+# public for seven days (10080 minutes), transitive dependencies cannot come
+# from non-registry sources, and a package cannot downgrade these settings.
+minimumReleaseAge: 10080
+blockExoticSubdeps: true
+trustPolicy: no-downgrade
+
 onlyBuiltDependencies:
   - "@swc/core"
   - esbuild
   - sharp
   - unrs-resolver
 
-# Force the patched postcss everywhere (GHSA-qx2v-qp2m-jg93, pulled via next).
+# Force patched versions of transitive dependencies that `pnpm audit --prod`
+# flags. All of these come in under apps/docs via next; the published package
+# has no runtime dependencies of its own.
 overrides:
-  postcss: ">=8.5.10"
+  postcss: ">=8.5.10" # GHSA-qx2v-qp2m-jg93
+  nanoid: ">=3.3.17" # GHSA-2v37-7h3g-55p8, pulled via next > postcss
+  sharp: ">=0.35.0" # libvips advisories, pulled via next

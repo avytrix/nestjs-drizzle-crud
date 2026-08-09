@@ -1,0 +1,20 @@
+# Gitleaks config for the Security workflow. Extends the default rule set and
+# allowlists the known false positives. Keep this list short and specific: an
+# entry here is a claim that the matched string is not a credential.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known non-secrets"
+regexTarget = "match"
+regexes = [
+  # The home page banner remembers dismissal in localStorage. The key is
+  # versioned so a new release shows the banner again, and the generic-api-key
+  # rule reads that version suffix as entropy.
+  '''STORAGE_KEY = "docs-banner-dismissed-v\d+"''',
+]
+paths = [
+  # Connection-string placeholders, not credentials.
+  '''apps/api/\.env\.example''',
+]
