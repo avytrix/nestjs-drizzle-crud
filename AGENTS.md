@@ -22,6 +22,8 @@ Node >= 20, pnpm 10, TypeScript 7 (except `apps/docs`, which pins 5.9). Lint and
 | Module wiring, defaults, per-entity config merge | `src/modules/drizzle-crud.module.ts` |
 | Driver or connection lifecycle | `src/modules/drizzle-connection.ts` |
 | Helper shipped to consumers for their tests | `src/test-utils/` (exported from `src/index.ts`) |
+| MCP server tools, protocol handling, doc sources | `src/mcp/server.ts` (zero deps, stdio JSON-RPC; the `nestjs-drizzle-crud-mcp` bin) |
+| Rules an agent consuming the package must follow | `AGENT.md`, pointed at by `AGENTS.template.md` and `CLAUDE.template.md` |
 | Unit test | `packages/nestjs-drizzle-crud/test/<area>.spec.ts` |
 | Proof it works over real HTTP and real Postgres | `apps/api/test/app.e2e-spec.ts`, plus a route under `apps/api/src/<entity>/` if the feature needs one |
 | New docs page | `apps/docs/content/docs/(<section>)/<name>.mdx` plus its `meta.json` entry |
@@ -54,7 +56,8 @@ Other invariants:
 
 - **Dialect awareness is real, not cosmetic.** `useReturning` defaults on for `postgresql` and is force-disabled for `mysql`. `wasAffected()` normalizes postgres-js, node-postgres and mysql2 result shapes. New mutations go through it rather than reading `.rowCount` directly.
 - **Connections are only owned when built here.** A caller supplied `db` is used as is and left alone. A `connectionString` is postgres only, and the connection it creates is closed on module destroy.
-- **Relations are belongs-to only** (`localKey` referencing `references`). `findAll` joins the union of eager relations and relation filter relations for the data query, but only the filter relations for the count query. Keep that split; joining eager relations into the count query changes `total`.
+- **Relations come in two shapes and only one of them joins.** Belongs-to (`localKey` referencing `references`) is a `LEFT JOIN`; `findAll` joins the union of eager belongs-to relations and relation filter relations for the data query, but only the filter relations for the count query. Keep that split; joining eager relations into the count query changes `total`. Has-many (`foreignKey` referencing `parentKey`) is never joined: it loads through `loadHasMany` as one batched `WHERE fk IN (...)` per relation after the main query, and a has-many filter becomes an `IN (SELECT ...)` subquery. A join there would multiply parent rows and break `total` and pagination.
+- **Eager loading is never per row.** `loadHasMany` costs one query per relation for the whole result set, whatever the row count. A new read path that loops a query over rows is the N+1 bug this exists to prevent.
 - **Soft delete is a predicate, not a mode.** Every read appends `isNull(deleted_at)` when it is enabled. A new read path that forgets it will happily return deleted rows.
 - **Errors map to HTTP by construction.** The exceptions extend `NotFoundException`, `ConflictException` and `BadRequestException`, so Nest's default filter returns 404, 409 and 400 without a custom filter. Driver error codes are translated at the service boundary. Never let a raw `DrizzleQueryError` reach the client as a 500 when it is caused by bad input.
 

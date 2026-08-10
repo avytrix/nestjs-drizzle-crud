@@ -1,18 +1,38 @@
 ---
 title: Relations
-description: Many-to-one / belongs-to eager loading and related-column filtering.
+description: Eager-load belongs-to and has-many relations in Drizzle CRUD without N+1 queries, and filter by related columns.
 ---
 
-The package supports **many-to-one / one-to-one (belongs-to)** relations: a foreign key on this entity's table points at another table's key. Declare them in the entity's `forFeature` config under `relations`, keyed by relation name.
+Declare relations in the entity's `forFeature` config under `relations`, keyed by relation name, then eager-load them with `options.relations`. Two kinds are supported:
 
-<Callout type="warn" title="Scope">
-  Only **many-to-one / one-to-one** (belongs-to) relations are supported.
-  Has-many collection loading and many-to-many (join tables) are not
-  handled. For those, model with a custom service method using
-  `this.config.db`, or orchestrate across services in a controller.
-</Callout>
+- **belongs-to** (many-to-one / one-to-one): a foreign key on this table points at another table. Loaded with a `LEFT JOIN` in the same query, resolves to an object or `null`.
+- **has-many** (one-to-many): a foreign key on the *other* table points back here. Loaded with **one extra batched query per relation**, resolves to an array.
 
-## Declaring a relation
+Neither shape ever runs a query per row, so eager loading a page of 50 rows costs the same number of queries as a page of 5.
+
+## How do I avoid N+1 queries?
+
+Ask for the relation instead of looping. `find`, `findOne` and `findAll` accept `options.relations`, and the service does the batching for you:
+
+```ts
+// 3 queries for the whole page: data, count, and all states in one IN (...)
+const page = await countries.findAll(
+  {},
+  { page: 1, limit: 50 },
+  { relations: ['region', 'states'] },
+);
+```
+
+The alternative, fetching countries and then querying states inside a loop, is 1 + N queries. That is the pattern this replaces.
+
+| Relation type | SQL | Extra queries | Result shape |
+| --- | --- | --- | --- |
+| `belongsTo` (default) | `LEFT JOIN` in the main query | 0 | object, or `null` when unmatched |
+| `hasMany` | `SELECT ... WHERE fk IN (parent keys)` | 1 per relation, for the whole page | array, `[]` when empty |
+
+Has-many relations load concurrently, so three has-many relations are three parallel queries, not three round trips in sequence.
+
+## Declaring a belongs-to relation
 
 ```ts accent=nest title="cities/cities.module.ts"
 import { cities, states } from '../db/schema';
@@ -35,110 +55,131 @@ DrizzleCrudModule.forFeature([
 | --- | --- | --- |
 | `<relationName>` | `string` | The key used to refer to the relation in filters and eager loads. |
 | `table` | `Drizzle table` | The target table. |
-| `localKey` | `string` | The column on the *current* table that holds the FK. |
+| `type` | `'belongsTo' \| 'hasMany'?` | Defaults to `'belongsTo'`. |
+| `localKey` | `string` | The column on the *current* table that holds the FK. Required for belongs-to. |
 | `references` | `string?` | The column on the target table to match against. Defaults to `'id'`. |
 
-## Two capabilities
+## Declaring a has-many relation
 
-Once declared, a relation unlocks two features:
+Set `type: 'hasMany'` and name the column on the *child* table that points back at this one:
 
-### 1. Eager loading
+```ts accent=nest title="countries/countries.module.ts"
+import { countries, regions, states } from '../db/schema';
 
-Pass `relations` in the operation options to `LEFT JOIN` and nest the related row:
-
-```ts
-await cities.find(1, { relations: ['state'] });
-// {
-//   id: 1,
-//   name: 'Bengaluru',
-//   state_id: 7,
-//   state: { id: 7, name: 'Karnataka', country_id: 3 },
-// }
-
-await cities.findAll(
-  {},
-  { page: 1, limit: 20 },
-  { relations: ['state'] },
-);
+DrizzleCrudModule.forFeature([
+  {
+    service: CountriesService,
+    table: countries,
+    config: {
+      relations: {
+        // belongs-to: countries.region_id -> regions.id
+        region: { table: regions, localKey: 'region_id' },
+        // has-many: states.country_id -> countries.id
+        states: { table: states, type: 'hasMany', foreignKey: 'country_id' },
+      },
+    },
+  },
+])
 ```
 
-The related row is a nested object on the result. If there's no match, the relation comes back as `null`.
+| Field | Type | Notes |
+| --- | --- | --- |
+| `foreignKey` | `string` | The column on the *target* table pointing back here. Required for has-many. |
+| `parentKey` | `string?` | The column on the *current* table that `foreignKey` matches. Defaults to the configured `primaryKey`. |
 
-### 2. Filtering by related columns
+A relation missing its key column throws when the service is constructed, so a typo shows up at startup instead of as an empty array at runtime.
 
-Use the relation name as a filter key with a nested object of the **related table's** columns. Supports the same operators as normal filters:
+## Eager loading
 
 ```ts
-// all cities whose state is named 'Karnataka' (case-insensitive exact)
-await cities.findAll({ state: { name: 'Karnataka' } });
+await countries.find(1, { relations: ['region', 'states'] });
+// {
+//   id: 1,
+//   name: 'India',
+//   region_id: 3,
+//   region: { id: 3, name: 'Asia', code: 'AS' },
+//   states: [
+//     { id: 10, name: 'Karnataka', country_id: 1 },
+//     { id: 11, name: 'Kerala', country_id: 1 },
+//   ],
+// }
+```
 
-// all cities in a country: filter on the intermediate table's FK column
-await cities.findAll({ state: { countryId: 3 } });
+An unmatched belongs-to relation comes back as `null`, never as an object full of nulls. A parent with no children comes back as `[]`, so callers can iterate without a guard.
+
+Soft delete is respected on both sides: when it is enabled and the child table has the configured column, deleted children are excluded from the collection.
+
+## Why is a has-many relation not joined?
+
+Because a join would break the page. One country with four states becomes four rows, `count(*)` returns 4 instead of 1, and `limit 50` silently cuts a country in half. The batched `IN (...)` query keeps one row per parent and keeps `total` honest.
+
+The same reasoning applies to filters, so filtering by a child column compiles to a subquery:
+
+```ts
+// countries.id IN (SELECT country_id FROM states WHERE lower(name) = lower('Kerala'))
+await countries.findAll({ states: { name: 'Kerala' } });
+```
+
+That is "parents with at least one matching child". It supports the same operators as any other filter, and the predicate is applied to the count query too.
+
+## Filtering by related columns
+
+Use the relation name as a filter key with a nested object of the **related table's** columns:
+
+```ts
+// belongs-to: joined, then filtered
+await cities.findAll({ state: { name: 'Karnataka' } });
 
 // combine with normal column filters and operators
 await cities.findAll({
   name: { ilike: 'B%' },
-  state: { countryId: 3 },
+  state: { country_id: 3 },
 });
+
+// has-many: subquery, no join
+await countries.findAll({ states: { name: { ilike: 'K%' } } });
 ```
 
 ## Multi-level filtering
 
-Multi-level filtering works through the intermediate table's columns (e.g. filter cities by `state.country_id`), so you usually don't need a direct relation to the far table.
+Multi-level filtering works through the intermediate table's columns (e.g. filter cities by `state.country_id`), so you usually do not need a direct relation to the far table.
 
 ```ts
 // cities → states (direct relation) → countries (via state.country_id)
 await cities.findAll({
-  state: { countryId: 3 },
+  state: { country_id: 3 },
 });
 ```
 
-You can also declare a direct relation to the far table if the queries are frequent:
+You can also declare a direct relation to the far table if the queries are frequent. Each declared relation is joined (belongs-to) or batched (has-many) independently when it is referenced in a filter or in `options.relations`.
 
-```ts accent=nest
-config: {
-  relations: {
-    state: { table: states, localKey: 'state_id', references: 'id' },
-    country: { table: countries, localKey: 'state_id', references: 'id' /* requires denormalized FK */ },
+## Selecting relation columns
+
+`options.select` takes dotted paths, so you can narrow a relation instead of hydrating every column:
+
+```ts
+await countries.findAll(
+  {},
+  { page: 1, limit: 20 },
+  {
+    relations: ['region', 'states'],
+    select: ['id', 'name', 'region.code', 'states.name'],
   },
-}
-```
-
-The package will join each declared relation independently when it's referenced in a filter or in `options.relations`.
-
-## Eager-loading multiple relations
-
-```ts
-await cities.findAll(
-  {},
-  { page: 1, limit: 20 },
-  { relations: ['state', 'country'] },
 );
+// { id, name, region: { code }, states: [{ name, country_id }] }
 ```
 
-Each relation is a single `LEFT JOIN`. Be aware of join-explosion risk. The more relations you eager-load on a large query, the slower it gets.
-
-## Combining with `select`
-
-`options.select` limits which columns come back from the *base* table. Eager-loaded relations come back in full unless you also use raw Drizzle to project them.
-
-```ts
-await cities.findAll(
-  {},
-  { page: 1, limit: 20 },
-  { select: ['id', 'name'], relations: ['state'] },
-);
-// { id, name, state: { ...all columns... } }
-```
+The child keeps its foreign key even when you do not list it, because that column is what maps each child back to its parent. See [column selection](/docs/column-selection) for the full rules.
 
 ## Limitations
 
-- **No has-many.** If you need to load `cities` for a `state`, write a custom method on `StatesService` that uses raw Drizzle to query the inverse join.
-- **No many-to-many.** Same story: use a join table and a custom method.
-- **No nested relations in `options.relations`.** Pass each relation name as a flat string. Eager-loading a relation-of-a-relation requires a custom method.
-- **Joins are always `LEFT`.** Inner-join semantics aren't supported out of the box; filter by `id: { isNotNull: true }` after the join if you need to drop the unmatched rows.
+- **No many-to-many.** Model the join table as an entity of its own, or write a custom method for it.
+- **No nested relations in `options.relations`.** Pass each relation name as a flat string; a relation-of-a-relation needs a custom method.
+- **Belongs-to joins are always `LEFT`.** Filter by `id: { isNotNull: true }` if you need to drop the unmatched rows.
+- **Child collections come back unordered.** Add an `ORDER BY` in a custom method when the order matters.
 
 ## Next
 
+- → [Column selection: dotted paths and partial rows](/docs/column-selection)
 - → [Primary keys: including uuid, which affects relation FKs](/docs/primary-keys)
 - → [Filtering: the full filter spec including operator reference](/docs/filtering)

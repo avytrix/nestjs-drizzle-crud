@@ -88,6 +88,83 @@ describeE2e("API (e2e)", () => {
 		});
 	});
 
+	describe("countries (has-many + column selection)", () => {
+		it("eager-loads the states collection for a whole page", async () => {
+			const res = await request(app.getHttpServer())
+				.get("/countries?limit=10&withStates=true")
+				.expect(200);
+			expect(res.body.data).toHaveLength(10);
+			// Every row carries an array, even when the country has no states.
+			for (const country of res.body.data) {
+				expect(Array.isArray(country.states)).toBe(true);
+				for (const state of country.states) {
+					expect(state.country_id).toBe(country.id);
+				}
+			}
+			// At least one country in the seed set actually has states.
+			expect(res.body.data.some((c: any) => c.states.length > 0)).toBe(true);
+		});
+
+		it("keeps total right when a has-many relation is loaded", async () => {
+			const plain = await request(app.getHttpServer()).get(
+				"/countries?limit=5",
+			);
+			const withStates = await request(app.getHttpServer()).get(
+				"/countries?limit=5&withStates=true",
+			);
+			expect(withStates.body.total).toBe(plain.body.total);
+			expect(withStates.body.data).toHaveLength(5);
+		});
+
+		it("eager-loads a has-many collection on a single country", async () => {
+			const list = await request(app.getHttpServer()).get(
+				"/countries?limit=50&withStates=true",
+			);
+			const parent = list.body.data.find((c: any) => c.states.length > 0);
+			const res = await request(app.getHttpServer())
+				.get(`/countries/${parent.id}?withStates=true`)
+				.expect(200);
+			expect(res.body.states.length).toBe(parent.states.length);
+		});
+
+		it("returns only the requested columns", async () => {
+			const res = await request(app.getHttpServer())
+				.get("/countries?limit=1&fields=id,name")
+				.expect(200);
+			expect(Object.keys(res.body.data[0]).sort()).toEqual(["id", "name"]);
+		});
+
+		it("narrows relation columns with a dotted path", async () => {
+			const res = await request(app.getHttpServer())
+				.get(
+					"/countries?limit=50&withRegion=true&withStates=true&fields=id,name,region.name,states.name",
+				)
+				.expect(200);
+			const country = res.body.data.find((c: any) => c.states.length > 0);
+			// The has-many child keeps its foreign key: grouping needs it.
+			expect(Object.keys(country.states[0]).sort()).toEqual([
+				"country_id",
+				"name",
+			]);
+			if (country.region) {
+				expect(Object.keys(country.region)).toEqual(["name"]);
+			}
+		});
+
+		it("filters countries by a child column", async () => {
+			const list = await request(app.getHttpServer()).get(
+				"/countries?limit=50&withStates=true",
+			);
+			const parent = list.body.data.find((c: any) => c.states.length > 0);
+			const stateName = parent.states[0].name;
+			const res = await request(app.getHttpServer())
+				.get(`/countries?stateName=${encodeURIComponent(stateName)}`)
+				.expect(200);
+			expect(res.body.total).toBeGreaterThanOrEqual(1);
+			expect(res.body.data.map((c: any) => c.id)).toContain(parent.id);
+		});
+	});
+
 	describe("tags (write, uuid pk)", () => {
 		let createdId: string;
 
@@ -103,9 +180,7 @@ describeE2e("API (e2e)", () => {
 		});
 
 		it("fetches the created tag by uuid", async () => {
-			await request(app.getHttpServer())
-				.get(`/tags/${createdId}`)
-				.expect(200);
+			await request(app.getHttpServer()).get(`/tags/${createdId}`).expect(200);
 		});
 
 		it("rejects an invalid uuid with 400", async () => {
@@ -116,9 +191,7 @@ describeE2e("API (e2e)", () => {
 			await request(app.getHttpServer())
 				.delete(`/tags/${createdId}`)
 				.expect(200);
-			await request(app.getHttpServer())
-				.get(`/tags/${createdId}`)
-				.expect(404);
+			await request(app.getHttpServer()).get(`/tags/${createdId}`).expect(404);
 		});
 	});
 });

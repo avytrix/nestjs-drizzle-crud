@@ -116,30 +116,42 @@ interface SqlCrudConfig {
     enableFullTextSearch: boolean;
   };
 
-  // ---- Many-to-one / one-to-one relations ----
+  // ---- Belongs-to and has-many relations ----
   relations?: Record<
     string,
     {
       table: any;
-      localKey: string;
+      type?: 'belongsTo' | 'hasMany';
+      localKey?: string;
       references?: string;
+      foreignKey?: string;
+      parentKey?: string;
     }
   >;
 }
 ```
 
-## `RelationConfig` and `RelationsConfig`
+## `RelationConfig`, `RelationsConfig` and `RelationType`
 
 ```ts twoslash
 // ---cut---
+type RelationType = 'belongsTo' | 'hasMany';
+
 interface RelationConfig {
-  table: any;            // the target Drizzle table
-  localKey: string;      // the FK column on the *current* table
-  references?: string;   // the column on the target table (defaults to 'id')
+  table: any;             // the target Drizzle table
+  type?: RelationType;    // defaults to 'belongsTo'
+  // belongs-to
+  localKey?: string;      // the FK column on the *current* table (required)
+  references?: string;    // the column on the target table (defaults to 'id')
+  // has-many
+  foreignKey?: string;    // the column on the *target* table pointing back here (required)
+  parentKey?: string;     // the column on the current table it matches (defaults to primaryKey)
 }
 
 type RelationsConfig = Record<string, RelationConfig>;
 ```
+
+A belongs-to relation without `localKey`, or a has-many relation without `foreignKey`, throws when the service is constructed. See [Relations](/docs/relations).
 
 ## `SqlSearchOptions`
 

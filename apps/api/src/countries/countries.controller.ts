@@ -17,20 +17,41 @@ import { CreateCountryDto } from "./dto/create-country.dto";
 import { QueryCountryDto } from "./dto/query-country.dto";
 import { UpdateCountryDto } from "./dto/update-country.dto";
 
+// `?withRegion=true&withStates=true` -> ['region', 'states']
+function relationsOf(withRegion?: string, withStates?: string): string[] {
+	const relations: string[] = [];
+	if (withRegion === "true") relations.push("region");
+	if (withStates === "true") relations.push("states");
+	return relations;
+}
+
 @Controller("countries")
 export class CountriesController {
 	constructor(private readonly countries: CountriesService) {}
 
 	@Get()
 	findAll(@Query() query: QueryCountryDto) {
-		const { page, limit, sortBy, sortOrder, search, withRegion, ...filters } =
-			query;
+		const {
+			page,
+			limit,
+			sortBy,
+			sortOrder,
+			search,
+			withRegion,
+			withStates,
+			fields,
+			stateName,
+			...filters
+		} = query;
 		return this.countries.findAll(
-			filters,
+			{ ...filters, ...(stateName ? { states: { name: stateName } } : {}) },
 			{ page, limit, sortBy, sortOrder },
 			{
-				relations: withRegion === "true" ? ["region"] : [],
-				search: search ? { term: search, columns: ["name", "code"] } : undefined,
+				relations: relationsOf(withRegion, withStates),
+				select: fields ? fields.split(",") : undefined,
+				search: search
+					? { term: search, columns: ["name", "code"] }
+					: undefined,
 			},
 		);
 	}
@@ -39,9 +60,10 @@ export class CountriesController {
 	async find(
 		@Param("id", ParseIntPipe) id: number,
 		@Query("withRegion") withRegion?: string,
+		@Query("withStates") withStates?: string,
 	) {
 		const country = await this.countries.find(id, {
-			relations: withRegion === "true" ? ["region"] : [],
+			relations: relationsOf(withRegion, withStates),
 		});
 		if (!country) {
 			throw new NotFoundException(`Country ${id} not found`);

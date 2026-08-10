@@ -1,6 +1,6 @@
 import { Module } from "@nestjs/common";
 import { DrizzleCrudModule } from "nestjs-drizzle-crud";
-import { countries, regions } from "../db/schema";
+import { countries, regions, states } from "../db/schema";
 import { CountriesController } from "./countries.controller";
 import { CountriesService } from "./countries.service";
 
@@ -13,9 +13,15 @@ import { CountriesService } from "./countries.service";
 				config: {
 					primaryKey: "id",
 					primaryKeyType: "serial",
-					// belongs-to: countries.region_id -> regions.id
 					relations: {
+						// belongs-to: countries.region_id -> regions.id
 						region: { table: regions, localKey: "region_id" },
+						// has-many: states.country_id -> countries.id
+						states: {
+							table: states,
+							type: "hasMany",
+							foreignKey: "country_id",
+						},
 					},
 					defaultSort: [{ column: "name", order: "asc" }],
 				},

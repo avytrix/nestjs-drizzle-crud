@@ -34,6 +34,21 @@ export class QueryCountryDto {
 	@IsIn(["true", "false"])
 	withRegion?: string;
 
+	// `?withStates=true` eager-loads the country's states (has-many).
+	@IsOptional()
+	@IsIn(["true", "false"])
+	withStates?: string;
+
+	// `?fields=id,name,states.name` narrows the returned columns.
+	@IsOptional()
+	@IsString()
+	fields?: string;
+
+	// `?stateName=Kerala` keeps countries that have a state with that name.
+	@IsOptional()
+	@IsString()
+	stateName?: string;
+
 	// --- filters ---
 	@IsOptional()
 	@IsString()

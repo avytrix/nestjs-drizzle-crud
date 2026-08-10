@@ -33,6 +33,8 @@ import type {
 	PaginationOptions,
 } from "../interfaces/crud-service.interface";
 import type {
+	RelationConfig,
+	RelationType,
 	SqlCrudConfig,
 	SqlOperationOptions,
 } from "../interfaces/sql-crud-config.interface";
@@ -126,6 +128,27 @@ export abstract class SqlBaseCrudService<
 			);
 			this.config.sql.useReturning = false;
 		}
+
+		// A relation missing its key column would silently produce no join and no
+		// children, which reads as "the data is wrong". Fail at startup instead.
+		for (const [name, relation] of Object.entries(
+			this.config.relations || {},
+		)) {
+			if (!relation?.table) {
+				throw new Error(`Relation "${name}" is missing its table`);
+			}
+			if (this.relationType(relation) === "hasMany") {
+				if (!relation.foreignKey) {
+					throw new Error(
+						`Relation "${name}" is hasMany and requires a foreignKey (the column on the related table pointing back here)`,
+					);
+				}
+			} else if (!relation.localKey) {
+				throw new Error(
+					`Relation "${name}" is belongsTo and requires a localKey (the foreign-key column on this table)`,
+				);
+			}
+		}
 	}
 
 	// Overridable hooks for validation and DTO -> entity mapping. Defaults are
@@ -156,7 +179,11 @@ export abstract class SqlBaseCrudService<
 	protected async beforeRestore(_id: any): Promise<void> {}
 	protected async afterRestore(_entity: T): Promise<void> {}
 
-	// ---- Relation helpers (many-to-one / belongs-to) ----
+	// ---- Relation helpers ----
+
+	protected relationType(relation: RelationConfig): RelationType {
+		return relation.type === "hasMany" ? "hasMany" : "belongsTo";
+	}
 
 	// Keep only the requested relation names that are actually configured.
 	protected eagerRelations(relations: string[]): string[] {
@@ -164,11 +191,65 @@ export abstract class SqlBaseCrudService<
 		return (relations || []).filter((name) => !!configured[name]);
 	}
 
+	// Split requested relations by how they are loaded: belongs-to relations join
+	// the main query, has-many relations are batch-loaded after it.
+	protected splitRelations(relations: string[]): {
+		belongsTo: string[];
+		hasMany: string[];
+	} {
+		const configured = this.config.relations || {};
+		const belongsTo: string[] = [];
+		const hasMany: string[] = [];
+		for (const name of this.eagerRelations(relations)) {
+			if (this.relationType(configured[name]!) === "hasMany")
+				hasMany.push(name);
+			else belongsTo.push(name);
+		}
+		return { belongsTo, hasMany };
+	}
+
+	// Split a `select` list into this table's columns and per-relation columns:
+	//   ["id", "name", "region.code"] -> { base: ["id","name"], nested: { region: ["code"] } }
+	// An empty `base` means "all columns of this table", so selecting only
+	// relation columns still returns the full parent row.
+	protected parseSelect(select?: string[]): {
+		base: string[];
+		nested: Record<string, string[]>;
+	} {
+		const base: string[] = [];
+		const nested: Record<string, string[]> = {};
+		for (const entry of select || []) {
+			const dot = entry.indexOf(".");
+			if (dot < 1) {
+				base.push(entry);
+				continue;
+			}
+			const relation = entry.slice(0, dot);
+			const column = entry.slice(dot + 1);
+			if (!column) continue;
+			if (!nested[relation]) nested[relation] = [];
+			nested[relation].push(column);
+		}
+		return { base, nested };
+	}
+
+	// Grouping a has-many result back onto its parents needs the parent key in
+	// the row, so add it when the caller narrowed the base columns.
+	protected withParentKeys(base: string[], hasMany: string[]): string[] {
+		if (base.length === 0 || hasMany.length === 0) return base;
+		const configured = this.config.relations || {};
+		const keys = hasMany.map(
+			(name) => configured[name]?.parentKey ?? this.config.primaryKey,
+		);
+		return Array.from(new Set([...base, ...keys]));
+	}
+
 	// Build the SELECT projection: base columns (optionally narrowed by
-	// `select`) plus a nested object of columns for each eager relation.
+	// `select`) plus a nested object of columns for each joined relation.
 	protected buildSelection(
 		select: string[],
 		eager: string[],
+		nested: Record<string, string[]> = {},
 	): Record<string, any> {
 		const allColumns = getTableColumns(this.config.table);
 		let base: Record<string, any>;
@@ -183,7 +264,18 @@ export abstract class SqlBaseCrudService<
 		const configured = this.config.relations || {};
 		for (const name of eager) {
 			const rel = configured[name];
-			if (rel) base[name] = getTableColumns(rel.table);
+			if (!rel) continue;
+			const relColumns = getTableColumns(rel.table);
+			const wanted = nested[name];
+			if (wanted?.length) {
+				const picked: Record<string, any> = {};
+				for (const col of wanted) {
+					if (relColumns[col]) picked[col] = relColumns[col];
+				}
+				base[name] = Object.keys(picked).length > 0 ? picked : relColumns;
+			} else {
+				base[name] = relColumns;
+			}
 		}
 		return base;
 	}
@@ -198,10 +290,11 @@ export abstract class SqlBaseCrudService<
 		select: string[],
 		eager: string[],
 		hasJoins = false,
+		nested: Record<string, string[]> = {},
 	): any {
 		if (eager.length > 0 || hasJoins) {
 			return db
-				.select(this.buildSelection(select, eager))
+				.select(this.buildSelection(select, eager, nested))
 				.from(this.config.table);
 		}
 		const fields = this.buildSelectFields(select);
@@ -210,19 +303,90 @@ export abstract class SqlBaseCrudService<
 			: db.select().from(this.config.table);
 	}
 
-	// LEFT JOIN each named relation onto the query.
+	// Eager-load has-many relations for rows that have already been fetched.
+	//
+	// This is the N+1 fix: each relation costs exactly ONE extra query
+	// (`WHERE fk IN (parent ids)`) no matter how many parent rows there are, and
+	// the relations run concurrently. The rows are mutated in place, with `[]`
+	// for a parent that has no children.
+	protected async loadHasMany(
+		db: any,
+		rows: any[],
+		names: string[],
+		nested: Record<string, string[]> = {},
+	): Promise<void> {
+		if (!names.length || !Array.isArray(rows) || rows.length === 0) return;
+		const configured = this.config.relations || {};
+
+		await Promise.all(
+			names.map(async (name) => {
+				const rel = configured[name];
+				if (!rel?.foreignKey) return;
+				const child = rel.table;
+				const fkColumn = child[rel.foreignKey];
+				if (!fkColumn) return;
+				const parentKey = rel.parentKey ?? this.config.primaryKey;
+
+				const ids = Array.from(
+					new Set(rows.map((row) => row?.[parentKey]).filter((v) => v != null)),
+				);
+				if (ids.length === 0) {
+					for (const row of rows) if (row) row[name] = [];
+					return;
+				}
+
+				// Narrow the child columns when asked, always keeping the foreign key:
+				// it is what maps each child back to its parent.
+				const wanted = nested[name];
+				let fields: Record<string, any> | undefined;
+				if (wanted?.length) {
+					fields = {};
+					for (const col of wanted) {
+						if (child[col]) fields[col] = child[col];
+					}
+					fields[rel.foreignKey] = fkColumn;
+				}
+
+				const conditions = [inArray(fkColumn, ids)];
+				// Honour soft delete on the child too, but only when the child table
+				// actually has the configured column (siblings often differ).
+				const softDelete = this.config.softDelete;
+				if (softDelete?.enabled && child[softDelete.column]) {
+					conditions.push(isNull(child[softDelete.column]));
+				}
+
+				const childRows = await (fields ? db.select(fields) : db.select())
+					.from(child)
+					.where(and(...conditions));
+
+				// Group by the raw foreign-key value. Keys are scalars (int / uuid /
+				// text), so strict-equality Map lookup is the right match here.
+				const grouped = new Map<any, any[]>();
+				for (const childRow of childRows ?? []) {
+					const key = childRow?.[rel.foreignKey];
+					const bucket = grouped.get(key);
+					if (bucket) bucket.push(childRow);
+					else grouped.set(key, [childRow]);
+				}
+				for (const row of rows) {
+					if (row) row[name] = grouped.get(row[parentKey]) ?? [];
+				}
+			}),
+		);
+	}
+
+	// LEFT JOIN each named belongs-to relation onto the query. Has-many relations
+	// are never joined: one parent row would become one row per child, which
+	// breaks `total` and pagination. They are loaded by loadHasMany instead.
 	protected applyJoins(query: any, relationNames: string[]): any {
 		const configured = this.config.relations || {};
 		let q = query;
 		for (const name of relationNames) {
 			const rel = configured[name];
-			if (!rel) continue;
+			if (!rel?.localKey || this.relationType(rel) === "hasMany") continue;
 			q = q.leftJoin(
 				rel.table,
-				eq(
-					this.config.table[rel.localKey],
-					rel.table[rel.references ?? "id"],
-				),
+				eq(this.config.table[rel.localKey], rel.table[rel.references ?? "id"]),
 			);
 		}
 		return q;
@@ -256,7 +420,10 @@ export abstract class SqlBaseCrudService<
 	// fails fast (400) rather than silently returning unsorted data. An unknown
 	// column inside the configured `defaultSort` is a developer/config mistake,
 	// so it's warned and skipped (not surfaced to the client).
-	protected buildOrderBy(sortBy?: string, sortOrder: SortOrder = "desc"): any[] {
+	protected buildOrderBy(
+		sortBy?: string,
+		sortOrder: SortOrder = "desc",
+	): any[] {
 		if (sortBy) {
 			const col = this.config.table[sortBy];
 			if (!col) {
@@ -405,25 +572,44 @@ export abstract class SqlBaseCrudService<
 		return conditions.length === 1 ? conditions[0] : or(...conditions);
 	}
 
+	// The existence check that guards update / softDelete / delete only needs to
+	// know whether the row is there, so it drops the caller's relations and
+	// columns: joining or batch-loading children to throw them away would be an
+	// extra query per write.
+	private async findForGuard(
+		id: any,
+		options?: SqlOperationOptions,
+	): Promise<T | null> {
+		return this.find(id, {
+			...options,
+			relations: [],
+			select: [this.config.primaryKey],
+		});
+	}
+
 	// Single Operations
 	async find(id: any, options?: SqlOperationOptions): Promise<T | null> {
 		const { transaction, relations = [], select = [] } = options || {};
 		const db = transaction || this.config.db;
-		const eager = this.eagerRelations(relations);
+		const { belongsTo, hasMany } = this.splitRelations(relations);
+		const { base, nested } = this.parseSelect(select);
+		const baseSelect = this.withParentKeys(base, hasMany);
 
 		const conditions = [eq(this.config.table[this.config.primaryKey], id)];
 		if (this.config.softDelete?.enabled) {
 			conditions.push(isNull(this.config.table[this.config.softDelete.column]));
 		}
 
-		let query = this.startSelect(db, select, eager);
-		query = this.applyJoins(query, eager)
+		let query = this.startSelect(db, baseSelect, belongsTo, false, nested);
+		query = this.applyJoins(query, belongsTo)
 			.where(and(...conditions))
 			.limit(1);
 		query = this.applyLock(query, options);
 
 		const result = await query;
-		return this.normalizeRelations(result, eager)[0] || null;
+		const rows = this.normalizeRelations(result, belongsTo);
+		await this.loadHasMany(db, rows, hasMany, nested);
+		return rows[0] || null;
 	}
 
 	async findOne(
@@ -432,21 +618,25 @@ export abstract class SqlBaseCrudService<
 	): Promise<T | null> {
 		const { transaction, relations = [], select = [] } = options || {};
 		const db = transaction || this.config.db;
-		const eager = this.eagerRelations(relations);
+		const { belongsTo, hasMany } = this.splitRelations(relations);
+		const { base, nested } = this.parseSelect(select);
+		const baseSelect = this.withParentKeys(base, hasMany);
 
 		const conditions = this.buildWhereConditionsFromPartial(where);
 		if (this.config.softDelete?.enabled) {
 			conditions.push(isNull(this.config.table[this.config.softDelete.column]));
 		}
 
-		let query = this.startSelect(db, select, eager);
-		query = this.applyJoins(query, eager)
+		let query = this.startSelect(db, baseSelect, belongsTo, false, nested);
+		query = this.applyJoins(query, belongsTo)
 			.where(and(...conditions))
 			.limit(1);
 		query = this.applyLock(query, options);
 
 		const result = await query;
-		return this.normalizeRelations(result, eager)[0] || null;
+		const rows = this.normalizeRelations(result, belongsTo);
+		await this.loadHasMany(db, rows, hasMany, nested);
+		return rows[0] || null;
 	}
 
 	async findAll(
@@ -462,10 +652,12 @@ export abstract class SqlBaseCrudService<
 			offset,
 		} = this.resolvePagination(pagination?.page, pagination?.limit);
 		const db = transaction || this.config.db;
-		const eager = this.eagerRelations(relations);
+		const { belongsTo, hasMany } = this.splitRelations(relations);
+		const { base, nested } = this.parseSelect(select);
+		const baseSelect = this.withParentKeys(base, hasMany);
 
 		const { conditions, relations: filterRelations } =
-			this.buildFilterConditions(filters);
+			this.buildFilterConditions(filters, db);
 		const searchCondition = this.buildSearchCondition(options?.search);
 		if (searchCondition) {
 			conditions.push(searchCondition);
@@ -476,14 +668,15 @@ export abstract class SqlBaseCrudService<
 
 		// Join everything needed for eager-loading and for relation filters.
 		const joinRelations = Array.from(
-			new Set([...eager, ...filterRelations]),
+			new Set([...belongsTo, ...filterRelations]),
 		);
 
 		let dataQuery = this.startSelect(
 			db,
-			select,
-			eager,
+			baseSelect,
+			belongsTo,
 			joinRelations.length > 0,
+			nested,
 		);
 		dataQuery = this.applyJoins(dataQuery, joinRelations);
 		if (conditions.length > 0) {
@@ -508,8 +701,13 @@ export abstract class SqlBaseCrudService<
 		const [data, totalResult] = await Promise.all([dataQuery, countQuery]);
 		const total = parseInt(totalResult[0]?.count?.toString() || "0", 10);
 
+		// One batched query per has-many relation for the whole page, never one
+		// per row.
+		const rows = this.normalizeRelations(data, belongsTo);
+		await this.loadHasMany(db, rows, hasMany, nested);
+
 		return {
-			data: this.normalizeRelations(data, eager),
+			data: rows,
 			total,
 			page,
 			limit: safeLimit,
@@ -570,7 +768,7 @@ export abstract class SqlBaseCrudService<
 		options?: SqlOperationOptions,
 	): Promise<T> {
 		const { transaction, hooks = {} } = options || {};
-		const existing = await this.find(id, options);
+		const existing = await this.findForGuard(id, options);
 		if (!existing) throw new EntityNotFoundException(this.getEntityName(), id);
 
 		await this.validateUpdate(id, data);
@@ -618,7 +816,7 @@ export abstract class SqlBaseCrudService<
 		}
 
 		const { transaction, hooks = {} } = options || {};
-		const existing = await this.find(id, options);
+		const existing = await this.findForGuard(id, options);
 		if (!existing) throw new EntityNotFoundException(this.getEntityName(), id);
 
 		if (!hooks.skipBefore) await this.beforeSoftDelete(id);
@@ -685,7 +883,7 @@ export abstract class SqlBaseCrudService<
 
 	async delete(id: any, options?: SqlOperationOptions): Promise<boolean> {
 		const { transaction, hooks = {} } = options || {};
-		const existing = await this.find(id, options);
+		const existing = await this.findForGuard(id, options);
 		if (!existing) throw new EntityNotFoundException(this.getEntityName(), id);
 
 		if (!hooks.skipBefore) await this.beforeDelete(id);
@@ -846,7 +1044,7 @@ export abstract class SqlBaseCrudService<
 			.select({ count: sql<number>`count(*)` })
 			.from(this.config.table);
 		const { conditions, relations: filterRelations } =
-			this.buildFilterConditions(filters);
+			this.buildFilterConditions(filters, db);
 		const searchCondition = this.buildSearchCondition(options?.search);
 		if (searchCondition) {
 			conditions.push(searchCondition);
@@ -895,12 +1093,51 @@ export abstract class SqlBaseCrudService<
 		}
 	}
 
+	// Filter by a has-many relation: keep the parents that have at least one
+	// matching child. Built as `parentKey IN (SELECT fk FROM child WHERE ...)`
+	// rather than a JOIN, so parent rows are never duplicated and `total` and
+	// pagination stay correct. Returns undefined when nothing usable was given.
+	protected buildHasManyFilter(
+		relation: RelationConfig,
+		value: Record<string, any>,
+		db: any = this.config.db,
+	): any | undefined {
+		if (!relation.foreignKey) return undefined;
+		const child = relation.table;
+		const fkColumn = child[relation.foreignKey];
+		if (!fkColumn) return undefined;
+
+		const childConditions: any[] = [];
+		for (const [col, colValue] of Object.entries(value)) {
+			if (colValue === undefined || colValue === null) continue;
+			const column = child[col];
+			if (!column) continue;
+			this.pushColumnCondition(childConditions, column, colValue);
+		}
+		if (childConditions.length === 0) return undefined;
+
+		const softDelete = this.config.softDelete;
+		if (softDelete?.enabled && child[softDelete.column]) {
+			childConditions.push(isNull(child[softDelete.column]));
+		}
+
+		const subquery = db
+			.select({ value: fkColumn })
+			.from(child)
+			.where(and(...childConditions));
+		const parentKey = relation.parentKey ?? this.config.primaryKey;
+		return inArray(this.config.table[parentKey], subquery);
+	}
+
 	// Build WHERE conditions from a filter object. A key matching a configured
 	// relation, with an object value, filters by the related table's columns
-	// (e.g. { state: { name: 'X', country_id: 1 } }) and the relation name is
-	// returned so the caller can JOIN it. Returns both the conditions and the
-	// set of relations that must be joined.
-	protected buildFilterConditions(filters?: any): {
+	// (e.g. { state: { name: 'X', country_id: 1 } }). A belongs-to relation is
+	// returned in `relations` so the caller can JOIN it; a has-many relation
+	// becomes a subquery condition and needs no join.
+	protected buildFilterConditions(
+		filters?: any,
+		db: any = this.config.db,
+	): {
 		conditions: any[];
 		relations: string[];
 	} {
@@ -915,6 +1152,15 @@ export abstract class SqlBaseCrudService<
 
 			const relation = relConfig[key];
 			if (relation && typeof value === "object" && !Array.isArray(value)) {
+				if (this.relationType(relation) === "hasMany") {
+					const condition = this.buildHasManyFilter(
+						relation,
+						value as Record<string, any>,
+						db,
+					);
+					if (condition) conditions.push(condition);
+					continue;
+				}
 				let used = false;
 				for (const [col, colValue] of Object.entries(value)) {
 					if (colValue === undefined || colValue === null) continue;
@@ -1041,10 +1287,7 @@ export abstract class SqlBaseCrudService<
 		// Like find/findAll/count, exclude soft-deleted rows from search results.
 		const matchExpr = sql`${tsVector} @@ ${tsQuery}`;
 		const whereExpr = this.config.softDelete?.enabled
-			? and(
-					matchExpr,
-					isNull(this.config.table[this.config.softDelete.column]),
-				)
+			? and(matchExpr, isNull(this.config.table[this.config.softDelete.column]))
 			: matchExpr;
 
 		let query = db
