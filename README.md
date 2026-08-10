@@ -67,7 +67,7 @@ packages/
   nestjs-drizzle-crud/   The published npm package (the only public artifact)
 apps/
   docs/                  Next.js 16 + Fumadocs docs site → GitHub Pages (static export)
-  api/                   Example NestJS 11 app; doubles as the live e2e testbed
+  api/                   Example NestJS 11 app; doubles as the Playwright e2e testbed
 ```
 
 Only `packages/nestjs-drizzle-crud` is published to npm. `apps/*` are private.
@@ -78,7 +78,7 @@ Only `packages/nestjs-drizzle-crud` is published to npm. `apps/*` are private.
 pnpm install
 pnpm dev          # docs site on http://localhost:3000
 pnpm build        # turbo: builds the library, then the apps that depend on it
-pnpm test         # library unit tests + api e2e (e2e needs DATABASE_URL, else skips)
+pnpm test         # library unit tests + api e2e (no database setup needed)
 pnpm typecheck
 pnpm lint         # biome, whole workspace
 pnpm format       # biome --write
@@ -137,21 +137,32 @@ package:
 
 ## The example api (apps/api)
 
-A real NestJS app exercising the library against the Postgres in `apps/api/.env`
-(`DATABASE_URL`). It maps the existing geo tables (regions → countries → states →
-cities, belongs-to) plus a uuid-keyed `tags` table, and exposes `/countries` and
-`/tags`. `test/app.e2e-spec.ts` boots the app and hits it over HTTP: reads use
-the seeded tables, writes use `tags` and clean up.
+A real NestJS app exercising the library. It maps the geo tables (regions →
+countries → states → cities) plus a uuid-keyed `tags` table and a `country_tags`
+join table, so it covers belongs-to, has-many, many-to-many and nested relations,
+and exposes `/countries` and `/tags`.
 
-Copy `apps/api/.env.example` to `apps/api/.env` and set `DATABASE_URL`.
+`pnpm --filter api test` runs the e2e suite: **Playwright** drives the app over
+real HTTP, and the app runs against **PGlite**, Postgres compiled to WASM,
+in-process. No container, no credentials, nothing to seed by hand, and no browser
+download (Playwright's `request` fixture never launches one). The fixture lives in
+`apps/api/src/db/pglite.ts`: 5 regions, 50 countries, 4 states, 3 cities, 2 tags.
+
+```bash
+pnpm --filter api test          # 22 specs in apps/api/e2e
+pnpm --filter api test:ui       # the same, in the Playwright UI
+```
+
+`DATABASE_URL=pglite` selects that in-process database. Point it at a real
+Postgres connection string instead and the same app talks to that server, which
+is what `pnpm dev:api` does with `apps/api/.env`.
 
 ## CI / CD
 
 - **CI** (`.github/workflows/ci.yml`): lint, typecheck, build and test on push and PR.
 - **Docs** (`deploy-docs.yml`): static export to GitHub Pages on push to `main`,
   served at [crud.viliha.com](https://crud.viliha.com). One-time setup is
-  Settings → Pages → Source = GitHub Actions. Add `DATABASE_URL` as a repo secret
-  to run the api e2e in CI.
+  Settings → Pages → Source = GitHub Actions.
 - **Release** (`release.yml`): on a `v*` tag, re-runs the verify set and publishes
   [`nestjs-drizzle-crud`](https://www.npmjs.com/package/nestjs-drizzle-crud) to npm
   with provenance (needs the `NPM_TOKEN` secret).

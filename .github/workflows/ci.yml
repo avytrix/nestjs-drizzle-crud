@@ -32,7 +32,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
+      # Unit tests, plus the apps/api e2e suite. The e2e run needs no secret and
+      # no database service: Playwright boots the app against PGlite (Postgres
+      # compiled to WASM) with a seeded fixture, and drives it over HTTP.
       - run: pnpm test
-        env:
-          # e2e (apps/api) runs only when this is set; otherwise it self-skips.
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}

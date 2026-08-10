@@ -8,7 +8,7 @@ Turborepo + pnpm monorepo. One published library, two private apps:
 
 - `packages/nestjs-drizzle-crud` (npm: `nestjs-drizzle-crud`), the only public artifact. Built with `tsc` to `dist/`.
 - `apps/docs`, Next.js 16 + Fumadocs, static-exported to GitHub Pages at [crud.viliha.com](https://crud.viliha.com). This is what `pnpm dev` runs, on **:3000**. Its own rules live in `apps/docs/AGENTS.md`.
-- `apps/api`, an example NestJS 11 app that doubles as the live e2e testbed against real Postgres. `pnpm dev:api`, on **:4000**. `pnpm dev:all` runs both.
+- `apps/api`, an example NestJS 11 app that doubles as the e2e testbed. `pnpm dev:api`, on **:4000**. `pnpm dev:all` runs both. Its e2e suite is Playwright over real HTTP against **PGlite** (Postgres compiled to WASM, in-process), so it needs no container, no credentials and no browser download.
 
 Node >= 20, pnpm 10, TypeScript 7 (except `apps/docs`, which pins 5.9). Lint and format are Biome, tabs, double quotes, 80 columns.
 
@@ -25,7 +25,8 @@ Node >= 20, pnpm 10, TypeScript 7 (except `apps/docs`, which pins 5.9). Lint and
 | MCP server tools, protocol handling, doc sources | `src/mcp/server.ts` (zero deps, stdio JSON-RPC; the `nestjs-drizzle-crud-mcp` bin) |
 | Rules an agent consuming the package must follow | `AGENT.md`, pointed at by `AGENTS.template.md` and `CLAUDE.template.md` |
 | Unit test | `packages/nestjs-drizzle-crud/test/<area>.spec.ts` |
-| Proof it works over real HTTP and real Postgres | `apps/api/test/app.e2e-spec.ts`, plus a route under `apps/api/src/<entity>/` if the feature needs one |
+| Proof it works over real HTTP and real Postgres | `apps/api/e2e/*.spec.ts` (Playwright), plus a route under `apps/api/src/<entity>/` if the feature needs one |
+| e2e fixture: tables and seed rows the specs assert against | `apps/api/src/db/pglite.ts` (DDL + seed), mirroring `apps/api/src/db/schema.ts` |
 | New docs page | `apps/docs/content/docs/(<section>)/<name>.mdx` plus its `meta.json` entry |
 | Docs layout, design tokens, nav | `apps/docs/AGENTS.md`, never ad hoc |
 
@@ -56,8 +57,9 @@ Other invariants:
 
 - **Dialect awareness is real, not cosmetic.** `useReturning` defaults on for `postgresql` and is force-disabled for `mysql`. `wasAffected()` normalizes postgres-js, node-postgres and mysql2 result shapes. New mutations go through it rather than reading `.rowCount` directly.
 - **Connections are only owned when built here.** A caller supplied `db` is used as is and left alone. A `connectionString` is postgres only, and the connection it creates is closed on module destroy.
-- **Relations come in two shapes and only one of them joins.** Belongs-to (`localKey` referencing `references`) is a `LEFT JOIN`; `findAll` joins the union of eager belongs-to relations and relation filter relations for the data query, but only the filter relations for the count query. Keep that split; joining eager relations into the count query changes `total`. Has-many (`foreignKey` referencing `parentKey`) is never joined: it loads through `loadHasMany` as one batched `WHERE fk IN (...)` per relation after the main query, and a has-many filter becomes an `IN (SELECT ...)` subquery. A join there would multiply parent rows and break `total` and pagination.
-- **Eager loading is never per row.** `loadHasMany` costs one query per relation for the whole result set, whatever the row count. A new read path that loops a query over rows is the N+1 bug this exists to prevent.
+- **Only a top-level belongs-to is joined.** Belongs-to (`localKey` referencing `references`) rides along in the main query as a `LEFT JOIN`; `findAll` joins the union of those and the relation filter relations for the data query, but only the filter relations for the count query. Keep that split; joining eager relations into the count query changes `total`. Everything else is batched by `loadRelations`: has-many (`foreignKey`), many-to-many (`through` + `throughLocalKey` + `throughForeignKey`), and every nested level whatever its shape. A collection must never be joined, and a collection filter must stay an `IN (SELECT ...)` subquery (`buildCollectionFilter`): a join multiplies parent rows and breaks both `total` and pagination.
+- **Eager loading is never per row.** `loadRelations` costs one query per relation per level for the whole result set, whatever the row count, and siblings run concurrently. A new read path that loops a query over rows is the N+1 bug this exists to prevent.
+- **A narrowed projection still carries its keys.** `withRequiredKeys` and `keysForChildren` add back the parent key, the child foreign key and any key a nested level needs. Drop one and the grouping silently produces empty collections.
 - **Soft delete is a predicate, not a mode.** Every read appends `isNull(deleted_at)` when it is enabled. A new read path that forgets it will happily return deleted rows.
 - **Errors map to HTTP by construction.** The exceptions extend `NotFoundException`, `ConflictException` and `BadRequestException`, so Nest's default filter returns 404, 409 and 400 without a custom filter. Driver error codes are translated at the service boundary. Never let a raw `DrizzleQueryError` reach the client as a 500 when it is caused by bad input.
 
@@ -72,7 +74,7 @@ Other invariants:
 7. **Type checking is a separate gate.** Tests run through `@swc/jest`, which only strips types, so a type error will not fail the test run. `pnpm typecheck` is the check that catches it, and it is not optional.
 8. **Do not swap the toolchain.** `ts-jest` is incompatible with TypeScript 7, typescript-eslint caps below it, and `apps/docs` pins 5.9 for Fumadocs Twoslash. These are worked around on purpose; do not "fix" them by downgrading.
 9. **Comment deliberate no-ops.** A swallowed error or an intentionally empty hook gets a line saying why. Never silently discard an error anywhere else.
-10. **Every behaviour change carries a test.** Unit tests for logic, an e2e assertion in `apps/api` for anything that has to be true over real HTTP against real Postgres.
+10. **Every behaviour change carries a test.** Unit tests for logic, an e2e assertion in `apps/api/e2e` for anything that has to be true over real HTTP against real Postgres. The e2e suite runs everywhere with no setup, so "I could not test the database path" is not a reason to skip it.
 11. **Changelog and docs on every change (mandatory, see below).** No feature or fix is done until the changelog and the relevant docs are updated in the same change. After writing them you re-read and humanize the prose, and make it SEO and AEO friendly.
 
 ## Changelog and docs, mandatory on every change, never skip
@@ -105,7 +107,7 @@ pnpm lint                                   # biome, whole workspace
 pnpm typecheck                              # the only gate that sees type errors
 pnpm build
 pnpm --filter nestjs-drizzle-crud test      # unit
-pnpm --filter api test                      # e2e, needs apps/api/.env DATABASE_URL
+pnpm --filter api test                      # e2e: Playwright + PGlite, no setup needed
 ```
 
 Single test while iterating:
@@ -115,7 +117,9 @@ pnpm --filter nestjs-drizzle-crud test -- test/bug-fixes.spec.ts
 pnpm --filter nestjs-drizzle-crud test -- -t "soft delete"
 ```
 
-Without `DATABASE_URL` the e2e suite self-skips, locally and in CI, so a green run proves nothing about the database paths. Set it before claiming a database change works.
+The e2e suite is self-contained: Playwright builds and boots `apps/api` with `DATABASE_URL=pglite`, an in-process Postgres seeded from `apps/api/src/db/pglite.ts`, then drives it over HTTP. A green run does prove the database paths. Rebuild the library first (`pnpm --filter nestjs-drizzle-crud build`) when you run the e2e suite directly, or run it through Turbo from the root, otherwise the app loads a stale `dist/`.
+
+If a spec needs a new table or new seed rows, add them to `apps/api/src/db/pglite.ts` **and** `apps/api/src/db/schema.ts`, and keep the counts the specs assert (50 countries) intact.
 
 Plus, not optional: the changelog and docs update from the rule above, and a `packages/nestjs-drizzle-crud/package.json` bump if the change ships in the package.
 

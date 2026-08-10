@@ -19,13 +19,13 @@ export class TagsController {
 	constructor(private readonly tags: TagsService) {}
 
 	@Get()
-	findAll(
-		@Query("page") page?: string,
-		@Query("limit") limit?: string,
-	) {
+	findAll(@Query("page") page?: string, @Query("limit") limit?: string) {
 		return this.tags.findAll(
 			{},
-			{ page: page ? Number(page) : undefined, limit: limit ? Number(limit) : undefined },
+			{
+				page: page ? Number(page) : undefined,
+				limit: limit ? Number(limit) : undefined,
+			},
 		);
 	}
 

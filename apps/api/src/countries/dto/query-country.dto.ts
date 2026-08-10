@@ -29,15 +29,11 @@ export class QueryCountryDto {
 	@IsString()
 	search?: string;
 
-	// `?withRegion=true` eager-loads the related region.
+	// `?with=region,states,states.cities,tags` eager-loads relations. A dotted
+	// path loads a relation of a relation.
 	@IsOptional()
-	@IsIn(["true", "false"])
-	withRegion?: string;
-
-	// `?withStates=true` eager-loads the country's states (has-many).
-	@IsOptional()
-	@IsIn(["true", "false"])
-	withStates?: string;
+	@IsString()
+	with?: string;
 
 	// `?fields=id,name,states.name` narrows the returned columns.
 	@IsOptional()
@@ -48,6 +44,11 @@ export class QueryCountryDto {
 	@IsOptional()
 	@IsString()
 	stateName?: string;
+
+	// `?tagName=himalayan` keeps countries carrying that tag (many-to-many).
+	@IsOptional()
+	@IsString()
+	tagName?: string;
 
 	// --- filters ---
 	@IsOptional()

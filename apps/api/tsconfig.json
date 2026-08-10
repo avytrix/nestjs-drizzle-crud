@@ -4,12 +4,10 @@
 		"module": "commonjs",
 		"declaration": false,
 		"sourceMap": true,
-		"outDir": "./dist",
-		"rootDir": "./src",
 		"incremental": true,
 		"resolveJsonModule": true,
-		"types": ["node", "jest"]
+		"types": ["node"]
 	},
-	"include": ["src/**/*"],
-	"exclude": ["node_modules", "dist", "test"]
+	"include": ["src/**/*", "e2e/**/*", "playwright.config.ts"],
+	"exclude": ["node_modules", "dist"]
 }

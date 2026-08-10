@@ -141,7 +141,7 @@ class TestUsersService extends UsersService {
 Two consequences to plan for:
 
 - **It needs a Jest environment.** The factory calls the global `jest`, so it works inside a Jest test file and nowhere else.
-- **It does not verify your SQL.** A stub cannot catch a wrong column name, a bad cast, or a constraint violation. Cover those with an end-to-end test against a real database, the way this project's own `apps/api` e2e suite does.
+- **It does not verify your SQL.** A stub cannot catch a wrong column name, a bad cast, or a constraint violation. Cover those with an end-to-end test against a real database, the way this project's own `apps/api` e2e suite does: Playwright drives the app over HTTP while the app runs against [PGlite](https://pglite.dev), Postgres compiled to WASM, in-process. That needs no container and no credentials, so there is no excuse for skipping the SQL-level test.
 
 `createMockTable()` returns a plain object whose keys stand in for columns (`id`, `name`, `email`, `created_at`, `updated_at`, `deleted_at`), and `createMockEntity(overrides?)` returns a row fixture you can override field by field.
 

@@ -8,8 +8,8 @@
 		},
 		"test": {
 			"dependsOn": ["^build"],
-			"outputs": ["coverage/**"],
-			"env": ["DATABASE_URL"]
+			"outputs": ["coverage/**", "playwright-report/**"],
+			"env": ["DATABASE_URL", "E2E_PORT"]
 		},
 		"typecheck": {
 			"dependsOn": ["^build"]

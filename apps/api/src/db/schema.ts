@@ -55,3 +55,9 @@ export const tags = pgTable("tags", {
 	name: varchar("name").notNull(),
 	...timestamps,
 });
+
+// Join table for the countries <-> tags many-to-many relation.
+export const countryTags = pgTable("country_tags", {
+	country_id: integer("country_id").notNull(),
+	tag_id: uuid("tag_id").notNull(),
+});

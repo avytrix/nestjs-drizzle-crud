@@ -1,6 +1,13 @@
 import { Module } from "@nestjs/common";
 import { DrizzleCrudModule } from "nestjs-drizzle-crud";
-import { countries, regions, states } from "../db/schema";
+import {
+	cities,
+	countries,
+	countryTags,
+	regions,
+	states,
+	tags,
+} from "../db/schema";
 import { CountriesController } from "./countries.controller";
 import { CountriesService } from "./countries.service";
 
@@ -16,11 +23,30 @@ import { CountriesService } from "./countries.service";
 					relations: {
 						// belongs-to: countries.region_id -> regions.id
 						region: { table: regions, localKey: "region_id" },
-						// has-many: states.country_id -> countries.id
+						// has-many: states.country_id -> countries.id, alphabetical,
+						// with its own has-many so `states.cities` can be eager-loaded
 						states: {
 							table: states,
 							type: "hasMany",
 							foreignKey: "country_id",
+							orderBy: [{ column: "name", order: "asc" }],
+							relations: {
+								cities: {
+									table: cities,
+									type: "hasMany",
+									foreignKey: "state_id",
+									orderBy: [{ column: "name", order: "asc" }],
+								},
+							},
+						},
+						// many-to-many: countries <-> tags through country_tags
+						tags: {
+							table: tags,
+							type: "manyToMany",
+							through: countryTags,
+							throughLocalKey: "country_id",
+							throughForeignKey: "tag_id",
+							orderBy: [{ column: "name", order: "asc" }],
 						},
 					},
 					defaultSort: [{ column: "name", order: "asc" }],

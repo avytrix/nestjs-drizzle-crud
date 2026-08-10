@@ -2,15 +2,16 @@
 	"name": "api",
 	"version": "0.0.0",
 	"private": true,
-	"description": "Example NestJS app exercising nestjs-drizzle-crud against a real Postgres (Neon). Doubles as the e2e testbed.",
+	"description": "Example NestJS app exercising nestjs-drizzle-crud. Doubles as the e2e testbed, run by Playwright against an in-process Postgres (PGlite).",
 	"scripts": {
 		"prebuild": "rm -rf dist *.tsbuildinfo",
 		"build": "tsc -p tsconfig.build.json",
 		"start": "PORT=4000 node dist/main.js",
 		"dev": "tsc -p tsconfig.build.json && (tsc -p tsconfig.build.json --watch --preserveWatchOutput & PORT=4000 node --watch dist/main.js)",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
-		"test": "jest --config jest-e2e.config.js --runInBand",
-		"lint": "biome lint src test"
+		"test": "playwright test",
+		"lint": "biome lint src e2e",
+		"test:ui": "playwright test --ui"
 	},
 	"dependencies": {
 		"@nestjs/common": "^11.1.28",
@@ -26,14 +27,9 @@
 		"rxjs": "^7.8.1"
 	},
 	"devDependencies": {
-		"@nestjs/testing": "^11.1.28",
-		"@swc/core": "^1.7.0",
-		"@swc/jest": "^0.2.37",
-		"@types/jest": "^30.0.0",
+		"@electric-sql/pglite": "^0.5.4",
+		"@playwright/test": "^1.62.1",
 		"@types/node": "^26.0.0",
-		"@types/supertest": "^6.0.0",
-		"jest": "^30.4.2",
-		"supertest": "^7.1.0",
 		"typescript": "^7.0.0"
 	}
 }

@@ -24,3 +24,7 @@ out
 .env
 .env.*
 !.env.example
+
+# playwright (apps/api e2e)
+test-results
+playwright-report

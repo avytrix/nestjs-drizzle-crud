@@ -32,7 +32,7 @@ pnpm install
 pnpm lint         # Biome
 pnpm typecheck    # tsc --noEmit, the only gate that sees type errors
 pnpm build
-pnpm test         # library unit tests, plus the api e2e when DATABASE_URL is set
+pnpm test         # library unit tests, plus the api e2e (self-contained)
 ```
 
 Working on one workspace:
@@ -45,9 +45,11 @@ pnpm dev:api                                        # example api on :4000
 pnpm dev:all                                        # both together
 ```
 
-The e2e suite needs a database. Copy `apps/api/.env.example` to `apps/api/.env`
-and set `DATABASE_URL`. Without it the suite self-skips, locally and in CI, so a
-green run proves nothing about the database paths.
+The e2e suite needs no setup. `pnpm --filter api test` runs Playwright against the
+example app, and the app runs against PGlite (Postgres compiled to WASM) with a
+seeded fixture, in-process. It exercises the real SQL the package generates, so a
+green run does prove the database paths. To point the app at a real Postgres
+instead, copy `apps/api/.env.example` to `apps/api/.env` and set `DATABASE_URL`.
 
 ## Pull request workflow
 

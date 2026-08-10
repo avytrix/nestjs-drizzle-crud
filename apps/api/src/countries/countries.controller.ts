@@ -17,12 +17,13 @@ import { CreateCountryDto } from "./dto/create-country.dto";
 import { QueryCountryDto } from "./dto/query-country.dto";
 import { UpdateCountryDto } from "./dto/update-country.dto";
 
-// `?withRegion=true&withStates=true` -> ['region', 'states']
-function relationsOf(withRegion?: string, withStates?: string): string[] {
-	const relations: string[] = [];
-	if (withRegion === "true") relations.push("region");
-	if (withStates === "true") relations.push("states");
-	return relations;
+// `?with=region,states,states.cities,tags` -> the eager-load list. Dotted paths
+// load a relation of a relation. Unknown names are ignored by the service.
+function relationsOf(withParam?: string): string[] {
+	return (withParam ?? "")
+		.split(",")
+		.map((name) => name.trim())
+		.filter(Boolean);
 }
 
 @Controller("countries")
@@ -37,17 +38,22 @@ export class CountriesController {
 			sortBy,
 			sortOrder,
 			search,
-			withRegion,
-			withStates,
+			with: withParam,
 			fields,
 			stateName,
+			tagName,
 			...filters
 		} = query;
 		return this.countries.findAll(
-			{ ...filters, ...(stateName ? { states: { name: stateName } } : {}) },
+			{
+				...filters,
+				// filter by a related collection: countries that have a state / tag
+				...(stateName ? { states: { name: stateName } } : {}),
+				...(tagName ? { tags: { name: tagName } } : {}),
+			},
 			{ page, limit, sortBy, sortOrder },
 			{
-				relations: relationsOf(withRegion, withStates),
+				relations: relationsOf(withParam),
 				select: fields ? fields.split(",") : undefined,
 				search: search
 					? { term: search, columns: ["name", "code"] }
@@ -59,11 +65,12 @@ export class CountriesController {
 	@Get(":id")
 	async find(
 		@Param("id", ParseIntPipe) id: number,
-		@Query("withRegion") withRegion?: string,
-		@Query("withStates") withStates?: string,
+		@Query("with") withParam?: string,
+		@Query("fields") fields?: string,
 	) {
 		const country = await this.countries.find(id, {
-			relations: relationsOf(withRegion, withStates),
+			relations: relationsOf(withParam),
+			select: fields ? fields.split(",") : undefined,
 		});
 		if (!country) {
 			throw new NotFoundException(`Country ${id} not found`);
