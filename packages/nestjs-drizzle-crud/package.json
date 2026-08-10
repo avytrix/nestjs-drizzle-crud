@@ -1,13 +1,17 @@
 {
 	"name": "nestjs-drizzle-crud",
-	"version": "3.2.2",
+	"version": "3.3.0",
 	"description": "A complete CRUD abstraction layer for Drizzle ORM in NestJS applications",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
+	"bin": {
+		"nestjs-drizzle-crud-mcp": "dist/mcp/server.js"
+	},
 	"files": [
 		"dist/**/*",
 		"README.md",
 		"AGENT.md",
+		"AGENTS.template.md",
 		"CLAUDE.template.md",
 		"CHANGELOG.md",
 		"LICENSE"
@@ -36,7 +40,10 @@
 		"mysql",
 		"database",
 		"orm",
-		"typescript"
+		"typescript",
+		"mcp",
+		"eager-loading",
+		"n+1"
 	],
 	"author": "Suman Bonakurthi <sumanbonakurthi@gmail.com>",
 	"license": "MIT",

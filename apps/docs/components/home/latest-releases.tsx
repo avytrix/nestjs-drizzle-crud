@@ -3,6 +3,12 @@ import { ArrowRight } from "lucide-react";
 
 const RELEASES = [
 	{
+		version: "3.3.0",
+		date: "Aug 10, 2026",
+		title: "Has-many eager loading without N+1",
+		body: "Declare a hasMany relation and findAll loads the whole page's children in one extra query, never one per row. options.select now takes dotted paths like region.code, and the package ships an MCP server so any AI agent can read its docs.",
+	},
+	{
 		version: "3.2.2",
 		date: "Aug 9, 2026",
 		title: "Foreign-key mapping restored",
@@ -13,12 +19,6 @@ const RELEASES = [
 		date: "Jul 17, 2026",
 		title: "Docs site and packaging",
 		body: "The package homepage now points at crud.viliha.com, and the READMEs link the docs, npm, and GitHub. No runtime change, and the foreign-key regression it carried is fixed in 3.2.2.",
-	},
-	{
-		version: "3.1.0",
-		date: "Jun 29, 2026",
-		title: "findAll and count support list search",
-		body: "Pass options.search to search across configured columns while keeping filters, pagination, sorting, relation filters, and total count in the same query path.",
 	},
 ];
 

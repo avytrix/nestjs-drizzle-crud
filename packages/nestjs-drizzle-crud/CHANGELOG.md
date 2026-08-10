@@ -8,6 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Scope note: the 3.0.x line is PostgreSQL-first. MySQL-specific paths (non-`RETURNING`
 restore, `ER_DUP_ENTRY` mapping, dialect locking) are tracked separately and unchanged here.
 
+## [3.3.0] - 2026-08-10
+
+### Added
+- **Has-many relations, eager loaded without N+1.** Declare
+  `relations: { states: { table: states, type: 'hasMany', foreignKey: 'country_id' } }` and pass
+  `options.relations: ['states']` to `find`, `findOne` or `findAll`. Each has-many relation costs
+  exactly one extra query for the whole result set (`WHERE country_id IN (...)`), no matter how many
+  parent rows come back, and the relations run concurrently. A page of 50 countries with their
+  states is 3 queries: data, count, children. A parent with no children gets `[]`, never `undefined`.
+- **Has-many relations are never joined.** Filtering by a child column
+  (`findAll({ states: { name: 'Kerala' } })`) compiles to
+  `countries.id IN (SELECT country_id FROM states WHERE ...)`, so parent rows are never duplicated
+  and `total` and pagination stay correct. Belongs-to relations keep using a `LEFT JOIN`.
+- **`options.select` now narrows relation columns with a dotted path.**
+  `select: ['id', 'name', 'region.code', 'states.name']` projects only those columns, for the base
+  table, a joined belongs-to relation and a batched has-many relation alike. Listing only relation
+  columns leaves the parent row complete. The parent key and the child foreign key are added back
+  automatically when a has-many relation is loaded, because grouping needs them.
+- **An MCP server ships with the package.** `npx nestjs-drizzle-crud-mcp` serves the package docs
+  (`AGENT.md`, `README.md`, `CHANGELOG.md`) to any MCP client through three tools: `list_docs`,
+  `get_doc` and `search_docs`. It speaks JSON-RPC over stdio, still has zero dependencies, and works
+  with Claude Code, Codex, Cursor, Copilot, Gemini CLI, Windsurf, Zed and Cline.
+- **`AGENTS.template.md`** for every agent that is not Claude Code. It carries the same pointer to
+  `AGENT.md` and lists the filename each tool reads. `CLAUDE.template.md` is unchanged.
+- Exported the `RelationType` type (`'belongsTo' | 'hasMany'`).
+
+### Changed
+- A relation with a missing key column now throws at startup: a has-many relation requires
+  `foreignKey`, a belongs-to relation requires `localKey`. It used to load nothing quietly, which
+  read as bad data rather than bad config.
+- `RelationConfig.localKey` is optional, since has-many relations use `foreignKey` instead. Existing
+  belongs-to configs are unaffected.
+
 ## [3.2.2] - 2026-08-09
 
 ### Fixed

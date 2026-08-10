@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 export const siteConfig = {
 	name: "nestjs-drizzle-crud",
-	version: "3.2.2",
+	version: "3.3.0",
 	tagline: "Type-safe CRUD for Drizzle ORM in NestJS",
 	description:
 		"Type-safe CRUD for Drizzle ORM in NestJS. Configure the connection once, and every entity gets full CRUD: find, create, update, soft-delete, bulk ops, pagination, filtering, relations and full-text search.",

@@ -1,6 +1,6 @@
 # nestjs-drizzle-crud docs
 
-Documentation site for [`nestjs-drizzle-crud@3.2.1`](https://www.npmjs.com/package/nestjs-drizzle-crud).
+Documentation site for [`nestjs-drizzle-crud@3.3.0`](https://www.npmjs.com/package/nestjs-drizzle-crud).
 Next.js 16 + Fumadocs, **static-exported** (`output: "export"`) and deployed to
 **GitHub Pages** via `.github/workflows/deploy-docs.yml` on push to `main`.
 Lives at `apps/docs/` in the `viliha-drizzle` monorepo (pnpm workspace + Turborepo).
