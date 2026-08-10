@@ -6,6 +6,7 @@
 		"filtering",
 		"pagination-sorting",
 		"relations",
+		"column-selection",
 		"primary-keys",
 		"soft-delete",
 		"timestamps",
@@ -15,6 +16,7 @@
 		"full-text-search",
 		"hooks-validation",
 		"errors",
-		"testing"
+		"testing",
+		"ai-agents"
 	]
 }

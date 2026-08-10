@@ -58,6 +58,7 @@ DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
 - [Filtering](#filtering)
 - [Pagination & sorting](#pagination--sorting)
 - [Relations](#relations)
+- [Column selection](#column-selection)
 - [Primary keys (serial / uuid)](#primary-keys-serial--uuid)
 - [Soft delete](#soft-delete)
 - [Timestamps](#timestamps)
@@ -81,7 +82,9 @@ DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
 - 📦 **Bulk operations**. Mass create/update/delete inside a transaction
 - 🔍 **Rich filtering**. Equality, `in`, comparison operators, `like`/`ilike`, null checks
 - 🔎 **Full-text search**. PostgreSQL `tsvector`/`tsquery`
-- 🔗 **Relations**. Many-to-one eager loading and filtering by related columns
+- 🔗 **Relations**. Belongs-to and has-many eager loading with no N+1, plus filtering by related columns
+- 🎯 **Column selection**. Ask for the columns you need, relation columns included
+- 🤖 **Agent ready**. Rules templates for every agent, and an MCP server in the box
 - 🔑 **Flexible primary keys**, `serial` / `int` / `bigint` / `bigserial` / `uuid`
 - 🪝 **Hooks & validation**, `before*`/`after*` hooks, `validateCreate`/`validateUpdate`
 - 🧪 **Test utilities**. Mock db/table/entity factories
@@ -406,7 +409,7 @@ By default this searches the configured columns with `ILIKE '%term%'` joined by
 ```typescript
 interface SqlOperationOptions {
   transaction?: any;            // run within an existing transaction
-  select?: string[];            // return only these columns
+  select?: string[];            // return only these columns; 'region.code' narrows a relation
   relations?: string[];         // eager-load these configured relations (see Relations)
   search?: {
     term: string;                // user search term
@@ -419,7 +422,8 @@ interface SqlOperationOptions {
 }
 ```
 
-> `relations` eager-loads relations declared in the entity's config. See [Relations](#relations).
+> `relations` eager-loads relations declared in the entity's config. See
+> [Relations](#relations) and [Column selection](#column-selection).
 
 ---
 
@@ -489,41 +493,61 @@ in `forRoot` to apply a `created_at` fallback to every entity that doesn't defin
 
 ## Relations
 
-The package supports **many-to-one / belongs-to** relations: a foreign key on
-this entity's table points at another table's key. Declare them in the entity's
-`forFeature` config under `relations`, keyed by relation name:
+Two kinds of relation are supported, declared in the entity's `forFeature`
+config under `relations` and keyed by relation name:
+
+| Type | SQL | Extra queries | Result |
+| --- | --- | --- | --- |
+| `belongsTo` (default) | `LEFT JOIN` in the main query | 0 | object, or `null` |
+| `hasMany` | `SELECT ... WHERE fk IN (parent keys)` | 1 per relation, for the whole page | array, `[]` when empty |
+
+Neither runs a query per row, so eager loading a page of 50 rows costs the same
+number of queries as a page of 5. That is the N+1 fix: ask for the relation
+instead of looping.
 
 ```typescript
-import { cities, states } from './db/schema';
+import { countries, regions, states } from './db/schema';
 
 DrizzleCrudModule.forFeature([
   {
-    service: CitiesService,
-    table: cities,
+    service: CountriesService,
+    table: countries,
     config: {
       relations: {
-        // cities.state_id -> states.id   (`references` defaults to 'id')
-        state: { table: states, localKey: 'state_id', references: 'id' },
+        // belongs-to: countries.region_id -> regions.id (`references` defaults to 'id')
+        region: { table: regions, localKey: 'region_id', references: 'id' },
+        // has-many: states.country_id -> countries.id (`parentKey` defaults to the primary key)
+        states: { table: states, type: 'hasMany', foreignKey: 'country_id' },
       },
     },
   },
 ]);
 ```
 
-Once declared, you get two capabilities:
+A belongs-to relation without `localKey`, or a has-many relation without
+`foreignKey`, throws when the service is constructed, so a typo shows up at
+startup instead of as an empty array later.
 
 ### 1. Eager loading
 
-Pass `relations` in the operation options to LEFT JOIN and nest the related row:
+Pass `relations` in the operation options:
 
 ```typescript
-await cities.find(1, { relations: ['state'] });
-// → { id: 1, name: 'Bengaluru', state_id: 7, state: { id: 7, name: 'Karnataka', country_id: 3 } }
+await countries.find(1, { relations: ['region', 'states'] });
+// → {
+//     id: 1, name: 'India', region_id: 3,
+//     region: { id: 3, name: 'Asia', code: 'AS' },
+//     states: [{ id: 10, name: 'Karnataka', country_id: 1 }, ...],
+//   }
 
-await cities.findAll({}, { page: 1, limit: 20 }, { relations: ['state'] });
+// 3 queries total: data, count, and every state in one IN (...)
+await countries.findAll({}, { page: 1, limit: 50 }, { relations: ['region', 'states'] });
 ```
 
-If there's no match, the relation comes back as `null`.
+An unmatched belongs-to relation is `null`, never an object full of nulls. A
+parent with no children is `[]`, so callers can iterate without a guard.
+Has-many relations load concurrently, and soft-deleted children are excluded
+when the child table has the configured column.
 
 ### 2. Filtering by related columns
 
@@ -531,24 +555,56 @@ Use the relation name as a filter key with a nested object of the **related
 table's** columns. Supports the same [operators](#filtering) as normal filters:
 
 ```typescript
-// all cities whose state is named 'Karnataka' (case-insensitive exact)
+// belongs-to: filtered through the join
 await cities.findAll({ state: { name: 'Karnataka' } });
-
-// all cities in a country: filter on the intermediate table's FK column
-await cities.findAll({ state: { country_id: 3 } });
-
-// combine with normal column filters and operators
 await cities.findAll({ name: { ilike: 'B%' }, state: { country_id: 3 } });
+
+// has-many: countries.id IN (SELECT country_id FROM states WHERE ...)
+await countries.findAll({ states: { name: 'Kerala' } });
 ```
 
-> **Scope:** only **many-to-one / one-to-one** (belongs-to) relations are
-> supported. Has-many collection loading and many-to-many (join tables) are not
-> handled. Model those with a custom service method using `this.config.db`, or
-> orchestrate across services in a controller.
+A has-many relation is never joined, on a filter or on an eager load. One
+country with four states would become four rows, `count(*)` would return 4
+instead of 1, and `limit` would cut a country in half. The subquery and the
+batched load keep one row per parent, so `total` and pagination stay correct.
+
+> **Scope:** many-to-many (join tables) is not handled, and `options.relations`
+> takes flat names only, so a relation-of-a-relation needs a custom method.
+> Child collections come back unordered.
 >
 > **Multi-level filtering** works through the intermediate table's columns
 > (e.g. filter cities by `state.country_id`), so you usually don't need a
 > direct relation to the far table.
+
+---
+
+## Column selection
+
+Pass `options.select` and the query stops being `SELECT *`. A dotted entry
+narrows an eager-loaded relation:
+
+```typescript
+await countries.findAll({}, { page: 1, limit: 20 }, { select: ['id', 'name'] });
+// SELECT "id", "name" FROM "countries" ...
+
+await countries.findAll({}, { page: 1, limit: 20 }, {
+  relations: ['region', 'states'],
+  select: ['id', 'name', 'region.code', 'states.name'],
+});
+// → { id, name, region: { code }, states: [{ name, country_id }] }
+```
+
+Rules worth knowing:
+
+- A dotted entry only applies when the relation is also in `options.relations`.
+- Names that don't match a real column are ignored, not rejected.
+- If every entry is dotted, the base row is returned in full, so
+  `select: ['region.name']` reads as "narrow the region".
+- The parent key and each child's foreign key are added back automatically for a
+  has-many load, because grouping the children needs them.
+
+`select` applies to `find`, `findOne` and `findAll`. Write methods return the
+full row through `RETURNING`.
 
 ---
 
@@ -729,6 +785,50 @@ const service = TestCrudFactory.createTestService(UsersService, mockDb, mockTabl
 
 ## For AI agents / LLM tools
 
+### Point your agent at the rules
+
+`AGENT.md` ships inside the package and is the single source of truth for agents
+consuming it. Copy the pointer template to the filename your tool reads:
+
+```bash
+cp node_modules/nestjs-drizzle-crud/AGENTS.template.md ./AGENTS.md   # Codex, Cursor, Copilot, Zed, Cline, Windsurf
+cp node_modules/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md   # Claude Code
+# Gemini CLI reads ./GEMINI.md, Aider reads ./CONVENTIONS.md
+```
+
+Each template is one `@node_modules/nestjs-drizzle-crud/AGENT.md` line, so an
+upgrade updates the rules with it and you never hold a stale copy.
+
+### Or run the MCP server
+
+```bash
+npx nestjs-drizzle-crud-mcp
+```
+
+A stdio MCP server, zero dependencies, that serves this package's docs to any MCP
+client through three tools: `list_docs`, `get_doc` (`agent-guide` / `readme` /
+`changelog`, optionally one section) and `search_docs`. Register it the usual way:
+
+```json
+{
+  "mcpServers": {
+    "nestjs-drizzle-crud": {
+      "command": "npx",
+      "args": ["-y", "nestjs-drizzle-crud-mcp"]
+    }
+  }
+}
+```
+
+That shape works for Claude Code (`.mcp.json`), Cursor (`.cursor/mcp.json`),
+Windsurf, Gemini CLI and Cline. VS Code and Copilot use `.vscode/mcp.json` with
+the entries under `servers`; Codex uses `[mcp_servers.*]` in
+`~/.codex/config.toml`; Zed uses a `context_servers` entry. The server is
+read-only and never touches your database. Full setup:
+[crud.viliha.com/docs/ai-agents](https://crud.viliha.com/docs/ai-agents).
+
+### Facts for code generation
+
 Concise, accurate facts for code generation. Prefer these over guessing.
 
 **Package:** `nestjs-drizzle-crud` · **Peers:** `@nestjs/common`, `@nestjs/core`, `drizzle-orm`, `reflect-metadata`; optional `postgres` (PG) / `mysql2` (MySQL).
@@ -751,7 +851,8 @@ export class XService extends SqlBaseCrudService<X, CreateXDto, UpdateXDto, XFil
 - Filter operators live inside an object value: `{ age: { gte: 18 } }`. `like`/`ilike` require caller-supplied `%` wildcards; a bare string is exact match.
 - `delete`/`softDelete` return `boolean`; `update`/`restore` return the entity and throw `EntityNotFoundException` when missing.
 - Postgres error codes are translated for you: `23505` unique -> 409, `22001`/`23514`/`22003` bad value -> 400, `23503` on create/update (missing FK target) -> 400 `ForeignKeyViolationException`, `23503` on delete (still referenced) -> 409 `EntityInUseException`.
-- Relations (many-to-one only): declare in forFeature `config.relations = { relName: { table, localKey, references? } }`. Then eager-load via `options.relations: ['relName']` (nested object on the result, `null` if unmatched) and filter via `findAll({ relName: { col: value } })` (same operators; multi-level via the intermediate table's columns, e.g. `state.country_id`). No has-many/many-to-many.
+- Relations: declare in forFeature `config.relations`. Belongs-to is `{ table, localKey, references? }`, LEFT JOINed into the main query, resolving to a nested object or `null`. Has-many is `{ table, type: 'hasMany', foreignKey, parentKey? }`, loaded with one extra batched query per relation for the whole result set, resolving to an array (`[]` when empty). Eager-load via `options.relations: ['relName']`, filter via `findAll({ relName: { col: value } })` with the same operators (has-many filters compile to `parentKey IN (SELECT foreignKey FROM child WHERE ...)`, so `total` stays correct). Multi-level via the intermediate table's columns, e.g. `state.country_id`. No many-to-many, no nested relation-of-a-relation.
+- `options.select` narrows the projection and takes dotted relation paths: `['id', 'name', 'region.code', 'states.name']`. Unknown names are ignored; an all-dotted list leaves the base row complete; the parent key and child foreign key are re-added for a has-many load.
 - Primary keys: `primaryKey` (default `'id'`) + `primaryKeyType` (`'serial' | 'bigserial' | 'int' | 'bigint' | 'uuid'`) per entity in forFeature config. UUID works on Postgres via RETURNING; with uuid keys, route params are strings. Don't use `ParseIntPipe`.
 - Full-text search is PostgreSQL-only.
 - Exports: `SqlBaseCrudService`, `DrizzleCrudModule`, `DRIZZLE_DB`, `DRIZZLE_CRUD_CONFIG`, `TestCrudFactory`, exceptions (`EntityNotFoundException`, `DuplicateEntityException`, `ForeignKeyViolationException`, `EntityInUseException`, `ValidationFailedException`, `BulkOperationException`, `DatabaseConnectionException`, `TransactionException`), and types (`SqlCrudConfig`, `SqlOperationOptions`, `DrizzleCrudConfig`, `CrudFeature`, `SqlDialect`, `PrimaryKeyType`).
@@ -769,7 +870,14 @@ interface SqlCrudConfig {
   timestamps?: { createdAt: string; updatedAt: string };
   pagination?: { defaultLimit: number; maxLimit: number };
   sql?: { caseSensitive: boolean; useReturning: boolean; jsonSupport: boolean; enableFullTextSearch: boolean };
-  relations?: Record<string, { table: any; localKey: string; references?: string }>;
+  relations?: Record<string, {
+    table: any;
+    type?: 'belongsTo' | 'hasMany';
+    localKey?: string;             // belongs-to: FK column on this table
+    references?: string;           // belongs-to: target column, default 'id'
+    foreignKey?: string;           // has-many: column on the target table
+    parentKey?: string;            // has-many: column here it matches, default primaryKey
+  }>;
 }
 ```
 
@@ -784,8 +892,8 @@ interface SqlCrudConfig {
   with the version, dialect, table definition and the call you made.
 - **Security:** follow [SECURITY.md](https://github.com/myviliha/viliha-drizzle-crud/blob/main/SECURITY.md),
   never a public issue.
-- **AI agents:** this package ships `AGENT.md`. Point your coding agent at it with
-  `cp node_modules/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md`.
+- **AI agents:** this package ships `AGENT.md` plus an MCP server. See
+  [For AI agents / LLM tools](#for-ai-agents--llm-tools).
 - **Sponsor:** [github.com/sponsors/myviliha](https://github.com/sponsors/myviliha).
 
 ---

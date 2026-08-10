@@ -1,0 +1,8 @@
+{
+	"mcpServers": {
+		"nestjs-drizzle-crud": {
+			"command": "node",
+			"args": ["packages/nestjs-drizzle-crud/dist/mcp/server.js"]
+		}
+	}
+}

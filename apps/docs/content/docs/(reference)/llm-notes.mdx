@@ -8,7 +8,7 @@ This page is a tight, fact-only summary designed to be read by code-generation t
 ## Package
 
 - **Name:** `nestjs-drizzle-crud`
-- **Version:** `3.2.2`
+- **Version:** `3.3.0`
 - **License:** MIT
 - **Peers:** `@nestjs/common`, `@nestjs/core`, `drizzle-orm` (`>=0.28.0 <1.0.0`), `reflect-metadata`. Optional: `postgres` (PG) / `mysql2` (MySQL).
 
@@ -34,7 +34,9 @@ class XService extends SqlBaseCrudService<X, CreateXDto, UpdateXDto, XFilterDto>
 - `findAll` and `count` accept `options.search: { term, columns, mode? }`. Default `mode` is `'ilike'` and joins cross-column contains checks with `OR`; `mode: 'fullText'` is PostgreSQL-only. Search is applied to both data and count queries.
 - `delete` / `softDelete` return `boolean`; `update` / `restore` return the entity and throw `EntityNotFoundException` (→ 404) when missing. On Postgres, `restore()` returns the row via `RETURNING` rather than re-fetching it.
 - All exceptions extend `@nestjs/common`'s `HttpException`, so Nest's default filter maps them to status codes automatically: 404 (not found), 409 (unique violation), 400 (validation / bad input), 500 (connection / transaction). Custom filters can `instanceof` them.
-- Relations (many-to-one only): declare in `forFeature` `config.relations = { relName: { table, localKey, references? } }`. Then eager-load via `options.relations: ['relName']` (nested object on the result, `null` if unmatched) and filter via `findAll({ relName: { col: value } })` (same operators; multi-level via the intermediate table's columns, e.g. `state.country_id`). No has-many / many-to-many.
+- Relations: declare in `forFeature` `config.relations`. Belongs-to is `{ table, localKey, references? }` and is `LEFT JOIN`ed into the main query, resolving to a nested object or `null`. Has-many is `{ table, type: 'hasMany', foreignKey, parentKey? }` and is loaded with **one extra batched query per relation for the whole result set**, resolving to an array (`[]` when empty). Eager-load via `options.relations: ['relName']`. Filter via `findAll({ relName: { col: value } })` with the same operators: belongs-to filters use the join, has-many filters compile to `parentKey IN (SELECT foreignKey FROM child WHERE ...)` so `total` and pagination stay correct. Multi-level filtering goes through the intermediate table's columns, e.g. `state.country_id`. No many-to-many, and no nested relation-of-a-relation.
+- `options.select` narrows the projection and accepts dotted relation paths: `['id', 'name', 'region.code', 'states.name']`. Unknown names are ignored. When every entry is dotted the base row is returned in full. The parent key and the child foreign key are re-added automatically for a has-many load, because grouping needs them.
+- The package ships an MCP server, `npx nestjs-drizzle-crud-mcp` (stdio), with `list_docs`, `get_doc` and `search_docs` over `AGENT.md` / `README.md` / `CHANGELOG.md`. Rules templates for every agent: `AGENTS.template.md` and `CLAUDE.template.md`.
 - Primary keys: `primaryKey` (default `'id'`) + `primaryKeyType` (`'serial' | 'bigserial' | 'int' | 'bigint' | 'uuid'`) per entity in `forFeature` config. UUID works on Postgres via `RETURNING`; with `uuid` keys, route params are strings. Don't use `ParseIntPipe`.
 - Full-text search is PostgreSQL-only.
 - Bulk methods are transactional. A failure throws `BulkOperationException` and rolls back the entire operation.

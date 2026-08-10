@@ -53,6 +53,7 @@ All exceptions extend `@nestjs/common`'s `HttpException`, so Nest's default exce
 | `SqlOperationOptions` | `interface`, the third argument to most methods, including `search` for `findAll` and `count`. |
 | `RelationConfig` | `interface`, describes one relation in `relations`. |
 | `RelationsConfig` | `type`, a record of `RelationConfig`. |
+| `RelationType` | `'belongsTo' \| 'hasMany'`. |
 | `SqlDialect` | `'postgresql' \| 'mysql'`. |
 | `PrimaryKeyType` | `'serial' \| 'bigserial' \| 'int' \| 'bigint' \| 'uuid'`. |
 | `SortColumn` | `{ column, order }`. |
@@ -93,6 +94,12 @@ All of these are pass-throughs to `drizzle-orm`. The package doesn't wrap or ext
 | `BaseCrudSpecHelper` | A higher-level helper that builds a full service + fixtures. |
 
 See [Testing](/docs/testing) for usage.
+
+## Binaries
+
+| Command | Description |
+| --- | --- |
+| `nestjs-drizzle-crud-mcp` | MCP server over stdio that serves the package docs to any AI agent. Run it with `npx nestjs-drizzle-crud-mcp`. See [AI agents and MCP](/docs/ai-agents). |
 
 ## What's **not** exported
 

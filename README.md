@@ -104,16 +104,23 @@ pnpm release                                # or publish straight from the packa
 
 ## Working with AI agents
 
-Repo-wide rules for agents live in [`AGENTS.md`](./AGENTS.md), with a
-`CLAUDE.md` pointer at the root and in each workspace. The docs site adds its own
-rules in [`apps/docs/AGENTS.md`](./apps/docs/AGENTS.md).
+Repo-wide rules for agents live in [`AGENTS.md`](./AGENTS.md), with `CLAUDE.md`
+and `GEMINI.md` pointers at the root and a `CLAUDE.md` in each workspace. The
+docs site adds its own rules in [`apps/docs/AGENTS.md`](./apps/docs/AGENTS.md).
+`.mcp.json` registers this repo's own MCP server for anyone working here.
 
 Consumers of the npm package get their own guide: the tarball ships `AGENT.md`
-plus a pointer you can copy into your project.
+plus a pointer you can copy into your project, under whatever filename your
+agent reads.
 
 ```bash
-cp node_modules/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md
+cp node_modules/nestjs-drizzle-crud/AGENTS.template.md ./AGENTS.md   # Codex, Cursor, Copilot, Zed, Cline, Windsurf
+cp node_modules/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md   # Claude Code
 ```
+
+The package also ships an MCP server, so an agent can search the docs while it
+works: `npx nestjs-drizzle-crud-mcp`. Setup per client is in
+[the AI agents guide](https://crud.viliha.com/docs/ai-agents).
 
 ## TypeScript 7 toolchain notes
 

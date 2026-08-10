@@ -6,9 +6,14 @@
 > this file, so you never duplicate the rules:
 >
 > ```bash
+> cp node_modules/nestjs-drizzle-crud/AGENTS.template.md ./AGENTS.md   # Codex, Cursor, Copilot, Zed, Cline, Windsurf
 > cp node_modules/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md   # Claude Code
-> # or ./AGENTS.md for other agent tools
+> # Gemini CLI reads ./GEMINI.md, Aider reads ./CONVENTIONS.md
 > ```
+>
+> Or let the agent read these docs on demand: `npx nestjs-drizzle-crud-mcp` is an
+> MCP server shipped with the package. See
+> [crud.viliha.com/docs/ai-agents](https://crud.viliha.com/docs/ai-agents).
 >
 > To *contribute to* the package itself, see
 > [CONTRIBUTING.md](https://github.com/myviliha/viliha-drizzle-crud/blob/main/CONTRIBUTING.md)
@@ -165,16 +170,54 @@ query DTO to the filter object and let the service compile the SQL.
 
 # Relations
 
-Many to one only, declared per entity in `forFeature`:
+Belongs to and has many, declared per entity in `forFeature`:
 
 ```typescript
-config: { relations: { region: { table: regions, localKey: 'region_id' } } }
+config: {
+  relations: {
+    // belongs to: countries.region_id -> regions.id
+    region: { table: regions, localKey: 'region_id' },
+    // has many: states.country_id -> countries.id
+    states: { table: states, type: 'hasMany', foreignKey: 'country_id' },
+  },
+}
 ```
 
-Then eager load with `options.relations: ['region']`, which nests the related
-row on the result (`null` when unmatched), and filter with
-`findAll({ region: { name: 'Asia' } })` using the same operators. There is no
-has many and no many to many; model those with a second service call.
+Eager load with `options.relations: ['region', 'states']`. A belongs to relation
+is joined into the main query and nests an object (`null` when unmatched). A has
+many relation runs **one extra batched query for the whole result set** and
+nests an array (`[]` when empty).
+
+**Never load a collection in a loop.** A page of 50 countries with their states
+is 3 queries: data, count, children. Fetching the states per country is 51. If
+you catch yourself writing `for (const row of rows) await ...`, the relation you
+want is a has many relation.
+
+Filter with `findAll({ region: { name: 'Asia' } })` or
+`findAll({ states: { name: 'Kerala' } })` using the same operators. A has many
+filter compiles to `id IN (SELECT country_id FROM states WHERE ...)`, never a
+join, so `total` and pagination stay correct.
+
+There is no many to many and no relation of a relation; model those with a
+second service call.
+
+---
+
+# Only select the columns you need
+
+`options.select` narrows the projection, and a dotted entry narrows a relation:
+
+```typescript
+await countries.findAll({}, { page: 1, limit: 20 }, {
+  relations: ['region', 'states'],
+  select: ['id', 'name', 'region.code', 'states.name'],
+});
+// { id, name, region: { code }, states: [{ name, country_id }] }
+```
+
+Use it on list endpoints and hot paths rather than hydrating every column. A
+dotted entry only applies when the relation is also eager loaded, unknown names
+are ignored, and a list of only dotted entries leaves the base row complete.
 
 ---
 

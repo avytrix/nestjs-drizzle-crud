@@ -1,0 +1,88 @@
+---
+title: AI agents and MCP
+description: Set up nestjs-drizzle-crud rules for Claude Code, Codex, Cursor, Copilot, Gemini CLI and other agents, and run the package MCP server.
+---
+
+The package ships two things for AI coding agents: a **rules template** you copy into your project so the agent follows the package conventions, and an **MCP server** that lets the agent read the package docs on demand. Both work with any agent, and neither adds a dependency.
+
+## Which file does my agent read?
+
+Copy the template to the filename your tool looks for:
+
+```bash
+cp node_modules/nestjs-drizzle-crud/AGENTS.template.md ./AGENTS.md      # most tools
+cp node_modules/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md      # Claude Code
+```
+
+| Agent | File in your project root |
+| --- | --- |
+| OpenAI Codex, Cursor, GitHub Copilot, Zed, Cline, Windsurf, Jules | `AGENTS.md` |
+| Claude Code | `CLAUDE.md` |
+| Gemini CLI | `GEMINI.md` |
+| Aider | `CONVENTIONS.md`, then `aider --read CONVENTIONS.md` |
+
+Each template is a pointer, not a copy. It contains one line:
+
+```md
+@node_modules/nestjs-drizzle-crud/AGENT.md
+```
+
+`AGENT.md` ships inside the package and stays the single source of truth, so an upgrade updates the rules with it. If your agent does not resolve `@` imports, paste the contents of `AGENT.md` in place of that line, or run the MCP server below so the agent can fetch the guidance itself.
+
+Using several agents on one repo? Copy the template to each filename, or keep `AGENTS.md` and make the others a one-line pointer to it.
+
+## What is in the rules file?
+
+`AGENT.md` is written for an agent that is about to add an endpoint: that a service is normally an empty subclass, that the table goes in `forFeature` and not in the service, that filters are objects (`{ age: { gte: 18 } }`), that `findAll` returns `{ data, total, page, limit }`, and which exception maps to which status code. It exists to stop the two most common mistakes, hand-writing repository code the base service already has, and injecting the database into a service.
+
+## Running the MCP server
+
+The package includes an MCP server so an agent can search the docs while it works instead of guessing at the API:
+
+```bash
+npx nestjs-drizzle-crud-mcp
+```
+
+It speaks JSON-RPC over stdio, has no dependencies, and serves the markdown that ships in the package. Register it once per project.
+
+Claude Code, Cursor, Windsurf, Gemini CLI and Cline share the same shape:
+
+```json title=".mcp.json (Claude Code) / .cursor/mcp.json (Cursor)"
+{
+  "mcpServers": {
+    "nestjs-drizzle-crud": {
+      "command": "npx",
+      "args": ["-y", "nestjs-drizzle-crud-mcp"]
+    }
+  }
+}
+```
+
+Claude Code can also add it from the CLI:
+
+```bash
+claude mcp add nestjs-drizzle-crud -- npx -y nestjs-drizzle-crud-mcp
+```
+
+Three clients use a different key or format:
+
+- **VS Code / Copilot:** `.vscode/mcp.json`, with the entries under `servers` instead of `mcpServers`.
+- **Codex CLI:** `~/.codex/config.toml`, as `[mcp_servers.nestjs-drizzle-crud]` with `command = "npx"` and `args = ["-y", "nestjs-drizzle-crud-mcp"]`.
+- **Zed:** a `context_servers` entry in `settings.json`.
+
+## What the server exposes
+
+| Tool | Arguments | Returns |
+| --- | --- | --- |
+| `list_docs` | none | The available documents and their headings. Start here. |
+| `get_doc` | `doc`, optional `section` | A whole document, or one section of it. |
+| `search_docs` | `query`, optional `limit` | The most relevant sections, best match first. |
+
+`doc` is one of `agent-guide` (the rules file), `readme` (the full API) or `changelog`. A typical agent turn is `search_docs("has-many eager loading")` followed by `get_doc({ doc: 'agent-guide', section: 'Relations' })`.
+
+The server is read-only. It never touches your database, and it only reads files inside its own installed package.
+
+## Related
+
+- [For AI agents](/docs/llm-notes): the same facts condensed for code generation.
+- [Defining services](/docs/defining-services): what the agent is meant to produce.
