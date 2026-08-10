@@ -45,11 +45,14 @@ pnpm dev:api                                        # example api on :4000
 pnpm dev:all                                        # both together
 ```
 
-The e2e suite needs no setup. `pnpm --filter api test` runs Playwright against the
-example app, and the app runs against PGlite (Postgres compiled to WASM) with a
-seeded fixture, in-process. It exercises the real SQL the package generates, so a
-green run does prove the database paths. To point the app at a real Postgres
-instead, copy `apps/api/.env.example` to `apps/api/.env` and set `DATABASE_URL`.
+The e2e suite needs no setup, and never touches a real database. `pnpm --filter api
+test` runs Playwright against the example app, and the app runs against PGlite
+(Postgres compiled to WASM) with a seeded fixture, in-process. It exercises the
+real SQL the package generates, so a green run does prove the database paths. The
+Playwright config pins `DATABASE_URL=pglite` for the server it boots, so your own
+`DATABASE_URL` is ignored there; it applies to `pnpm dev:api`, which reads
+`apps/api/.env`. If a spec needs different data, extend the fixture in
+`apps/api/src/db/pglite.ts` rather than pointing the tests at a server.
 
 ## Pull request workflow
 

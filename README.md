@@ -153,9 +153,10 @@ pnpm --filter api test          # 22 specs in apps/api/e2e
 pnpm --filter api test:ui       # the same, in the Playwright UI
 ```
 
-`DATABASE_URL=pglite` selects that in-process database. Point it at a real
-Postgres connection string instead and the same app talks to that server, which
-is what `pnpm dev:api` does with `apps/api/.env`.
+`DATABASE_URL=pglite` selects that in-process database, and the Playwright config
+pins it for the server it boots, overriding anything in your shell or in
+`apps/api/.env`. The suite therefore cannot reach a real database, by design. A
+real connection string is for `pnpm dev:api` only.
 
 ## CI / CD
 
