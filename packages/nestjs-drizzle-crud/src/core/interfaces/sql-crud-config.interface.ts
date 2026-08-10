@@ -1,8 +1,13 @@
-import type { PrimaryKeyType, SortColumn, SqlDialect } from "../types/sql.types";
+import type {
+	PrimaryKeyType,
+	SortColumn,
+	SqlDialect,
+} from "../types/sql.types";
 
 // "belongsTo" (default): many-to-one / one-to-one, loaded with a LEFT JOIN.
 // "hasMany": one-to-many, loaded with one extra batched query per relation.
-export type RelationType = "belongsTo" | "hasMany";
+// "manyToMany": through a join table, also one extra batched query.
+export type RelationType = "belongsTo" | "hasMany" | "manyToMany";
 
 // A relation declared on an entity, keyed by relation name.
 //
@@ -11,17 +16,48 @@ export type RelationType = "belongsTo" | "hasMany";
 //
 // hasMany: `table`'s `foreignKey` points back at this table's `parentKey`
 // (default the configured primary key), and the relation resolves to an array.
+//
+// manyToMany: `through` holds `throughLocalKey` (matching this table's
+// `parentKey`) and `throughForeignKey` (matching `references` on `table`), and
+// the relation resolves to an array.
 export interface RelationConfig {
 	table: any;
 	type?: RelationType;
 	// belongsTo: the column on THIS table holding the foreign key.
 	localKey?: string;
-	// belongsTo: the column on the target table that `localKey` points at.
+	// belongsTo / manyToMany: the column on the target table being referenced.
 	references?: string;
 	// hasMany: the column on the TARGET table that points back at this table.
 	foreignKey?: string;
-	// hasMany: the column on THIS table that `foreignKey` points at.
+	// hasMany / manyToMany: the column on THIS table being pointed at.
 	parentKey?: string;
+	// manyToMany: the join table, and its two foreign-key columns.
+	through?: any;
+	throughLocalKey?: string;
+	throughForeignKey?: string;
+	// hasMany / manyToMany: how to order the collection. Applied in order.
+	orderBy?: SortColumn[];
+	// Relations of the RELATED table, so a caller can eager-load a relation of a
+	// relation with a dotted path: options.relations: ['state', 'state.country'].
+	relations?: RelationsConfig;
+}
+
+// One resolved node in an eager-loading plan, built from the dotted paths in
+// options.relations.
+export interface RelationNode {
+	name: string;
+	config: RelationConfig;
+	children: RelationNode[];
+	// Set when the relation is folded into the main query as a LEFT JOIN rather
+	// than loaded by its own batched query.
+	joined?: boolean;
+}
+
+// Columns requested for a table, plus the columns requested for its relations.
+// Built from `options.select`, where a dotted entry addresses a relation.
+export interface SelectTree {
+	base: string[];
+	relations: Record<string, SelectTree>;
 }
 
 export type RelationsConfig = Record<string, RelationConfig>;

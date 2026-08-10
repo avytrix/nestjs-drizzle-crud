@@ -45,7 +45,9 @@ export interface DrizzleCrudConfig {
 // A single entity registration for DrizzleCrudModule.forFeature().
 export interface CrudFeature {
 	// The CRUD service class (extends SqlBaseCrudService).
-	service: new (...args: any[]) => any;
+	service: new (
+		...args: any[]
+	) => any;
 	// The Drizzle table this service operates on.
 	table: any;
 	// Per-entity config overrides (primaryKey, softDelete, timestamps, ...).

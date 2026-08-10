@@ -1,6 +1,6 @@
 ---
 title: Column selection
-description: Return only the columns you need with options.select, including dotted paths that narrow eager-loaded relations.
+description: Return only the columns you need with options.select, including dotted paths that narrow eager-loaded and nested relations.
 ---
 
 Pass `options.select` with the column names you want and the query stops being `SELECT *`. It works on `find`, `findOne` and `findAll`, and a dotted entry narrows an eager-loaded relation.
@@ -20,6 +20,7 @@ Omit `select` and every column comes back, which is the default.
 | `'name'` | A column on this entity's table. |
 | `'region.code'` | The `code` column of the eager-loaded `region` relation. |
 | `'states.name'` | The `name` column of every child in the has-many `states` relation. |
+| `'states.cities.name'` | The `name` column at the next nesting level down. Paths can be any depth. |
 
 A dotted entry only takes effect when the relation is also listed in `options.relations`. Names that do not match a real column are ignored rather than rejected, so a typo returns fewer columns instead of an error.
 
@@ -47,7 +48,7 @@ Two keys are added back automatically, because the loader cannot group children 
 - the **parent key** on the base row (the configured `primaryKey`, or `parentKey` when set),
 - the **foreign key** on each child row.
 
-So `select: ['name', 'states.name']` still returns `id` on the country and `country_id` on each state. Everything else you did not ask for is left out of the SQL.
+So `select: ['name', 'states.name']` still returns `id` on the country and `country_id` on each state. The same applies at every nesting level: `select: ['name', 'states.name', 'states.cities.name']` keeps `states.id` too, because the cities load needs it. Everything else you did not ask for is left out of the SQL.
 
 ## Listing only relation columns keeps the parent whole
 

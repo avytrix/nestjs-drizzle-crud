@@ -32,8 +32,10 @@ export type {
 // Configuration interfaces
 export type {
 	RelationConfig,
+	RelationNode,
 	RelationsConfig,
 	RelationType,
+	SelectTree,
 	SqlCrudConfig,
 	SqlOperationOptions,
 } from "./core/interfaces/sql-crud-config.interface";

@@ -53,7 +53,9 @@ All exceptions extend `@nestjs/common`'s `HttpException`, so Nest's default exce
 | `SqlOperationOptions` | `interface`, the third argument to most methods, including `search` for `findAll` and `count`. |
 | `RelationConfig` | `interface`, describes one relation in `relations`. |
 | `RelationsConfig` | `type`, a record of `RelationConfig`. |
-| `RelationType` | `'belongsTo' \| 'hasMany'`. |
+| `RelationType` | `'belongsTo' \| 'hasMany' \| 'manyToMany'`. |
+| `RelationNode` | `interface`, one resolved node in an eager-loading plan. |
+| `SelectTree` | `interface`, the parsed `options.select`. |
 | `SqlDialect` | `'postgresql' \| 'mysql'`. |
 | `PrimaryKeyType` | `'serial' \| 'bigserial' \| 'int' \| 'bigint' \| 'uuid'`. |
 | `SortColumn` | `{ column, order }`. |

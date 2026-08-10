@@ -8,7 +8,7 @@
 
 import { beforeEach, describe, expect, it } from "@jest/globals";
 import { drizzle } from "drizzle-orm/pg-proxy";
-import { integer, pgTable, serial, varchar } from "drizzle-orm/pg-core";
+import { integer, pgTable, serial, uuid, varchar } from "drizzle-orm/pg-core";
 import { SqlBaseCrudService } from "../src/core/abstract/sql-base-crud.service";
 import type { SqlCrudConfig } from "../src/core/interfaces/sql-crud-config.interface";
 
@@ -30,7 +30,24 @@ const states = pgTable("states", {
 	country_id: integer("country_id"),
 });
 
+const cities = pgTable("cities", {
+	id: serial("id").primaryKey(),
+	name: varchar("name"),
+	state_id: integer("state_id"),
+});
+
+const tags = pgTable("tags", {
+	id: uuid("id").primaryKey(),
+	name: varchar("name"),
+});
+
+const countryTags = pgTable("country_tags", {
+	country_id: integer("country_id"),
+	tag_id: uuid("tag_id"),
+});
+
 class CountriesSvc extends SqlBaseCrudService<any, any, any, any> {}
+class CitiesSvc extends SqlBaseCrudService<any, any, any, any> {}
 
 // Serves each query from `rows` in call order and records the SQL. pg-proxy
 // hands back raw value arrays, so a response is written positionally.
@@ -279,5 +296,318 @@ describe("relation config validation", () => {
 		expect(() =>
 			makeService(db, { relations: { region: { table: regions } } }),
 		).toThrow(/requires a localKey/);
+	});
+});
+
+// countries -> states -> cities, plus countries <-> tags through country_tags.
+function makeNestedService(db: any): CountriesSvc {
+	return makeService(db, {
+		relations: {
+			region: { table: regions, localKey: "region_id" },
+			states: {
+				table: states,
+				type: "hasMany",
+				foreignKey: "country_id",
+				orderBy: [{ column: "name", order: "desc" }],
+				relations: {
+					cities: { table: cities, type: "hasMany", foreignKey: "state_id" },
+				},
+			},
+			tags: {
+				table: tags,
+				type: "manyToMany",
+				through: countryTags,
+				throughLocalKey: "country_id",
+				throughForeignKey: "tag_id",
+			},
+		},
+	});
+}
+
+// cities -> state -> country, a belongs-to chain.
+function makeCityService(db: any): CitiesSvc {
+	return new CitiesSvc({
+		dialect: "postgresql",
+		db,
+		table: cities,
+		primaryKey: "id",
+		primaryKeyType: "serial",
+		softDelete: { enabled: false, column: "deleted_at" },
+		timestamps: undefined,
+		pagination: { defaultLimit: 20, maxLimit: 100 },
+		relations: {
+			state: {
+				table: states,
+				localKey: "state_id",
+				relations: {
+					country: { table: countries, localKey: "country_id" },
+				},
+			},
+		},
+	});
+}
+
+describe("nested relations", () => {
+	it("loads a belongs-to of a belongs-to in one extra batched query", async () => {
+		const { db, queries } = proxyDb([
+			// data query: the city joined to its state
+			[[1, "Bengaluru", 7, 7, "Karnataka", 3]],
+			// batched countries for the states that came back
+			[[3, "India", 1]],
+		]);
+		const svc = makeCityService(db);
+
+		const city: any = await svc.find(1, {
+			relations: ["state", "state.country"],
+		});
+
+		expect(queries).toHaveLength(2);
+		expect(queries[0]!.sql).toContain("left join");
+		expect(queries[1]!.sql).toContain('from "countries"');
+		expect(queries[1]!.params).toEqual([3]);
+		expect(city.state.name).toBe("Karnataka");
+		expect(city.state.country).toEqual({ id: 3, name: "India", region_id: 1 });
+	});
+
+	it("includes the parent relation when only the nested path is asked for", async () => {
+		const { db, queries } = proxyDb([
+			[[1, "Bengaluru", 7, 7, "Karnataka", 3]],
+			[[3, "India", 1]],
+		]);
+		const svc = makeCityService(db);
+
+		const city: any = await svc.find(1, { relations: ["state.country"] });
+
+		expect(queries).toHaveLength(2);
+		expect(city.state.country.name).toBe("India");
+	});
+
+	it("nulls a nested belongs-to that has no match", async () => {
+		const { db } = proxyDb([[[1, "Bengaluru", 7, 7, "Karnataka", null]], []]);
+		const svc = makeCityService(db);
+
+		const city: any = await svc.find(1, { relations: ["state.country"] });
+
+		expect(city.state.country).toBeNull();
+	});
+
+	it("loads a has-many under a has-many, one query per level", async () => {
+		const { db, queries } = proxyDb([
+			// data: two countries
+			[
+				[1, "India", 3],
+				[2, "Nepal", 3],
+			],
+			// count
+			[[2]],
+			// states for both countries
+			[
+				[10, "Karnataka", 1],
+				[11, "Kerala", 1],
+				[12, "Bagmati", 2],
+			],
+			// cities for all three states, in one query
+			[
+				[100, "Bengaluru", 10],
+				[101, "Kochi", 11],
+			],
+		]);
+		const svc = makeNestedService(db);
+
+		const page = await svc.findAll({}, undefined, {
+			relations: ["states", "states.cities"],
+		});
+
+		// data + count + states + cities. Not one query per state.
+		expect(queries).toHaveLength(4);
+		expect(queries[3]!.sql).toContain('from "cities"');
+		expect(queries[3]!.params).toEqual([10, 11, 12]);
+		expect(page.data[0].states[0].cities[0].name).toBe("Bengaluru");
+		expect(page.data[0].states[1].cities[0].name).toBe("Kochi");
+		expect(page.data[1].states[0].cities).toEqual([]);
+	});
+
+	it("keeps the keys a nested level needs when columns are narrowed", async () => {
+		const { db, queries } = proxyDb([
+			// projection order follows the select list: [name, id]
+			[["India", 1]],
+			[[1]],
+			// then [name, country_id, id]
+			[["Karnataka", 1, 10]],
+			[[100, 10]],
+		]);
+		const svc = makeNestedService(db);
+
+		await svc.findAll({}, undefined, {
+			relations: ["states", "states.cities"],
+			select: ["name", "states.name", "states.cities.id"],
+		});
+
+		// id comes back on the country because the states load needs it, and
+		// states keeps id (for cities) and country_id (for grouping).
+		expect(queries[0]!.sql).toContain('select "name", "id" from');
+		expect(queries[2]!.sql).toContain('select "name", "country_id", "id" from');
+		expect(queries[3]!.sql).toContain('select "id", "state_id" from');
+	});
+
+	it("rejects an invalid nested relation with its full path", () => {
+		expect(() =>
+			makeService(proxyDb([]).db, {
+				relations: {
+					states: {
+						table: states,
+						type: "hasMany",
+						foreignKey: "country_id",
+						relations: { cities: { table: cities } },
+					},
+				},
+			}),
+		).toThrow(/"states\.cities" is belongsTo and requires a localKey/);
+	});
+});
+
+describe("many-to-many relations", () => {
+	it("loads through the join table in one batched query", async () => {
+		const { db, queries } = proxyDb([
+			[
+				[1, "India", 3],
+				[2, "Nepal", 3],
+			],
+			[[2]],
+			// projection is [join key, tag id, tag name]
+			[
+				[1, "a1", "asia"],
+				[1, "b2", "cricket"],
+				[2, "a1", "asia"],
+			],
+		]);
+		const svc = makeNestedService(db);
+
+		const page = await svc.findAll({}, undefined, { relations: ["tags"] });
+
+		expect(queries).toHaveLength(3);
+		const m2m = queries[2]!;
+		expect(m2m.sql).toContain('from "country_tags"');
+		expect(m2m.sql).toContain('inner join "tags"');
+		expect(m2m.params).toEqual([1, 2]);
+		// The grouping key is stripped: callers see the target rows only.
+		expect(page.data[0].tags).toEqual([
+			{ id: "a1", name: "asia" },
+			{ id: "b2", name: "cricket" },
+		]);
+		expect(page.data[1].tags).toEqual([{ id: "a1", name: "asia" }]);
+	});
+
+	it("returns an empty array for a parent with no join rows", async () => {
+		const { db } = proxyDb([[[1, "India", 3]], [[1]], []]);
+		const svc = makeNestedService(db);
+
+		const page = await svc.findAll({}, undefined, { relations: ["tags"] });
+
+		expect(page.data[0].tags).toEqual([]);
+	});
+
+	it("narrows target columns and still groups correctly", async () => {
+		const { db, queries } = proxyDb([[[1, "India", 3]], [[1]], [[1, "asia"]]]);
+		const svc = makeNestedService(db);
+
+		const page = await svc.findAll({}, undefined, {
+			relations: ["tags"],
+			select: ["id", "tags.name"],
+		});
+
+		// only the join key and the requested column are projected; "tags"."id"
+		// appears in the ON clause, not in the select list
+		expect(queries[2]!.sql).toContain(
+			'select "country_tags"."country_id", "tags"."name" from',
+		);
+		expect(page.data[0].tags).toEqual([{ name: "asia" }]);
+	});
+
+	it("filters parents through the join table with a subquery, not a join", async () => {
+		const { db, queries } = proxyDb([[[1, "India", 3]], [[1]]]);
+		const svc = makeNestedService(db);
+
+		await svc.findAll({ tags: { name: "asia" } });
+
+		const sql = queries[0]!.sql;
+		expect(sql).toContain("in (select");
+		expect(sql).toContain('from "country_tags"');
+		expect(sql).toContain('inner join "tags"');
+		expect(sql).not.toContain("left join");
+		expect(queries[1]!.sql).toContain("in (select");
+	});
+
+	it("rejects a many-to-many relation without its join columns", () => {
+		expect(() =>
+			makeService(proxyDb([]).db, {
+				relations: {
+					tags: { table: tags, type: "manyToMany", through: countryTags },
+				},
+			}),
+		).toThrow(/requires through, throughLocalKey and throughForeignKey/);
+	});
+});
+
+describe("collection ordering", () => {
+	it("applies the relation's orderBy to a has-many query", async () => {
+		const { db, queries } = proxyDb([
+			[[1, "India", 3]],
+			[[1]],
+			[
+				[11, "Kerala", 1],
+				[10, "Karnataka", 1],
+			],
+		]);
+		const svc = makeNestedService(db);
+
+		const page = await svc.findAll({}, undefined, { relations: ["states"] });
+
+		expect(queries[2]!.sql).toContain('order by "states"."name" desc');
+		expect(page.data[0].states.map((s: any) => s.name)).toEqual([
+			"Kerala",
+			"Karnataka",
+		]);
+	});
+
+	it("applies orderBy to a many-to-many query", async () => {
+		const { db, queries } = proxyDb([[[1, "India", 3]], [[1]], []]);
+		const svc = makeService(db, {
+			relations: {
+				tags: {
+					table: tags,
+					type: "manyToMany",
+					through: countryTags,
+					throughLocalKey: "country_id",
+					throughForeignKey: "tag_id",
+					orderBy: [{ column: "name", order: "asc" }],
+				},
+			},
+		});
+
+		await svc.findAll({}, undefined, { relations: ["tags"] });
+
+		expect(queries[2]!.sql).toContain('order by "tags"."name" asc');
+	});
+
+	it("skips an unknown orderBy column instead of failing the query", async () => {
+		const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+		const { db, queries } = proxyDb([[[1, "India", 3]], [[1]], []]);
+		const svc = makeService(db, {
+			relations: {
+				states: {
+					table: states,
+					type: "hasMany",
+					foreignKey: "country_id",
+					orderBy: [{ column: "nope", order: "asc" }],
+				},
+			},
+		});
+
+		await svc.findAll({}, undefined, { relations: ["states"] });
+
+		expect(queries[2]!.sql).not.toContain("order by");
+		expect(warn).toHaveBeenCalled();
+		warn.mockRestore();
 	});
 });

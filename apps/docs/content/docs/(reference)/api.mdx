@@ -144,9 +144,9 @@ const result = s.doIt();
 interface SqlOperationOptions {
   /** Run within an existing transaction. */
   transaction?: any;
-  /** Return only these columns. A dotted entry narrows a relation: 'region.code'. */
+  /** Return only these columns. A dotted entry narrows a relation, at any depth. */
   select?: string[];
-  /** Eager-load these configured relations (see Relations). */
+  /** Eager-load these configured relations. A dotted path nests: 'state.country'. */
   relations?: string[];
   /** Search configured table columns in findAll() and count(). */
   search?: {
@@ -166,9 +166,9 @@ interface SqlOperationOptions {
 }
 ```
 
-`relations` eager-loads relations declared in the entity's config: belongs-to relations join the main query, has-many relations add one batched query for the whole result set. See [Relations](/docs/relations).
+`relations` eager-loads relations declared in the entity's config: a top-level belongs-to joins the main query, while has-many, many-to-many and every nested level add one batched query each for the whole result set. Never one query per row. See [Relations](/docs/relations).
 
-`select` narrows the projection, and a dotted entry narrows an eager-loaded relation (`['id', 'name', 'region.code', 'states.name']`). See [Column selection](/docs/column-selection).
+`select` narrows the projection, and a dotted entry narrows an eager-loaded relation at any depth (`['id', 'name', 'region.code', 'states.cities.name']`). See [Column selection](/docs/column-selection).
 
 ## Next
 

@@ -11,33 +11,48 @@ restore, `ER_DUP_ENTRY` mapping, dialect locking) are tracked separately and unc
 ## [3.3.0] - 2026-08-10
 
 ### Added
-- **Has-many relations, eager loaded without N+1.** Declare
+- **Has-many, many-to-many and nested relations, all eager loaded without N+1.** Declare
   `relations: { states: { table: states, type: 'hasMany', foreignKey: 'country_id' } }` and pass
   `options.relations: ['states']` to `find`, `findOne` or `findAll`. Each has-many relation costs
   exactly one extra query for the whole result set (`WHERE country_id IN (...)`), no matter how many
   parent rows come back, and the relations run concurrently. A page of 50 countries with their
   states is 3 queries: data, count, children. A parent with no children gets `[]`, never `undefined`.
-- **Has-many relations are never joined.** Filtering by a child column
-  (`findAll({ states: { name: 'Kerala' } })`) compiles to
-  `countries.id IN (SELECT country_id FROM states WHERE ...)`, so parent rows are never duplicated
-  and `total` and pagination stay correct. Belongs-to relations keep using a `LEFT JOIN`.
-- **`options.select` now narrows relation columns with a dotted path.**
-  `select: ['id', 'name', 'region.code', 'states.name']` projects only those columns, for the base
-  table, a joined belongs-to relation and a batched has-many relation alike. Listing only relation
-  columns leaves the parent row complete. The parent key and the child foreign key are added back
-  automatically when a has-many relation is loaded, because grouping needs them.
+- **Many-to-many through a join table.** Declare
+  `{ table: tags, type: 'manyToMany', through: countryTags, throughLocalKey: 'country_id', throughForeignKey: 'tag_id' }`
+  and the collection loads in one batched query per relation
+  (`SELECT ... FROM country_tags JOIN tags ... WHERE country_id IN (...)`). The join-table key is
+  used to group the rows and stripped before they are returned.
+- **Nested relations, any depth, with a dotted path.** Put a `relations` map on a relation and
+  address it with `options.relations: ['states', 'states.cities']` or `['state.country']`. Each
+  nesting level costs one more batched query for the whole level, so a page of 50 countries with
+  their states and every state's cities is 4 queries. Asking only for `state.country` pulls in
+  `state` automatically.
+- **`orderBy` on a collection relation.** `{ type: 'hasMany', foreignKey: 'country_id', orderBy: [{ column: 'name', order: 'asc' }] }`
+  orders the children in SQL. An unknown column is warned about and skipped, as with `defaultSort`.
+- **Collections are never joined.** Filtering by a child column
+  (`findAll({ states: { name: 'Kerala' } })`, `findAll({ tags: { name: 'himalayan' } })`) compiles to
+  `countries.id IN (SELECT ... WHERE ...)`, so parent rows are never duplicated and `total` and
+  pagination stay correct. Belongs-to relations keep using a `LEFT JOIN`.
+- **`options.select` now narrows relation columns with a dotted path, at any depth.**
+  `select: ['id', 'name', 'region.code', 'states.cities.name']` projects only those columns, for the
+  base table, a joined belongs-to relation and a batched collection alike. Listing only relation
+  columns leaves the parent row complete. The parent key, the child foreign key and any key a nested
+  level needs are added back automatically, because the grouping needs them.
 - **An MCP server ships with the package.** `npx nestjs-drizzle-crud-mcp` serves the package docs
   (`AGENT.md`, `README.md`, `CHANGELOG.md`) to any MCP client through three tools: `list_docs`,
   `get_doc` and `search_docs`. It speaks JSON-RPC over stdio, still has zero dependencies, and works
   with Claude Code, Codex, Cursor, Copilot, Gemini CLI, Windsurf, Zed and Cline.
 - **`AGENTS.template.md`** for every agent that is not Claude Code. It carries the same pointer to
   `AGENT.md` and lists the filename each tool reads. `CLAUDE.template.md` is unchanged.
-- Exported the `RelationType` type (`'belongsTo' | 'hasMany'`).
+- Exported the `RelationType` (`'belongsTo' | 'hasMany' | 'manyToMany'`), `RelationNode` and
+  `SelectTree` types.
 
 ### Changed
-- A relation with a missing key column now throws at startup: a has-many relation requires
-  `foreignKey`, a belongs-to relation requires `localKey`. It used to load nothing quietly, which
-  read as bad data rather than bad config.
+- A relation with a missing key column now throws at startup: belongs-to requires `localKey`,
+  has-many requires `foreignKey`, many-to-many requires `through`, `throughLocalKey` and
+  `throughForeignKey`. Nested relations are validated too, and the message carries the full path
+  (`Relation "states.cities" is belongsTo and requires a localKey`). It used to load nothing quietly,
+  which read as bad data rather than bad config.
 - `RelationConfig.localKey` is optional, since has-many relations use `foreignKey` instead. Existing
   belongs-to configs are unaffected.
 

@@ -82,7 +82,7 @@ DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
 - 📦 **Bulk operations**. Mass create/update/delete inside a transaction
 - 🔍 **Rich filtering**. Equality, `in`, comparison operators, `like`/`ilike`, null checks
 - 🔎 **Full-text search**. PostgreSQL `tsvector`/`tsquery`
-- 🔗 **Relations**. Belongs-to and has-many eager loading with no N+1, plus filtering by related columns
+- 🔗 **Relations**. Belongs-to, has-many, many-to-many and nested eager loading with no N+1, plus filtering by related columns
 - 🎯 **Column selection**. Ask for the columns you need, relation columns included
 - 🤖 **Agent ready**. Rules templates for every agent, and an MCP server in the box
 - 🔑 **Flexible primary keys**, `serial` / `int` / `bigint` / `bigserial` / `uuid`
@@ -493,20 +493,22 @@ in `forRoot` to apply a `created_at` fallback to every entity that doesn't defin
 
 ## Relations
 
-Two kinds of relation are supported, declared in the entity's `forFeature`
-config under `relations` and keyed by relation name:
+Three kinds of relation are supported, declared in the entity's `forFeature`
+config under `relations` and keyed by relation name. Any of them can nest.
 
 | Type | SQL | Extra queries | Result |
 | --- | --- | --- | --- |
 | `belongsTo` (default) | `LEFT JOIN` in the main query | 0 | object, or `null` |
 | `hasMany` | `SELECT ... WHERE fk IN (parent keys)` | 1 per relation, for the whole page | array, `[]` when empty |
+| `manyToMany` | `SELECT ... FROM join JOIN target ... WHERE fk IN (parent keys)` | 1 per relation, for the whole page | array, `[]` when empty |
+| nested (any shape) | as above, one level down | 1 per relation per level | as above |
 
-Neither runs a query per row, so eager loading a page of 50 rows costs the same
-number of queries as a page of 5. That is the N+1 fix: ask for the relation
+None of them runs a query per row, so eager loading a page of 50 rows costs the
+same number of queries as a page of 5. That is the N+1 fix: ask for the relation
 instead of looping.
 
 ```typescript
-import { countries, regions, states } from './db/schema';
+import { cities, countries, countryTags, regions, states, tags } from './db/schema';
 
 DrizzleCrudModule.forFeature([
   {
@@ -517,15 +519,32 @@ DrizzleCrudModule.forFeature([
         // belongs-to: countries.region_id -> regions.id (`references` defaults to 'id')
         region: { table: regions, localKey: 'region_id', references: 'id' },
         // has-many: states.country_id -> countries.id (`parentKey` defaults to the primary key)
-        states: { table: states, type: 'hasMany', foreignKey: 'country_id' },
+        states: {
+          table: states,
+          type: 'hasMany',
+          foreignKey: 'country_id',
+          orderBy: [{ column: 'name', order: 'asc' }],
+          // nested: eager-load with relations: ['states', 'states.cities']
+          relations: {
+            cities: { table: cities, type: 'hasMany', foreignKey: 'state_id' },
+          },
+        },
+        // many-to-many: countries.id <- country_tags -> tags.id
+        tags: {
+          table: tags,
+          type: 'manyToMany',
+          through: countryTags,
+          throughLocalKey: 'country_id',
+          throughForeignKey: 'tag_id',
+        },
       },
     },
   },
 ]);
 ```
 
-A belongs-to relation without `localKey`, or a has-many relation without
-`foreignKey`, throws when the service is constructed, so a typo shows up at
+A relation missing its required keys throws when the service is constructed,
+nested relations included, with the full path in the message. A typo shows up at
 startup instead of as an empty array later.
 
 ### 1. Eager loading
@@ -533,21 +552,26 @@ startup instead of as an empty array later.
 Pass `relations` in the operation options:
 
 ```typescript
-await countries.find(1, { relations: ['region', 'states'] });
+await countries.find(1, { relations: ['region', 'states', 'states.cities', 'tags'] });
 // → {
 //     id: 1, name: 'India', region_id: 3,
 //     region: { id: 3, name: 'Asia', code: 'AS' },
-//     states: [{ id: 10, name: 'Karnataka', country_id: 1 }, ...],
+//     states: [{ id: 10, name: 'Karnataka', country_id: 1, cities: [...] }, ...],
+//     tags: [{ id: '...', name: 'himalayan' }],
 //   }
 
-// 3 queries total: data, count, and every state in one IN (...)
-await countries.findAll({}, { page: 1, limit: 50 }, { relations: ['region', 'states'] });
+// 5 queries for the whole page: data, count, states, cities, tags
+await countries.findAll({}, { page: 1, limit: 50 }, {
+  relations: ['region', 'states', 'states.cities', 'tags'],
+});
 ```
 
-An unmatched belongs-to relation is `null`, never an object full of nulls. A
-parent with no children is `[]`, so callers can iterate without a guard.
-Has-many relations load concurrently, and soft-deleted children are excluded
-when the child table has the configured column.
+A dotted path loads a relation of a relation, and asking for `states.cities`
+alone pulls in `states` too. An unmatched belongs-to relation is `null`, never an
+object full of nulls. A parent with no children is `[]`, so callers can iterate
+without a guard. Relations load concurrently, soft-deleted rows are excluded when
+the related table has the configured column, and the join table of a
+many-to-many never appears in the result.
 
 ### 2. Filtering by related columns
 
@@ -561,20 +585,21 @@ await cities.findAll({ name: { ilike: 'B%' }, state: { country_id: 3 } });
 
 // has-many: countries.id IN (SELECT country_id FROM states WHERE ...)
 await countries.findAll({ states: { name: 'Kerala' } });
+
+// many-to-many: through the join table, still a subquery
+await countries.findAll({ tags: { name: 'himalayan' } });
 ```
 
-A has-many relation is never joined, on a filter or on an eager load. One
-country with four states would become four rows, `count(*)` would return 4
-instead of 1, and `limit` would cut a country in half. The subquery and the
-batched load keep one row per parent, so `total` and pagination stay correct.
+A collection is never joined, on a filter or on an eager load. One country with
+four states would become four rows, `count(*)` would return 4 instead of 1, and
+`limit` would cut a country in half. The subquery and the batched load keep one
+row per parent, so `total` and pagination stay correct.
 
-> **Scope:** many-to-many (join tables) is not handled, and `options.relations`
-> takes flat names only, so a relation-of-a-relation needs a custom method.
-> Child collections come back unordered.
->
-> **Multi-level filtering** works through the intermediate table's columns
-> (e.g. filter cities by `state.country_id`), so you usually don't need a
-> direct relation to the far table.
+> **Scope:** filters are one level deep, so filter through the intermediate
+> table's own columns (e.g. cities by `state.country_id`) rather than nesting
+> filter objects. `orderBy` sorts a collection but does not limit it per parent,
+> and a join table's own columns are not returned. Model a join table that
+> carries data as an entity with two belongs-to relations.
 
 ---
 
@@ -588,20 +613,21 @@ await countries.findAll({}, { page: 1, limit: 20 }, { select: ['id', 'name'] });
 // SELECT "id", "name" FROM "countries" ...
 
 await countries.findAll({}, { page: 1, limit: 20 }, {
-  relations: ['region', 'states'],
-  select: ['id', 'name', 'region.code', 'states.name'],
+  relations: ['region', 'states', 'states.cities'],
+  select: ['id', 'name', 'region.code', 'states.name', 'states.cities.name'],
 });
-// → { id, name, region: { code }, states: [{ name, country_id }] }
+// → { id, name, region: { code }, states: [{ name, country_id, id, cities: [{ name, state_id }] }] }
 ```
 
 Rules worth knowing:
 
 - A dotted entry only applies when the relation is also in `options.relations`.
+  Paths can be any depth: `'states.cities.name'`.
 - Names that don't match a real column are ignored, not rejected.
 - If every entry is dotted, the base row is returned in full, so
   `select: ['region.name']` reads as "narrow the region".
-- The parent key and each child's foreign key are added back automatically for a
-  has-many load, because grouping the children needs them.
+- The parent key, each child's foreign key and any key a nested level needs are
+  added back automatically, because the grouping needs them.
 
 `select` applies to `find`, `findOne` and `findAll`. Write methods return the
 full row through `RETURNING`.
@@ -851,8 +877,8 @@ export class XService extends SqlBaseCrudService<X, CreateXDto, UpdateXDto, XFil
 - Filter operators live inside an object value: `{ age: { gte: 18 } }`. `like`/`ilike` require caller-supplied `%` wildcards; a bare string is exact match.
 - `delete`/`softDelete` return `boolean`; `update`/`restore` return the entity and throw `EntityNotFoundException` when missing.
 - Postgres error codes are translated for you: `23505` unique -> 409, `22001`/`23514`/`22003` bad value -> 400, `23503` on create/update (missing FK target) -> 400 `ForeignKeyViolationException`, `23503` on delete (still referenced) -> 409 `EntityInUseException`.
-- Relations: declare in forFeature `config.relations`. Belongs-to is `{ table, localKey, references? }`, LEFT JOINed into the main query, resolving to a nested object or `null`. Has-many is `{ table, type: 'hasMany', foreignKey, parentKey? }`, loaded with one extra batched query per relation for the whole result set, resolving to an array (`[]` when empty). Eager-load via `options.relations: ['relName']`, filter via `findAll({ relName: { col: value } })` with the same operators (has-many filters compile to `parentKey IN (SELECT foreignKey FROM child WHERE ...)`, so `total` stays correct). Multi-level via the intermediate table's columns, e.g. `state.country_id`. No many-to-many, no nested relation-of-a-relation.
-- `options.select` narrows the projection and takes dotted relation paths: `['id', 'name', 'region.code', 'states.name']`. Unknown names are ignored; an all-dotted list leaves the base row complete; the parent key and child foreign key are re-added for a has-many load.
+- Relations: declare in forFeature `config.relations` and eager-load via `options.relations: ['relName']`, where a dotted path nests (`['states', 'states.cities']`, `['state.country']`; the parent path is pulled in automatically). Belongs-to is `{ table, localKey, references? }`, LEFT JOINed into the main query, resolving to an object or `null`. Has-many is `{ table, type: 'hasMany', foreignKey, parentKey?, orderBy? }`. Many-to-many is `{ table, type: 'manyToMany', through, throughLocalKey, throughForeignKey, references?, parentKey?, orderBy? }`. Nested relations live in a `relations` map on the relation. Every collection and every nested level costs exactly one extra query for the whole result set, never one per row. Filter via `findAll({ relName: { col: value } })` with the same operators; collection filters compile to `parentKey IN (SELECT ... WHERE ...)`, so `total` stays correct. Filters are one level deep, so go through the intermediate table's columns, e.g. `state.country_id`.
+- `options.select` narrows the projection and takes dotted relation paths at any depth: `['id', 'name', 'region.code', 'states.cities.name']`. Unknown names are ignored; an all-dotted list leaves the base row complete; the parent key, the child foreign key and any nested key are re-added automatically.
 - Primary keys: `primaryKey` (default `'id'`) + `primaryKeyType` (`'serial' | 'bigserial' | 'int' | 'bigint' | 'uuid'`) per entity in forFeature config. UUID works on Postgres via RETURNING; with uuid keys, route params are strings. Don't use `ParseIntPipe`.
 - Full-text search is PostgreSQL-only.
 - Exports: `SqlBaseCrudService`, `DrizzleCrudModule`, `DRIZZLE_DB`, `DRIZZLE_CRUD_CONFIG`, `TestCrudFactory`, exceptions (`EntityNotFoundException`, `DuplicateEntityException`, `ForeignKeyViolationException`, `EntityInUseException`, `ValidationFailedException`, `BulkOperationException`, `DatabaseConnectionException`, `TransactionException`), and types (`SqlCrudConfig`, `SqlOperationOptions`, `DrizzleCrudConfig`, `CrudFeature`, `SqlDialect`, `PrimaryKeyType`).
@@ -872,11 +898,16 @@ interface SqlCrudConfig {
   sql?: { caseSensitive: boolean; useReturning: boolean; jsonSupport: boolean; enableFullTextSearch: boolean };
   relations?: Record<string, {
     table: any;
-    type?: 'belongsTo' | 'hasMany';
+    type?: 'belongsTo' | 'hasMany' | 'manyToMany';
     localKey?: string;             // belongs-to: FK column on this table
-    references?: string;           // belongs-to: target column, default 'id'
+    references?: string;           // target column, default 'id'
     foreignKey?: string;           // has-many: column on the target table
-    parentKey?: string;            // has-many: column here it matches, default primaryKey
+    parentKey?: string;            // collections: column here it matches, default primaryKey
+    through?: any;                 // many-to-many: the join table
+    throughLocalKey?: string;      // many-to-many: join column matching parentKey
+    throughForeignKey?: string;    // many-to-many: join column matching references
+    orderBy?: SortColumn[];        // collections: order the children in SQL
+    relations?: RelationsConfig;   // nested relations, addressed as 'rel.child'
   }>;
 }
 ```

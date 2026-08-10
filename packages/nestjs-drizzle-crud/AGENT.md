@@ -170,7 +170,7 @@ query DTO to the filter object and let the service compile the SQL.
 
 # Relations
 
-Belongs to and has many, declared per entity in `forFeature`:
+Four shapes, all declared per entity in `forFeature`:
 
 ```typescript
 config: {
@@ -178,28 +178,51 @@ config: {
     // belongs to: countries.region_id -> regions.id
     region: { table: regions, localKey: 'region_id' },
     // has many: states.country_id -> countries.id
-    states: { table: states, type: 'hasMany', foreignKey: 'country_id' },
+    states: {
+      table: states,
+      type: 'hasMany',
+      foreignKey: 'country_id',
+      orderBy: [{ column: 'name', order: 'asc' }],
+      // nested: load with relations: ['states', 'states.cities']
+      relations: {
+        cities: { table: cities, type: 'hasMany', foreignKey: 'state_id' },
+      },
+    },
+    // many to many: countries.id <- country_tags -> tags.id
+    tags: {
+      table: tags,
+      type: 'manyToMany',
+      through: countryTags,
+      throughLocalKey: 'country_id',
+      throughForeignKey: 'tag_id',
+    },
   },
 }
 ```
 
-Eager load with `options.relations: ['region', 'states']`. A belongs to relation
-is joined into the main query and nests an object (`null` when unmatched). A has
-many relation runs **one extra batched query for the whole result set** and
-nests an array (`[]` when empty).
+Eager load with `options.relations: ['region', 'states', 'states.cities', 'tags']`.
+A belongs to relation is joined into the main query and nests an object (`null`
+when unmatched). Every collection, and every nested level whatever its shape,
+runs **one extra batched query for the whole result set** and nests an array
+(`[]` when empty). A dotted path pulls in its parent path automatically.
 
 **Never load a collection in a loop.** A page of 50 countries with their states
-is 3 queries: data, count, children. Fetching the states per country is 51. If
-you catch yourself writing `for (const row of rows) await ...`, the relation you
-want is a has many relation.
+and every state's cities is 4 queries: data, count, states, cities. Fetching them
+per row is hundreds. If you catch yourself writing
+`for (const row of rows) await ...`, the relation you want is already in this
+config; declare it and pass it in `options.relations`.
 
-Filter with `findAll({ region: { name: 'Asia' } })` or
-`findAll({ states: { name: 'Kerala' } })` using the same operators. A has many
-filter compiles to `id IN (SELECT country_id FROM states WHERE ...)`, never a
-join, so `total` and pagination stay correct.
+Filter with `findAll({ region: { name: 'Asia' } })`,
+`findAll({ states: { name: 'Kerala' } })` or
+`findAll({ tags: { name: 'himalayan' } })` using the same operators. A collection
+filter compiles to `id IN (SELECT ... WHERE ...)`, never a join, so `total` and
+pagination stay correct. Filters are one level deep: go through the intermediate
+table's own columns (`state: { country_id: 3 }`) instead of nesting filter
+objects.
 
-There is no many to many and no relation of a relation; model those with a
-second service call.
+A relation missing its keys throws at startup, with the full path in the message.
+For a join table that carries its own columns, model it as an entity with two
+belongs to relations.
 
 ---
 
@@ -209,15 +232,17 @@ second service call.
 
 ```typescript
 await countries.findAll({}, { page: 1, limit: 20 }, {
-  relations: ['region', 'states'],
-  select: ['id', 'name', 'region.code', 'states.name'],
+  relations: ['region', 'states', 'states.cities'],
+  select: ['id', 'name', 'region.code', 'states.name', 'states.cities.name'],
 });
-// { id, name, region: { code }, states: [{ name, country_id }] }
+// { id, name, region: { code }, states: [{ name, country_id, id, cities: [{ name, state_id }] }] }
 ```
 
 Use it on list endpoints and hot paths rather than hydrating every column. A
-dotted entry only applies when the relation is also eager loaded, unknown names
-are ignored, and a list of only dotted entries leaves the base row complete.
+dotted entry only applies when the relation is also eager loaded, paths can be
+any depth, unknown names are ignored, and a list of only dotted entries leaves
+the base row complete. The keys needed to group a collection come back whether
+you asked for them or not.
 
 ---
 

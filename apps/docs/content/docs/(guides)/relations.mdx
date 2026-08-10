@@ -1,14 +1,15 @@
 ---
 title: Relations
-description: Eager-load belongs-to and has-many relations in Drizzle CRUD without N+1 queries, and filter by related columns.
+description: Eager-load belongs-to, has-many, many-to-many and nested relations in Drizzle CRUD without N+1 queries, and filter by related columns.
 ---
 
-Declare relations in the entity's `forFeature` config under `relations`, keyed by relation name, then eager-load them with `options.relations`. Two kinds are supported:
+Declare relations in the entity's `forFeature` config under `relations`, keyed by relation name, then eager-load them with `options.relations`. Three kinds are supported, and any of them can nest:
 
 - **belongs-to** (many-to-one / one-to-one): a foreign key on this table points at another table. Loaded with a `LEFT JOIN` in the same query, resolves to an object or `null`.
 - **has-many** (one-to-many): a foreign key on the *other* table points back here. Loaded with **one extra batched query per relation**, resolves to an array.
+- **many-to-many**: a join table holds a foreign key to each side. Loaded with **one extra batched query per relation**, resolves to an array.
 
-Neither shape ever runs a query per row, so eager loading a page of 50 rows costs the same number of queries as a page of 5.
+No shape ever runs a query per row, so eager loading a page of 50 rows costs the same number of queries as a page of 5.
 
 ## How do I avoid N+1 queries?
 
@@ -29,8 +30,10 @@ The alternative, fetching countries and then querying states inside a loop, is 1
 | --- | --- | --- | --- |
 | `belongsTo` (default) | `LEFT JOIN` in the main query | 0 | object, or `null` when unmatched |
 | `hasMany` | `SELECT ... WHERE fk IN (parent keys)` | 1 per relation, for the whole page | array, `[]` when empty |
+| `manyToMany` | `SELECT ... FROM join JOIN target ... WHERE fk IN (parent keys)` | 1 per relation, for the whole page | array, `[]` when empty |
+| nested (any shape) | as above, against the level above it | 1 per relation per level | as above |
 
-Has-many relations load concurrently, so three has-many relations are three parallel queries, not three round trips in sequence.
+Relations load concurrently, so three collections are three parallel queries, not three round trips in sequence.
 
 ## Declaring a belongs-to relation
 
@@ -86,8 +89,97 @@ DrizzleCrudModule.forFeature([
 | --- | --- | --- |
 | `foreignKey` | `string` | The column on the *target* table pointing back here. Required for has-many. |
 | `parentKey` | `string?` | The column on the *current* table that `foreignKey` matches. Defaults to the configured `primaryKey`. |
+| `orderBy` | `SortColumn[]?` | How to order the collection, applied in SQL. |
 
 A relation missing its key column throws when the service is constructed, so a typo shows up at startup instead of as an empty array at runtime.
+
+## Declaring a many-to-many relation
+
+Name the join table and its two foreign-key columns:
+
+```ts accent=nest title="countries/countries.module.ts"
+import { countries, countryTags, tags } from '../db/schema';
+
+config: {
+  relations: {
+    // countries.id <- country_tags.country_id / country_tags.tag_id -> tags.id
+    tags: {
+      table: tags,
+      type: 'manyToMany',
+      through: countryTags,
+      throughLocalKey: 'country_id',
+      throughForeignKey: 'tag_id',
+      orderBy: [{ column: 'name', order: 'asc' }],
+    },
+  },
+}
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `through` | `Drizzle table` | The join table. Required for many-to-many. |
+| `throughLocalKey` | `string` | The join-table column matching this table's `parentKey`. |
+| `throughForeignKey` | `string` | The join-table column matching `references` on the target table. |
+| `references` | `string?` | The target column. Defaults to `'id'`. |
+| `parentKey` | `string?` | The column on the current table. Defaults to the configured `primaryKey`. |
+
+```ts
+await countries.find(1, { relations: ['tags'] });
+// { id: 1, name: 'India', tags: [{ id: '...', name: 'himalayan' }, ...] }
+```
+
+The join table never appears in the result. Its key is used to group each row onto the right parent and then removed.
+
+## How do I eager-load a relation of a relation?
+
+Give the relation its own `relations` map, then address it with a dotted path in `options.relations`:
+
+```ts accent=nest
+config: {
+  relations: {
+    states: {
+      table: states,
+      type: 'hasMany',
+      foreignKey: 'country_id',
+      relations: {
+        cities: { table: cities, type: 'hasMany', foreignKey: 'state_id' },
+      },
+    },
+  },
+}
+```
+
+```ts
+// 4 queries for the page: data, count, all states, all cities
+const page = await countries.findAll({}, { page: 1, limit: 50 }, {
+  relations: ['states', 'states.cities'],
+});
+// data[0].states[0].cities -> [{ id, name, state_id }, ...]
+```
+
+Each level is one batched query for *every* row at that level, so 50 countries with 200 states and 900 cities is still 4 queries. Nesting works for every shape, including a belongs-to chain:
+
+```ts
+await cities.find(1, { relations: ['state.country'] });
+// { id: 1, name: 'Bengaluru', state: { id: 7, name: 'Karnataka', country: { id: 3, name: 'India' } } }
+```
+
+Asking for `state.country` pulls in `state` on its own, so you do not have to list both.
+
+## Ordering a collection
+
+Set `orderBy` on the relation and the children come back sorted by SQL, not by insertion order:
+
+```ts accent=nest
+states: {
+  table: states,
+  type: 'hasMany',
+  foreignKey: 'country_id',
+  orderBy: [{ column: 'name', order: 'asc' }],
+}
+```
+
+An `orderBy` entry naming a column that does not exist is warned about and skipped, the same way `defaultSort` behaves.
 
 ## Eager loading
 
@@ -109,9 +201,9 @@ An unmatched belongs-to relation comes back as `null`, never as an object full o
 
 Soft delete is respected on both sides: when it is enabled and the child table has the configured column, deleted children are excluded from the collection.
 
-## Why is a has-many relation not joined?
+## Why is a collection not joined?
 
-Because a join would break the page. One country with four states becomes four rows, `count(*)` returns 4 instead of 1, and `limit 50` silently cuts a country in half. The batched `IN (...)` query keeps one row per parent and keeps `total` honest.
+Because a join would break the page. One country with four states becomes four rows, `count(*)` returns 4 instead of 1, and `limit 50` silently cuts a country in half. The batched `IN (...)` query keeps one row per parent and keeps `total` honest. This applies to has-many and many-to-many alike.
 
 The same reasoning applies to filters, so filtering by a child column compiles to a subquery:
 
@@ -120,7 +212,7 @@ The same reasoning applies to filters, so filtering by a child column compiles t
 await countries.findAll({ states: { name: 'Kerala' } });
 ```
 
-That is "parents with at least one matching child". It supports the same operators as any other filter, and the predicate is applied to the count query too.
+That is "parents with at least one matching child". Many-to-many filters work the same way, through the join table. Both support the same operators as any other filter, and the predicate is applied to the count query too.
 
 ## Filtering by related columns
 
@@ -138,6 +230,9 @@ await cities.findAll({
 
 // has-many: subquery, no join
 await countries.findAll({ states: { name: { ilike: 'K%' } } });
+
+// many-to-many: subquery through the join table, no join
+await countries.findAll({ tags: { name: 'himalayan' } });
 ```
 
 ## Multi-level filtering
@@ -173,10 +268,10 @@ The child keeps its foreign key even when you do not list it, because that colum
 
 ## Limitations
 
-- **No many-to-many.** Model the join table as an entity of its own, or write a custom method for it.
-- **No nested relations in `options.relations`.** Pass each relation name as a flat string; a relation-of-a-relation needs a custom method.
+- **Filters are one level deep.** `findAll({ states: { name: 'X' } })` works; `findAll({ states: { cities: { name: 'X' } } })` does not. Filter on the intermediate table's own columns instead.
 - **Belongs-to joins are always `LEFT`.** Filter by `id: { isNotNull: true }` if you need to drop the unmatched rows.
-- **Child collections come back unordered.** Add an `ORDER BY` in a custom method when the order matters.
+- **A collection is not paginated per parent.** `orderBy` sorts the children, but every matching child is returned. Use a custom method when you need "the latest three per parent".
+- **Join-table columns are not returned.** If the join table carries data of its own (a role, a position), model it as an entity with two belongs-to relations.
 
 ## Next
 

@@ -72,6 +72,7 @@ global defaults (DrizzleCrudConfig)
 ```
 
 ```ts twoslash
+type RelationConfig = { table: any };
 // ---cut---
 interface SqlCrudConfig {
   // ---- Set by the module ----
@@ -116,42 +117,61 @@ interface SqlCrudConfig {
     enableFullTextSearch: boolean;
   };
 
-  // ---- Belongs-to and has-many relations ----
-  relations?: Record<
-    string,
-    {
-      table: any;
-      type?: 'belongsTo' | 'hasMany';
-      localKey?: string;
-      references?: string;
-      foreignKey?: string;
-      parentKey?: string;
-    }
-  >;
+  // ---- Relations: belongs-to, has-many, many-to-many, nested ----
+  relations?: Record<string, RelationConfig>;
 }
 ```
 
 ## `RelationConfig`, `RelationsConfig` and `RelationType`
 
 ```ts twoslash
+type SortColumn = { column: string; order: 'asc' | 'desc' };
 // ---cut---
-type RelationType = 'belongsTo' | 'hasMany';
+type RelationType = 'belongsTo' | 'hasMany' | 'manyToMany';
 
 interface RelationConfig {
-  table: any;             // the target Drizzle table
-  type?: RelationType;    // defaults to 'belongsTo'
+  table: any;                  // the target Drizzle table
+  type?: RelationType;         // defaults to 'belongsTo'
   // belongs-to
-  localKey?: string;      // the FK column on the *current* table (required)
-  references?: string;    // the column on the target table (defaults to 'id')
+  localKey?: string;           // the FK column on the *current* table (required)
+  references?: string;         // the target column (defaults to 'id')
   // has-many
-  foreignKey?: string;    // the column on the *target* table pointing back here (required)
-  parentKey?: string;     // the column on the current table it matches (defaults to primaryKey)
+  foreignKey?: string;         // the column on the *target* table pointing back here (required)
+  parentKey?: string;          // the column on the current table it matches (defaults to primaryKey)
+  // many-to-many
+  through?: any;               // the join table (required)
+  throughLocalKey?: string;    // join column matching parentKey (required)
+  throughForeignKey?: string;  // join column matching references (required)
+  // collections only
+  orderBy?: SortColumn[];      // how to order the children, applied in SQL
+  // relations of the RELATED table, addressable as 'relName.childName'
+  relations?: Record<string, RelationConfig>;
 }
 
 type RelationsConfig = Record<string, RelationConfig>;
 ```
 
-A belongs-to relation without `localKey`, or a has-many relation without `foreignKey`, throws when the service is constructed. See [Relations](/docs/relations).
+A relation missing its required keys throws when the service is constructed, nested relations included, with the full path in the message. See [Relations](/docs/relations).
+
+## `RelationNode` and `SelectTree`
+
+The resolved eager-loading plan and the parsed `options.select`. Both are exported for subclasses that override the loader; normal use never touches them.
+
+```ts twoslash
+type RelationConfig = { table: any };
+// ---cut---
+interface RelationNode {
+  name: string;
+  config: RelationConfig;
+  children: RelationNode[];
+  joined?: boolean;   // folded into the main query as a LEFT JOIN
+}
+
+interface SelectTree {
+  base: string[];
+  relations: Record<string, SelectTree>;
+}
+```
 
 ## `SqlSearchOptions`
 
