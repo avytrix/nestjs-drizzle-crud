@@ -139,12 +139,17 @@ class BulkUpdateBodyPipe implements PipeTransform {
 	}
 }
 
-function idsOf(body: IdsBody | undefined): unknown[] {
+// The ids of a bulk body, each parsed like a `:id` param, so a bad one is a
+// 400 before any statement runs instead of a failed batch that is replayed.
+async function idsOf(
+	service: { parseId(raw: unknown): Promise<unknown> },
+	body: IdsBody | undefined,
+): Promise<unknown[]> {
 	const ids = body?.ids;
 	if (!Array.isArray(ids) || ids.length === 0) {
 		throw new BadRequestException("ids must be a non-empty array");
 	}
-	return ids;
+	return Promise.all(ids.map((id) => service.parseId(id)));
 }
 
 // Build a CRUD controller for a service. Use it as a base class, so you can
@@ -236,7 +241,7 @@ export function createCrudController<
 			return this.service.massCreate(body, readOptions(this.service, query));
 		}
 
-		bulkUpdate(
+		async bulkUpdate(
 			body: { ids?: unknown; data?: unknown },
 			query: Record<string, unknown>,
 		) {
@@ -244,23 +249,23 @@ export function createCrudController<
 				throw new BadRequestException("data must be an object");
 			}
 			return this.service.massUpdate(
-				idsOf(body),
+				await idsOf(this.service, body),
 				body.data,
 				readOptions(this.service, query),
 			);
 		}
 
-		bulkDelete(body: IdsBody) {
-			const ids = idsOf(body);
+		async bulkDelete(body: IdsBody) {
+			const ids = await idsOf(this.service, body);
 			return options.deleteMode === "soft"
 				? this.service.massSoftDelete(ids)
 				: this.service.massDelete(ids);
 		}
 
-		bulkRestore(body: IdsBody, query: Record<string, unknown>) {
+		async bulkRestore(body: IdsBody, query: Record<string, unknown>) {
 			softDeleteOn(this.service);
 			return this.service.massRestore(
-				idsOf(body),
+				await idsOf(this.service, body),
 				readOptions(this.service, query),
 			);
 		}

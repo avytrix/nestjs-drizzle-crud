@@ -503,9 +503,23 @@ function parseFilter(
 			) {
 				const quantified: Record<string, CrudFilter> = {};
 				for (const [quantifier, member] of Object.entries(raw)) {
-					// `?posts[some]` with no column means "has at least one".
-					quantified[quantifier] =
-						member === "" ? {} : parseFilter(member, context, inner);
+					// `?posts[some]` with no column means "has at least one". It names
+					// no column, so the relation, or one of its columns, must be
+					// filterable.
+					if (member === "") {
+						const allowed = context.options.filterableColumns;
+						if (
+							allowed &&
+							!allowed.some(
+								(entry) => entry === path || entry.startsWith(`${path}.`),
+							)
+						) {
+							throw bad(`Filtering on "${path}" is not allowed`);
+						}
+						quantified[quantifier] = {};
+					} else {
+						quantified[quantifier] = parseFilter(member, context, inner);
+					}
 				}
 				out[key] = quantified;
 			} else {

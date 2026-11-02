@@ -2231,7 +2231,7 @@ export abstract class SqlBaseCrudService<
 	}
 
 	// A row for a related table from a nested body: only its own columns,
-	// never its soft delete column, with its timestamps and the tenant scope
+	// never a generated primary key or its soft delete column, with its timestamps and the tenant scope
 	// set when the table has those columns.
 	private relatedRow(
 		table: any,
@@ -2240,7 +2240,17 @@ export abstract class SqlBaseCrudService<
 	): Record<string, any> {
 		const out: Record<string, any> = {};
 		for (const [key, item] of Object.entries(value)) {
-			if (item !== undefined && this.columnOf(table, key)) out[key] = item;
+			const column = this.columnOf(table, key);
+			// A generated primary key is the database's to pick: a body that
+			// names one could claim, or collide with, any id.
+			if (
+				item === undefined ||
+				!column ||
+				(column.primary && column.hasDefault)
+			) {
+				continue;
+			}
+			out[key] = item;
 		}
 		const softDelete = this.config.softDelete;
 		if (softDelete?.enabled) delete out[softDelete.column];

@@ -2720,3 +2720,25 @@ describe("re-audit: writes", () => {
 		await expect(svc.restore(1)).resolves.toMatchObject({ deleted_at: null });
 	});
 });
+
+describe("re-audit: allowlists and nested rows", () => {
+	it("R-13: an existence filter needs the relation to be filterable", async () => {
+		const svc = new Svc({
+			...base(await sharedDb(), authors),
+			filterableColumns: ["name"],
+			relations: {
+				posts: { table: posts, type: "hasMany", foreignKey: "author_id" },
+			},
+		});
+		expect(() => svc.parseQuery({ "posts[none]": "" })).toThrow(/not allowed/);
+	});
+
+	it("R-14: a nested child cannot pick its own generated primary key", async () => {
+		const svc = docsService(await freshDb(), { writableRelations: ["notes"] });
+		const doc = await svc.create(
+			{ title: "Mine", slug: "mine", notes: [{ id: 99999, body: "child" }] },
+			{ ...asTenant(1), relations: ["notes"] },
+		);
+		expect(doc.notes[0].id).not.toBe(99999);
+	});
+});

@@ -149,6 +149,12 @@ test.describe("createCrudController: projects", () => {
 		});
 		expect(invalid.status()).toBe(400);
 
+		const badId = await request.post("/projects/bulk-delete", {
+			headers: t1,
+			data: { ids: [ids[0], "abc"] },
+		});
+		expect(badId.status()).toBe(400);
+
 		const invalidUpdate = await request.patch("/projects/bulk", {
 			headers: t1,
 			data: { ids, data: { name: "" } },
