@@ -2933,3 +2933,35 @@ describe("3.7.0: full-text search options", () => {
 		expect(trash.data.map((p: any) => p.id)).toEqual([1]);
 	});
 });
+
+describe("3.7.1: scoped upsert on MySQL", () => {
+	it("names both dialects that support it", async () => {
+		const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+		const svc = docsService(await sharedDb(), { dialect: "mysql" });
+		warn.mockRestore();
+		const error = await expect400(
+			svc.upsert(
+				{ title: "x", slug: "x" },
+				{ conflictTarget: "slug" },
+				asTenant(1),
+			),
+		);
+		expect(error.message).toBe(
+			"upsert on a scoped entity needs PostgreSQL or SQLite",
+		);
+	});
+});
+
+describe("3.7.1: select paths from the request", () => {
+	it("treats __proto__ and constructor as plain names, not object internals", async () => {
+		const svc: any = new Svc(base(await sharedDb(), authors));
+		const tree = svc.parseSelect(["__proto__.x", "constructor.y", "name"]);
+		expect(Object.getPrototypeOf(tree.relations)).toBeNull();
+		expect(svc.selectFor(tree, "__proto__").base).toEqual(["x"]);
+		expect(({} as any).base).toBeUndefined();
+		expect(svc.selectFor(tree, "constructor").base).toEqual(["y"]);
+		expect(
+			svc.selectFor({ base: [], relations: {} }, "__proto__").base,
+		).toEqual([]);
+	});
+});
