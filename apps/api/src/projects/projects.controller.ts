@@ -15,6 +15,8 @@ import { ProjectsService } from "./projects.service";
 @Controller("projects")
 export class ProjectsController extends createCrudController(ProjectsService, {
 	dto: { create: CreateProjectDto, update: UpdateProjectDto },
+	// The bulk bodies get the same checks as the global pipe in main.ts.
+	validation: { whitelist: true },
 	deleteMode: "soft",
 	routes: {
 		bulkCreate: true,
