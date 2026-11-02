@@ -1,6 +1,7 @@
 import {
 	BadRequestException,
 	ConflictException,
+	HttpException,
 	InternalServerErrorException,
 	NotFoundException,
 } from "@nestjs/common";
@@ -53,16 +54,58 @@ export class EntityInUseException extends ConflictException {
 	}
 }
 
+// One failed item of a bulk operation, as it appears in the HTTP response:
+// `index` for massCreate (the position in the input array), `id` for the
+// others, plus the status and message that item alone would have produced.
+export interface BulkOperationItemError {
+	index?: number;
+	id?: any;
+	status: number;
+	message: string;
+}
+
+// Turn a caught error into its response entry. An HttpException keeps its own
+// status and message. Anything else is reported as a 500 with a generic
+// message: a raw driver error can carry SQL and parameters, which do not
+// belong in a response body. The original error stays on `errors`.
+function toItemError(item: {
+	id?: any;
+	index?: number;
+	error: Error;
+}): BulkOperationItemError {
+	const where =
+		item.index !== undefined ? { index: item.index } : { id: item.id };
+	if (item.error instanceof HttpException) {
+		return {
+			...where,
+			status: item.error.getStatus(),
+			message: item.error.message,
+		};
+	}
+	return { ...where, status: 500, message: "Internal server error" };
+}
+
+// A 400 whose body lists every failed item:
+// { statusCode, error, message, errors: [{ index | id, status, message }] }.
 export class BulkOperationException extends BadRequestException {
 	constructor(
 		message: string,
 		public readonly errors: Array<{ id?: any; index?: number; error: Error }>,
 	) {
-		super(`${message}. ${errors.length} error(s) occurred.`);
+		super({
+			statusCode: 400,
+			error: "Bad Request",
+			message: `${message}. ${errors.length} error(s) occurred.`,
+			errors: errors.map(toItemError),
+		});
 		this.name = "BulkOperationException";
 	}
 }
 
+/**
+ * @deprecated Nothing in the package throws this. It stays exported so existing
+ * imports keep compiling, and will be removed in the next major version.
+ */
 export class DatabaseConnectionException extends InternalServerErrorException {
 	constructor(message: string = "Database connection failed") {
 		super(message);
@@ -70,6 +113,11 @@ export class DatabaseConnectionException extends InternalServerErrorException {
 	}
 }
 
+/**
+ * @deprecated Nothing in the package throws this. A failed transaction rejects
+ * with the error that caused it. Kept for existing imports; removed in the next
+ * major version.
+ */
 export class TransactionException extends InternalServerErrorException {
 	constructor(message: string = "Transaction failed") {
 		super(message);
