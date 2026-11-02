@@ -58,7 +58,7 @@
 	"homepage": "https://crud.avytrix.dev",
 	"funding": {
 		"type": "github",
-		"url": "https://github.com/sponsors/myviliha"
+		"url": "https://github.com/sponsors/avytrix"
 	},
 	"peerDependencies": {
 		"@nestjs/common": ">=10.0.0",

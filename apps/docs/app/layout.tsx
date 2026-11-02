@@ -12,17 +12,17 @@ const inter = Inter({
 	variable: "--font-inter",
 });
 
-const ogTitle = `${siteConfig.name}: ${siteConfig.tagline}`;
+const ogTitle = `${siteConfig.displayName}: ${siteConfig.tagline}`;
 
 export const metadata: Metadata = {
 	metadataBase: new URL(siteConfig.url),
 	title: {
 		default: ogTitle,
-		template: `%s · ${siteConfig.name}`,
+		template: `%s · ${siteConfig.displayName}`,
 	},
 	description: siteConfig.description,
 	keywords: siteConfig.keywords,
-	applicationName: siteConfig.name,
+	applicationName: siteConfig.displayName,
 	authors: [{ name: siteConfig.author }],
 	creator: siteConfig.author,
 	publisher: siteConfig.author,
@@ -42,7 +42,7 @@ export const metadata: Metadata = {
 	openGraph: {
 		type: "website",
 		url: siteConfig.url,
-		siteName: siteConfig.name,
+		siteName: siteConfig.displayName,
 		title: ogTitle,
 		description: siteConfig.description,
 		locale: "en_US",

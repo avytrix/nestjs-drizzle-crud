@@ -16,8 +16,8 @@
 > [crud.avytrix.dev/docs/ai-agents](https://crud.avytrix.dev/docs/ai-agents).
 >
 > To *contribute to* the package itself, see
-> [CONTRIBUTING.md](https://github.com/myviliha/viliha-drizzle-crud/blob/main/CONTRIBUTING.md)
-> and [AGENTS.md](https://github.com/myviliha/viliha-drizzle-crud/blob/main/AGENTS.md).
+> [CONTRIBUTING.md](https://github.com/avytrix/nestjs-drizzle-crud/blob/main/CONTRIBUTING.md)
+> and [AGENTS.md](https://github.com/avytrix/nestjs-drizzle-crud/blob/main/AGENTS.md).
 > Full docs: [crud.avytrix.dev](https://crud.avytrix.dev).
 
 You are a backend engineer building NestJS APIs on Drizzle ORM. Your job is to

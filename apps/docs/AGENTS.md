@@ -3,7 +3,7 @@
 Documentation site for [`nestjs-drizzle-crud@3.3.0`](https://www.npmjs.com/package/nestjs-drizzle-crud).
 Next.js 16 + Fumadocs, **static-exported** (`output: "export"`) and deployed to
 **GitHub Pages** via `.github/workflows/deploy-docs.yml` on push to `main`.
-Lives at `apps/docs/` in the `viliha-drizzle` monorepo (pnpm workspace + Turborepo).
+Lives at `apps/docs/` in the `nestjs-drizzle-crud` monorepo (pnpm workspace + Turborepo).
 
 Repo-wide rules are in the root [`AGENTS.md`](../../AGENTS.md), including the
 mandatory changelog, humanize, and SEO/AEO passes that apply to every page here.
@@ -140,7 +140,7 @@ d3f8c6b doc(3.0.3): update docs for 3.0.3 + 3.0.x deltas
 | Release history | `content/docs/(reference)/changelog.mdx` |
 | Latest releases shown on home | `components/home/latest-releases.tsx` |
 | Color tokens | `app/global.css:6-29` |
-| Package mark (SVG) | `public/logo.svg` |
+| Avytrix Technologies mark (header, favicon source, sharing card) | `public/avytrix-icon.png`; favicons in `app/icon.png`, `app/apple-icon.png` |
 
 ## What this site does NOT do
 

@@ -1,5 +1,6 @@
 import { Github, Heart, Package } from "lucide-react";
 import Link from "next/link";
+import { siteConfig } from "@/lib/seo";
 
 export function Footer() {
 	return (
@@ -8,10 +9,10 @@ export function Footer() {
 				<div className="flex flex-col items-start justify-between gap-6 sm:flex-row sm:items-center">
 					<div>
 						<div className="text-sm font-semibold text-fd-foreground">
-							nestjs-drizzle-crud
+							{siteConfig.displayName}
 						</div>
 						<div className="mt-1 text-xs text-fd-muted-foreground">
-							MIT · v3.2.2
+							MIT · v{siteConfig.version}
 						</div>
 					</div>
 					<div className="flex flex-wrap items-center gap-1 text-sm">
@@ -28,7 +29,7 @@ export function Footer() {
 							Changelog
 						</Link>
 						<a
-							href="https://github.com/myviliha/viliha-drizzle-crud"
+							href="https://github.com/avytrix/nestjs-drizzle-crud"
 							target="_blank"
 							rel="noreferrer noopener"
 							className="inline-flex items-center gap-1.5 -mx-2 rounded-[2px] px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
@@ -37,13 +38,21 @@ export function Footer() {
 							GitHub
 						</a>
 						<a
-							href="https://github.com/sponsors/myviliha"
+							href="https://github.com/sponsors/avytrix"
 							target="_blank"
 							rel="noreferrer noopener"
 							className="inline-flex items-center gap-1.5 -mx-2 rounded-[2px] px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
 						>
 							<Heart className="size-4" />
 							Sponsor
+						</a>
+						<a
+							href="https://avytrix.dev"
+							target="_blank"
+							rel="noreferrer noopener"
+							className="inline-flex items-center -mx-2 rounded-[2px] px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
+						>
+							Avytrix Technologies
 						</a>
 						<a
 							href="https://www.npmjs.com/package/nestjs-drizzle-crud"

@@ -1,6 +1,11 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { ImageResponse } from "next/og";
+import { siteConfig } from "@/lib/seo";
 
-export const alt = "nestjs-drizzle-crud: type-safe CRUD for Drizzle ORM in NestJS";
+const logo = `data:image/png;base64,${readFileSync(join(process.cwd(), "public/avytrix-icon.png")).toString("base64")}`;
+
+export const alt = `${siteConfig.displayName}: type-safe CRUD for Drizzle ORM in NestJS`;
 export const dynamic = "force-static";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
@@ -21,22 +26,9 @@ export default function Image() {
 					fontFamily: "system-ui, sans-serif",
 				}}
 			>
-				<svg
-					viewBox="0 0 24 24"
-					width="280"
-					height="280"
-					style={{ flexShrink: 0 }}
-				>
-					<path
-						d="M 3 22 V 7 Q 3 4 6 4 H 9 Q 11 4 11 7 V 22 H 9 V 7 Q 9 6 8 6 H 6 Q 5 6 5 7 V 22 Z"
-						fill="#E0234E"
-					/>
-					<path
-						d="M 12 22 V 3 H 17 Q 22 3 22 8 V 15 Q 22 20 17 20 H 14 V 22 Z M 14 6 V 18 H 17 Q 20 18 20 15 V 8 Q 20 6 18 6 Z"
-						fill="#C5F74F"
-						fillRule="evenodd"
-					/>
-				</svg>
+				{/* Avytrix Technologies mark, inlined at build time (static export) */}
+				{/* biome-ignore lint/performance/noImgElement: ImageResponse (satori) renders plain <img> only */}
+				<img src={logo} width={280} height={280} alt="" style={{ flexShrink: 0 }} />
 
 				<div
 					style={{
@@ -55,10 +47,9 @@ export default function Image() {
 							display: "flex",
 						}}
 					>
-						<span style={{ color: "#E0234E", display: "flex" }}>nestjs</span>
-						<span style={{ color: "#fafafa", display: "flex" }}>-</span>
-						<span style={{ color: "#C5F74F", display: "flex" }}>drizzle</span>
-						<span style={{ color: "#fafafa", display: "flex" }}>-crud</span>
+						<span style={{ color: "#E0234E", display: "flex" }}>Nestjs</span>
+						<span style={{ color: "#fafafa", display: "flex" }}>&nbsp;</span>
+						<span style={{ color: "#C5F74F", display: "flex" }}>Drizzle</span>
 					</div>
 
 					<div
@@ -87,7 +78,7 @@ export default function Image() {
 							display: "flex",
 						}}
 					>
-						v3.2.2
+						v{siteConfig.version}
 					</div>
 				</div>
 			</div>
