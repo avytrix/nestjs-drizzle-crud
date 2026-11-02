@@ -57,7 +57,7 @@ export interface UpdateUserDto { name?: string; email?: string }
 ```
 
 ```ts title="users/users.service.ts"
-import { type CrudFilter, SqlBaseCrudService } from 'nestjs-drizzle-crud';
+import { type CrudFilter, SqlBaseCrudService } from '@avytrix/nestjs-drizzle-crud';
 import type { User } from '../db/schema';
 import type { CreateUserDto, UpdateUserDto } from './users.dto';
 
@@ -80,7 +80,7 @@ This is the same shape as `CountriesService` in the example app
 
 ```ts accent=nest title="users/users.module.ts"
 import { Module } from '@nestjs/common';
-import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
 import { users } from '../db/schema';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
@@ -147,7 +147,7 @@ Add them to the class. Inside a method you have every CRUD method on `this`, the
 
 ```ts title="users/users.service.ts"
 import { eq, isNull, sql } from 'drizzle-orm';
-import { type CrudFilter, SqlBaseCrudService } from 'nestjs-drizzle-crud';
+import { type CrudFilter, SqlBaseCrudService } from '@avytrix/nestjs-drizzle-crud';
 import { posts, type User, users } from '../db/schema';
 import type { CreateUserDto, UpdateUserDto } from './users.dto';
 

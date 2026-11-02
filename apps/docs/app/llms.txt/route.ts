@@ -41,18 +41,19 @@ export function GET() {
 
 	const org = siteConfig.organization;
 	const body = [
-		`# ${siteConfig.name}`,
+		`# ${siteConfig.project}`,
 		"",
-		`> ${siteConfig.description} It is an open-source npm package, MIT licensed, built and maintained by ${org.name}.`,
+		`> ${siteConfig.description} It is an open-source npm package, published as ${siteConfig.name}, MIT licensed, built and maintained by ${org.name}.`,
 		"",
 		"Key facts, each one stated in these docs:",
 		`- Current version: ${siteConfig.version}. Source: ${siteConfig.github}. Package: ${siteConfig.npm}.`,
-		"- Install: `pnpm add nestjs-drizzle-crud` (or npm, yarn, bun). Peers: @nestjs/common, @nestjs/core, drizzle-orm, reflect-metadata; `postgres` only when you let the module open the connection.",
+		`- Install: \`pnpm add ${siteConfig.name}\` (or npm, yarn, bun). The package was renamed from ${siteConfig.formerName} in 3.5.1; change the dependency and the imports, nothing else changes.`,
+		"- Peers: @nestjs/common, @nestjs/core, drizzle-orm, reflect-metadata; `postgres` only when you let the module open the connection.",
 		"- Dialects: PostgreSQL and MySQL. Full-text search is PostgreSQL only.",
 		"- A service is an empty subclass of `SqlBaseCrudService`; the table is bound in `DrizzleCrudModule.forFeature`, not in the service.",
 		"- `findAll` returns `{ data, total, page, limit }`, not an array. It runs two queries (data and count), whatever the page size.",
 		"- Relations can be belongs-to, has-many or many-to-many, and nest. Eager loading costs one query per relation per level, never one per row.",
-		`- An MCP server ships in the package: \`npx nestjs-drizzle-crud-mcp\` (stdio). See ${absoluteUrl("/docs/ai-agents")}.`,
+		`- An MCP server ships in the package: \`npx -p ${siteConfig.name} ${siteConfig.mcpBin}\` (stdio). See ${absoluteUrl("/docs/ai-agents")}.`,
 		"",
 		"What these docs do not claim:",
 		"- No benchmarks, download counts or user numbers are published here.",
@@ -65,7 +66,7 @@ export function GET() {
 		"",
 		"## Who maintains it",
 		"",
-		`${siteConfig.name} is built and maintained by ${org.name}, a software development company that builds web applications, custom software, AI features and MCP servers for clients in the USA, Europe, the UK and Australia. To hire the team behind the library, see ${absoluteUrl("/docs/commercial-support")} or start at ${avytrixUrl("/contact", "llms-txt")}.`,
+		`${siteConfig.project} is built and maintained by ${org.name}, a software development company that builds web applications, custom software, AI features and MCP servers for clients in the USA, Europe, the UK and Australia. To hire the team behind the library, see ${absoluteUrl("/docs/commercial-support")} or start at ${avytrixUrl("/contact", "llms-txt")}.`,
 		"",
 	].join("\n");
 

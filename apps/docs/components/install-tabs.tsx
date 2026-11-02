@@ -38,13 +38,27 @@ export function InstallTabs({
 	);
 }
 
-/** The same, for one-off commands run without installing. */
-export function RunTabs({ command }: { command: string }) {
+/**
+ * The same, for one-off commands run without installing. `pkg` names the package that ships
+ * the binary when the two differ (a scoped package's bin), e.g.
+ * `<RunTabs pkg="@avytrix/nestjs-drizzle-crud" command="nestjs-drizzle-crud-mcp" />`.
+ */
+const WITH_PACKAGE = {
+	pnpm: (pkg: string) => `pnpm --package=${pkg} dlx`,
+	npm: (pkg: string) => `npx -p ${pkg}`,
+	yarn: (pkg: string) => `yarn dlx -p ${pkg}`,
+	bun: (pkg: string) => `bunx -p ${pkg}`,
+} as const;
+
+export function RunTabs({ command, pkg }: { command: string; pkg?: string }) {
 	return (
 		<Tabs groupId="package-manager" persist items={MANAGERS.map((m) => m.name)}>
 			{MANAGERS.map((m) => (
 				<Tab key={m.name} value={m.name}>
-					<DynamicCodeBlock lang="bash" code={`${m.run} ${command}`} />
+					<DynamicCodeBlock
+						lang="bash"
+						code={`${pkg ? WITH_PACKAGE[m.name](pkg) : m.run} ${command}`}
+					/>
 				</Tab>
 			))}
 		</Tabs>

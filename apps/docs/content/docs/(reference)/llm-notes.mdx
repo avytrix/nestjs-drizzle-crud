@@ -8,7 +8,7 @@ nestjs-drizzle-crud facts for AI agents fit on one page: register `DrizzleCrudMo
 
 <Callout title="When this page and the types disagree, trust the types">
   The TypeScript declarations shipped in the package are the canonical definition. Generate code
-  against `import type { ... } from "nestjs-drizzle-crud"`, and use this page for the rules the
+  against `import type { ... } from "@avytrix/nestjs-drizzle-crud"`, and use this page for the rules the
   types cannot express.
 </Callout>
 
@@ -16,7 +16,7 @@ nestjs-drizzle-crud facts for AI agents fit on one page: register `DrizzleCrudMo
 
 | Fact | Value |
 | --- | --- |
-| Name | `nestjs-drizzle-crud`, version <Version />, MIT |
+| Name | `@avytrix/nestjs-drizzle-crud` on npm (renamed from `nestjs-drizzle-crud` in 3.5.1), version <Version />, MIT |
 | Runtime dependencies | None |
 | Peers | `@nestjs/common` and `@nestjs/core` `>=10.0.0`, `drizzle-orm` `>=0.28.0 <1.0.0`, `reflect-metadata` `^0.1.13 \|\| ^0.2.0` |
 | Optional peers | `postgres` `>=3.0.0` (only for `connectionString`), `@nestjs/swagger` `>=7.0.0` (only for `ApiCrudQuery`, `ApiCrudList` and `openapi`) |
@@ -164,7 +164,7 @@ list(@Query() query: Record<string, unknown>) {
 
 All 98, alphabetical, from the package root:
 
-```txt title="nestjs-drizzle-crud"
+```txt title="@avytrix/nestjs-drizzle-crud"
 and, ApiCrudList, ApiCrudQuery, ApiCrudQueryOptions, ApiCrudSource, asc,
 BaseCrudSpecHelper, between, BulkMode, BulkOperationException,
 BulkOperationItemError, BulkOperationResult, CollectionFilter,
@@ -216,7 +216,7 @@ this.usersService.findAll({ tenant_id: req.user.tenantId });
 
 ## Sources of truth
 
-1. The TypeScript types: `import type { ... } from "nestjs-drizzle-crud"`.
+1. The TypeScript types: `import type { ... } from "@avytrix/nestjs-drizzle-crud"`.
 2. The package README and `AGENT.md` on <Ext to="npm">npm</Ext>, also served by the MCP server.
 3. The source on <Ext to="github">GitHub</Ext>.
 4. The [Changelog](/docs/changelog), for behaviour changes release by release.

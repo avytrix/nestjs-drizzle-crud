@@ -12,7 +12,14 @@ dependencies.
 
 <Callout title="Before you start">
   You need Node 20 or later and a NestJS 10 or later project with decorators turned on. The
-  documented version is <Version />, published as <Ext to="npm">nestjs-drizzle-crud on npm</Ext>.
+  documented version is <Version />, published as <Ext to="npm">@avytrix/nestjs-drizzle-crud on npm</Ext>.
+</Callout>
+
+<Callout type="warn" title="Renamed to @avytrix/nestjs-drizzle-crud">
+  From 3.5.1 the package is published under the `@avytrix` scope. The unscoped
+  `nestjs-drizzle-crud` name is deprecated on npm and points to the new one. To move, change the
+  dependency and the imports; nothing else changes. See
+  [how to switch to the scoped package](#how-do-i-switch-to-the-scoped-package).
 </Callout>
 
 ## How do I install it?
@@ -23,7 +30,7 @@ dependencies.
 
 ### Install the package and its required peers
 
-<InstallTabs pkg="nestjs-drizzle-crud @nestjs/common @nestjs/core drizzle-orm reflect-metadata" />
+<InstallTabs pkg="@avytrix/nestjs-drizzle-crud @nestjs/common @nestjs/core drizzle-orm reflect-metadata" />
 
 A NestJS project already has `@nestjs/common`, `@nestjs/core` and `reflect-metadata`, so in
 practice you add the package and `drizzle-orm`.
@@ -110,7 +117,7 @@ when the app shuts down. Install `postgres`.
 
 ```ts accent=nest title="app.module.ts"
 import { Module } from "@nestjs/common";
-import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { DrizzleCrudModule } from "@avytrix/nestjs-drizzle-crud";
 import * as schema from "./db/schema";
 
 @Module({
@@ -135,7 +142,7 @@ is and leaves closing it to you. `postgres` is not needed unless that is the dri
 ```ts accent=nest title="app.module.ts"
 import { Module } from "@nestjs/common";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { DrizzleCrudModule } from "@avytrix/nestjs-drizzle-crud";
 import postgres from "postgres";
 import * as schema from "./db/schema";
 
@@ -161,7 +168,7 @@ A `connectionString` only works for PostgreSQL, so on MySQL you always pass `db`
 import { Module } from "@nestjs/common";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { DrizzleCrudModule } from "@avytrix/nestjs-drizzle-crud";
 
 @Module({
   imports: [
@@ -188,6 +195,28 @@ To read the connection settings from `ConfigService` instead of `process.env`, u
 [`forRootAsync`](/docs/for-root-async). Every `forRoot` option is on the
 [forRoot page](/docs/for-root).
 
+## How do I switch to the scoped package?
+
+Replace the dependency, then the import paths. The API, the config and the behaviour are the
+same; only the name changed.
+
+```bash title="terminal"
+pnpm remove nestjs-drizzle-crud
+pnpm add @avytrix/nestjs-drizzle-crud
+```
+
+```ts title="users.service.ts"
+// before
+import { SqlBaseCrudService } from "nestjs-drizzle-crud";
+// after
+import { SqlBaseCrudService } from "@avytrix/nestjs-drizzle-crud";
+```
+
+If you copied the agent rules templates or point an MCP client at the package, update those
+paths too: `node_modules/@avytrix/nestjs-drizzle-crud/AGENT.md`, and
+`npx -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp` for the MCP server. See
+[AI agents and MCP](/docs/ai-agents).
+
 ## How are versions numbered?
 
 The package follows semver:
@@ -203,6 +232,9 @@ same `CHANGELOG.md`.
 ## Common questions
 
 <Accordions>
+  <Accordion title="Is nestjs-drizzle-crud the same package as @avytrix/nestjs-drizzle-crud?">
+    Yes. From 3.5.1 the package is published as `@avytrix/nestjs-drizzle-crud` and the unscoped name is deprecated. Change the dependency and the imports; nothing else changes.
+  </Accordion>
   <Accordion title="Which version of drizzle-orm does nestjs-drizzle-crud support?">
     Any `drizzle-orm` from 0.28.0 up to, but not including, 1.0.0, as declared in the package's peer dependencies.
   </Accordion>

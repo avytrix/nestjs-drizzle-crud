@@ -1,6 +1,7 @@
 import { defineDocs, defineConfig } from "fumadocs-mdx/config";
 import { transformerTwoslash } from "fumadocs-twoslash";
 import { rehypeCodeDefaultOptions } from "fumadocs-core/mdx-plugins";
+import { resolve } from "node:path";
 
 // Reads `accent=nest|drizzle` from the fence meta string and tags the
 // rendered <pre> with `data-accent="..."`. CSS in app/global.css turns the
@@ -62,7 +63,20 @@ export default defineConfig({
 			langs: ["ts", "tsx", "js", "jsx", "bash", "json", "html", "css"],
 			transformers: [
 				...(rehypeCodeDefaultOptions.transformers ?? []),
-				transformerTwoslash(),
+				transformerTwoslash({
+					twoslashOptions: {
+						compilerOptions: {
+							// Samples import the published name, @avytrix/nestjs-drizzle-crud. Until the
+							// workspace package carries that name, resolve it to whichever folder exists.
+							paths: {
+								"@avytrix/nestjs-drizzle-crud": [
+									resolve("node_modules/@avytrix/nestjs-drizzle-crud"),
+									resolve("node_modules/nestjs-drizzle-crud"),
+								],
+							},
+						},
+					},
+				}),
 				accentTransformer,
 			],
 		},

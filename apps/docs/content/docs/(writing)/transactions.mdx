@@ -15,7 +15,7 @@ To run Drizzle transactions in NestJS, open a transaction and pass its handle to
 Call `executeSqlTransaction` from a method on your service and pass `tx` to each call:
 
 ```ts title="users.service.ts"
-import { SqlBaseCrudService } from 'nestjs-drizzle-crud';
+import { SqlBaseCrudService } from '@avytrix/nestjs-drizzle-crud';
 import type { ProfilesService } from '../profiles/profiles.service';
 
 export class UsersService extends SqlBaseCrudService<User, CreateUserDto> {
@@ -44,7 +44,7 @@ Inject `DRIZZLE_DB`, the Drizzle instance the module built, and call `db.transac
 
 ```ts accent=nest title="signup.service.ts"
 import { Inject, Injectable } from '@nestjs/common';
-import { DRIZZLE_DB } from 'nestjs-drizzle-crud';
+import { DRIZZLE_DB } from '@avytrix/nestjs-drizzle-crud';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { UsersService } from '../users/users.service';
 import { ProfilesService } from '../profiles/profiles.service';

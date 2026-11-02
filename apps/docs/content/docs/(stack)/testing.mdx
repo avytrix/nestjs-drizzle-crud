@@ -64,7 +64,7 @@ Register the service the way your app does, with `forRoot` and `forFeature`, so 
 ```ts accent=nest title="users.service.spec.ts"
 import { Test, type TestingModule } from '@nestjs/testing';
 import type { PGlite } from '@electric-sql/pglite';
-import { DrizzleCrudModule, EntityNotFoundException } from 'nestjs-drizzle-crud';
+import { DrizzleCrudModule, EntityNotFoundException } from '@avytrix/nestjs-drizzle-crud';
 import { users } from '../src/db/schema';
 import { UsersService } from '../src/users/users.service';
 import { freshDb } from './db';
@@ -150,7 +150,7 @@ The spread is shallow: passing `softDelete: { column: 'deletedAt' }` replaces th
 Stub the chain the method calls, then assert on the result and the calls. `create` runs `db.insert(table).values(row).returning()`:
 
 ```ts title="users.service.unit.spec.ts"
-import { TestCrudFactory } from 'nestjs-drizzle-crud';
+import { TestCrudFactory } from '@avytrix/nestjs-drizzle-crud';
 import { UsersService } from '../src/users/users.service';
 
 it('returns the inserted row', async () => {

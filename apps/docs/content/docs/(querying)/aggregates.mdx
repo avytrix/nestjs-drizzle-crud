@@ -117,7 +117,7 @@ Write a method on your service with Drizzle's own aggregate helpers. Your method
 
 ```ts accent=drizzle title="posts.service.ts"
 import { and, eq, isNull, sum } from 'drizzle-orm';
-import { SqlBaseCrudService, type CrudFilter } from 'nestjs-drizzle-crud';
+import { SqlBaseCrudService, type CrudFilter } from '@avytrix/nestjs-drizzle-crud';
 import { posts } from '../db/schema';
 
 export class PostsService extends SqlBaseCrudService<Post, CreatePostDto, UpdatePostDto, CrudFilter> {

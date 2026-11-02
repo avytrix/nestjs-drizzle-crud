@@ -113,7 +113,7 @@ An error that is not an HTTP exception (a driver fault, say) appears as `status:
 Catch it and read `errors`, which keeps the original `Error` per failed item:
 
 ```ts title="users.import.ts"
-import { BulkOperationException } from 'nestjs-drizzle-crud';
+import { BulkOperationException } from '@avytrix/nestjs-drizzle-crud';
 
 try {
   await users.massCreate([

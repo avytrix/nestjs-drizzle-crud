@@ -16,7 +16,7 @@ icon: Layers
 
 ```ts accent=nest title="users/users.module.ts"
 import { Module } from '@nestjs/common';
-import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
 import { users } from '../db/schema';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
@@ -136,7 +136,7 @@ The service checks these keys when it is built. A key that is not on the table s
 Yes, with `@CrudService`. Its metadata is the first per-entity layer, so `forFeature` config wins where both set a key, and the `forFeature` table wins over the decorator's. The decorator's type asks for `dialect`, `table` and `primaryKey`:
 
 ```ts title="tags/tags.service.ts"
-import { type CrudFilter, CrudService, SqlBaseCrudService } from 'nestjs-drizzle-crud';
+import { type CrudFilter, CrudService, SqlBaseCrudService } from '@avytrix/nestjs-drizzle-crud';
 import { tags } from '../db/schema';
 import type { CreateTagDto } from './dto/create-tag.dto';
 import type { UpdateTagDto } from './dto/update-tag.dto';

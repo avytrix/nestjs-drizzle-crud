@@ -48,7 +48,7 @@ Pass the connection string and your schema. The module imports the `postgres` dr
 
 ```ts accent=nest title="app.module.ts"
 import { Module } from '@nestjs/common';
-import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
 import * as schema from './db/schema';
 
 @Module({
@@ -82,7 +82,7 @@ Build it yourself and pass it as `db`. Use this for MySQL, and on PostgreSQL whe
 import { Module } from '@nestjs/common';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
 import * as schema from './db/schema';
 
 const client = postgres(process.env.DATABASE_URL!, { max: 10 });
@@ -101,7 +101,7 @@ export class AppModule {}
 import { Module } from '@nestjs/common';
 import { drizzle } from 'drizzle-orm/mysql2';
 import mysql from 'mysql2/promise';
-import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
 import * as schema from './db/schema';
 
 const pool = mysql.createPool({ uri: process.env.DATABASE_URL, connectionLimit: 10 });

@@ -1,10 +1,10 @@
 ---
 title: NestJS Drizzle MCP server for AI agents
-description: Run the NestJS Drizzle MCP server with npx nestjs-drizzle-crud-mcp so Claude Code, Cursor or Copilot read the docs, and add the package rules file.
+description: Run the NestJS Drizzle MCP server with npx so Claude Code, Cursor or Copilot can read the package docs, and add the AGENT.md rules file to your repo.
 icon: Bot
 ---
 
-The NestJS Drizzle MCP server ships inside `nestjs-drizzle-crud`: run `npx nestjs-drizzle-crud-mcp` and any MCP client (Claude Code, Cursor, Copilot, Codex, Gemini CLI and others) can list, read and search the package docs while it writes code. The package also ships a rules file, `AGENT.md`, with templates that load it into the file your agent reads. Neither adds a dependency to your app.
+The NestJS Drizzle MCP server ships inside `@avytrix/nestjs-drizzle-crud`: run `npx -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp` and any MCP client (Claude Code, Cursor, Copilot, Codex, Gemini CLI and others) can list, read and search the package docs while it writes code. The package also ships a rules file, `AGENT.md`, with templates that load it into the file your agent reads. Neither adds a dependency to your app.
 
 <Callout title="Read-only by design">
   The server only reads the markdown files inside its own installed package. It never connects to
@@ -27,7 +27,7 @@ The server reports the installed package version in its `initialize` reply, so i
 
 ## How do I run the MCP server?
 
-<RunTabs command="nestjs-drizzle-crud-mcp" />
+<RunTabs pkg="@avytrix/nestjs-drizzle-crud" command="nestjs-drizzle-crud-mcp" />
 
 It starts and waits for JSON-RPC messages on stdin. You do not run it by hand day to day: your agent starts it from the config below.
 
@@ -43,7 +43,7 @@ Register it once per project. Claude Code, Cursor, Windsurf, Gemini CLI and Clin
   "mcpServers": {
     "nestjs-drizzle-crud": {
       "command": "npx",
-      "args": ["-y", "nestjs-drizzle-crud-mcp"]
+      "args": ["-y", "-p", "@avytrix/nestjs-drizzle-crud", "nestjs-drizzle-crud-mcp"]
     }
   }
 }
@@ -52,7 +52,7 @@ Register it once per project. Claude Code, Cursor, Windsurf, Gemini CLI and Clin
 Or add it from the CLI:
 
 ```bash title="Terminal"
-claude mcp add nestjs-drizzle-crud -- npx -y nestjs-drizzle-crud-mcp
+claude mcp add nestjs-drizzle-crud -- npx -y -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp
 ```
 
 </Tab>
@@ -63,7 +63,7 @@ claude mcp add nestjs-drizzle-crud -- npx -y nestjs-drizzle-crud-mcp
   "mcpServers": {
     "nestjs-drizzle-crud": {
       "command": "npx",
-      "args": ["-y", "nestjs-drizzle-crud-mcp"]
+      "args": ["-y", "-p", "@avytrix/nestjs-drizzle-crud", "nestjs-drizzle-crud-mcp"]
     }
   }
 }
@@ -79,7 +79,7 @@ VS Code keeps the entries under `servers` instead of `mcpServers`:
   "servers": {
     "nestjs-drizzle-crud": {
       "command": "npx",
-      "args": ["-y", "nestjs-drizzle-crud-mcp"]
+      "args": ["-y", "-p", "@avytrix/nestjs-drizzle-crud", "nestjs-drizzle-crud-mcp"]
     }
   }
 }
@@ -91,7 +91,7 @@ VS Code keeps the entries under `servers` instead of `mcpServers`:
 ```toml title="~/.codex/config.toml"
 [mcp_servers.nestjs-drizzle-crud]
 command = "npx"
-args = ["-y", "nestjs-drizzle-crud-mcp"]
+args = ["-y", "-p", "@avytrix/nestjs-drizzle-crud", "nestjs-drizzle-crud-mcp"]
 ```
 
 </Tab>
@@ -118,8 +118,8 @@ A tool failure, such as an unknown tool name, comes back as a result with `isErr
 Copy the template that matches your tool into your project root:
 
 ```bash title="Terminal"
-cp node_modules/nestjs-drizzle-crud/AGENTS.template.md ./AGENTS.md   # most tools
-cp node_modules/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md   # Claude Code
+cp node_modules/@avytrix/nestjs-drizzle-crud/AGENTS.template.md ./AGENTS.md   # most tools
+cp node_modules/@avytrix/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md   # Claude Code
 ```
 
 | Agent | File in your project root |
@@ -132,7 +132,7 @@ cp node_modules/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md   # Claude Co
 Each template is a pointer, not a copy. Besides comments, it holds one line:
 
 ```md title="AGENTS.md"
-@node_modules/nestjs-drizzle-crud/AGENT.md
+@node_modules/@avytrix/nestjs-drizzle-crud/AGENT.md
 ```
 
 `AGENT.md` ships inside the package and stays the single source of truth, so an upgrade updates the rules with it. If your agent does not resolve `@` imports, paste the contents of `AGENT.md` in place of that line, or run the MCP server so the agent fetches the guidance itself.

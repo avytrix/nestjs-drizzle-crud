@@ -1,8 +1,8 @@
 # nestjs-drizzle-crud
 
 [![docs](https://img.shields.io/badge/docs-crud.avytrix.dev-E0234E)](https://crud.avytrix.dev)
-[![npm](https://img.shields.io/npm/v/nestjs-drizzle-crud?color=E0234E)](https://www.npmjs.com/package/nestjs-drizzle-crud)
-[![license](https://img.shields.io/npm/l/nestjs-drizzle-crud)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@avytrix/nestjs-drizzle-crud?color=E0234E)](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud)
+[![license](https://img.shields.io/npm/l/@avytrix/nestjs-drizzle-crud)](./LICENSE)
 [![CI](https://github.com/avytrix/nestjs-drizzle-crud/actions/workflows/ci.yml/badge.svg)](https://github.com/avytrix/nestjs-drizzle-crud/actions/workflows/ci.yml)
 [![Sponsor @avytrix](https://img.shields.io/badge/Sponsor-%40avytrix-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/avytrix)
 
@@ -31,13 +31,13 @@ type-safe CRUD for [Drizzle ORM](https://orm.drizzle.team/) in
 It uses Turborepo, pnpm and TypeScript 7, with [Biome](https://biomejs.dev/) for lint and format.
 
 **Docs:** [crud.avytrix.dev](https://crud.avytrix.dev) ·
-**npm:** [nestjs-drizzle-crud](https://www.npmjs.com/package/nestjs-drizzle-crud) ·
+**npm:** [@avytrix/nestjs-drizzle-crud](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud) ·
 **Sponsor:** [github.com/sponsors/avytrix](https://github.com/sponsors/avytrix)
 
 ## Install the package
 
 ```bash
-pnpm add nestjs-drizzle-crud
+pnpm add @avytrix/nestjs-drizzle-crud
 pnpm add @nestjs/common @nestjs/core drizzle-orm reflect-metadata   # peers
 pnpm add postgres          # PostgreSQL, only when the module builds the connection
 ```
@@ -117,12 +117,12 @@ plus a pointer you can copy into your project, under whatever filename your
 agent reads.
 
 ```bash
-cp node_modules/nestjs-drizzle-crud/AGENTS.template.md ./AGENTS.md   # Codex, Cursor, Copilot, Zed, Cline, Windsurf
-cp node_modules/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md   # Claude Code
+cp node_modules/@avytrix/nestjs-drizzle-crud/AGENTS.template.md ./AGENTS.md   # Codex, Cursor, Copilot, Zed, Cline, Windsurf
+cp node_modules/@avytrix/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md   # Claude Code
 ```
 
 The package also ships an MCP server, so an agent can search the docs while it
-works: `npx nestjs-drizzle-crud-mcp`. Setup per client is in
+works: `npx -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp`. Setup per client is in
 [the AI agents guide](https://crud.avytrix.dev/docs/ai-agents).
 
 ## TypeScript 7 toolchain notes
@@ -169,7 +169,7 @@ real connection string is for `pnpm dev:api` only.
   Settings → Pages → Source = GitHub Actions. The site has Cmd+K search and an
   "Ask the docs" assistant that runs entirely in the browser.
 - **Release** (`release.yml`): on a `v*` tag, re-runs the verify set and publishes
-  [`nestjs-drizzle-crud`](https://www.npmjs.com/package/nestjs-drizzle-crud) to npm
+  [`@avytrix/nestjs-drizzle-crud`](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud) to npm
   with provenance through npm trusted publishing (no token: npm trusts this
   repo's `release.yml`).
 - **Security**: CodeQL, Semgrep, Gitleaks and a production `pnpm audit` on every

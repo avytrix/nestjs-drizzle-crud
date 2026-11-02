@@ -45,7 +45,7 @@ Inject `CrudEventBus` and call `subscribe`. It returns a function that removes t
 
 ```ts accent=nest title="audit.service.ts"
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
-import { CrudEventBus, DRIZZLE_DB } from "nestjs-drizzle-crud";
+import { CrudEventBus, DRIZZLE_DB } from "@avytrix/nestjs-drizzle-crud";
 import { auditLog } from "./db/schema";
 
 @Injectable()

@@ -29,7 +29,7 @@ validateCreate(data)
 Override `validateCreate` or `validateUpdate` and throw. Any throw aborts the write before the SQL runs:
 
 ```ts accent=nest title="users.service.ts"
-import { SqlBaseCrudService, ValidationFailedException } from "nestjs-drizzle-crud";
+import { SqlBaseCrudService, ValidationFailedException } from "@avytrix/nestjs-drizzle-crud";
 
 export class UsersService extends SqlBaseCrudService<User, CreateUserDto, UpdateUserDto> {
   protected async validateCreate(data: CreateUserDto): Promise<void> {
@@ -87,7 +87,7 @@ Override the `before*` and `after*` pair for that write. `afterCreate`, `afterUp
 
 ```ts accent=nest title="users.service.ts"
 import { Logger } from "@nestjs/common";
-import { SqlBaseCrudService } from "nestjs-drizzle-crud";
+import { SqlBaseCrudService } from "@avytrix/nestjs-drizzle-crud";
 
 export class UsersService extends SqlBaseCrudService<User, CreateUserDto, UpdateUserDto> {
   private readonly logger = new Logger(UsersService.name);

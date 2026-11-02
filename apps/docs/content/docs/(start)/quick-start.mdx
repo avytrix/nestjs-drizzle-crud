@@ -34,7 +34,7 @@ Skip this step if you already have one.
 
 ### Install the package and the PostgreSQL driver
 
-<InstallTabs pkg="nestjs-drizzle-crud drizzle-orm postgres" />
+<InstallTabs pkg="@avytrix/nestjs-drizzle-crud drizzle-orm postgres" />
 
 `@nestjs/common`, `@nestjs/core` and `reflect-metadata` come with the Nest project. See
 [Install NestJS with Drizzle ORM](/docs/installation) for the full peer list.
@@ -80,7 +80,7 @@ table object. Matching them means the service needs no config.
 
 ```ts accent=nest title="src/app.module.ts"
 import { Module } from "@nestjs/common";
-import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { DrizzleCrudModule } from "@avytrix/nestjs-drizzle-crud";
 import * as schema from "./db/schema";
 import { UsersModule } from "./users/users.module";
 
@@ -108,7 +108,7 @@ the module built the connection from `connectionString`, it also closes it on sh
 ### Write an empty service
 
 ```ts title="src/users/users.service.ts"
-import { type CrudFilter, SqlBaseCrudService } from "nestjs-drizzle-crud";
+import { type CrudFilter, SqlBaseCrudService } from "@avytrix/nestjs-drizzle-crud";
 import type { users } from "../db/schema";
 import type { CreateUserDto, UpdateUserDto } from "./users.dto";
 
@@ -151,7 +151,7 @@ All four are required. `CrudFilter` accepts every filter the package understands
 
 ```ts accent=nest title="src/users/users.module.ts"
 import { Module } from "@nestjs/common";
-import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { DrizzleCrudModule } from "@avytrix/nestjs-drizzle-crud";
 import { users } from "../db/schema";
 import { UsersController } from "./users.controller";
 import { UsersService } from "./users.service";

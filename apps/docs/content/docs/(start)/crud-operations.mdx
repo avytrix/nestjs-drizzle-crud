@@ -82,7 +82,7 @@ Call the inherited methods directly, and add your own methods to the service whe
 more than one call. This service adds two methods on top of the inherited ones:
 
 ```ts title="users/users.service.ts"
-import { type CrudFilter, SqlBaseCrudService } from "nestjs-drizzle-crud";
+import { type CrudFilter, SqlBaseCrudService } from "@avytrix/nestjs-drizzle-crud";
 import type { users } from "../db/schema";
 import type { CreateUserDto, UpdateUserDto } from "./users.dto";
 

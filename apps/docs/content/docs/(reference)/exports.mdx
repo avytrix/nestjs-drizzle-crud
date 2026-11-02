@@ -4,7 +4,7 @@ description: Every export of nestjs-drizzle-crud, the classes, functions, decora
 icon: Package
 ---
 
-nestjs-drizzle-crud exports 98 names from its package root: 79 of its own (classes, functions, decorators, DI tokens, exceptions, test helpers and types) and 19 Drizzle helpers re-exported unchanged. Import all of them with `import { ... } from "nestjs-drizzle-crud"`. Anything not listed here is internal and can change in any release.
+nestjs-drizzle-crud exports 98 names from its package root: 79 of its own (classes, functions, decorators, DI tokens, exceptions, test helpers and types) and 19 Drizzle helpers re-exported unchanged. Import all of them with `import { ... } from "@avytrix/nestjs-drizzle-crud"`. Anything not listed here is internal and can change in any release.
 
 <Callout title="The root is the only public entry point">
   `src/index.ts` is the public surface. Removing or renaming anything on this page is a major
@@ -134,7 +134,7 @@ import {
   notInArray,
   or,
   sql,
-} from "nestjs-drizzle-crud";
+} from "@avytrix/nestjs-drizzle-crud";
 ```
 
 ## What is not exported?
@@ -148,7 +148,7 @@ The module's internal helpers (`normalizeConfig`, `buildEntityConfig`, `connecti
     98: 79 of its own and 19 Drizzle helpers. Of its own, 25 are runtime values (classes, functions, decorators, tokens, exceptions and test helpers) and 54 are types.
   </Accordion>
   <Accordion title="Is the MCP server an export?">
-    No. `nestjs-drizzle-crud-mcp` is a command-line binary in the package, not an import. Run it with `npx nestjs-drizzle-crud-mcp`.
+    No. `nestjs-drizzle-crud-mcp` is a command-line binary in the package, not an import. Run it with `npx -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp`.
   </Accordion>
   <Accordion title="Can I import from a deep path such as dist/core?">
     Deep paths are internal and can change in any release. Import from the package root only.

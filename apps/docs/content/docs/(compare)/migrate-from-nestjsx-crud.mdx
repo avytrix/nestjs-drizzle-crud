@@ -33,11 +33,11 @@ The examples use one `users` table on PostgreSQL. Every step after the first wor
 
 Register the connection in the root module. The defaults turn on soft delete (`deleted_at`) and timestamps (`created_at`, `updated_at`) for every entity; switch either off in `defaults` if your tables do not have those columns.
 
-<InstallTabs pkg="nestjs-drizzle-crud drizzle-orm postgres" />
+<InstallTabs pkg="@avytrix/nestjs-drizzle-crud drizzle-orm postgres" />
 
 ```ts accent=nest title="app.module.ts"
 import { Module } from "@nestjs/common";
-import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { DrizzleCrudModule } from "@avytrix/nestjs-drizzle-crud";
 import * as schema from "./db/schema";
 import { UsersModule } from "./users/users.module";
 
@@ -115,7 +115,7 @@ export class UsersService extends TypeOrmCrudService<User> {
 The new one is empty. It is not `@Injectable()` and has no constructor of its own, because `forFeature` builds it and passes the config in:
 
 ```ts accent=nest title="users.service.ts"
-import { type CrudFilter, SqlBaseCrudService } from "nestjs-drizzle-crud";
+import { type CrudFilter, SqlBaseCrudService } from "@avytrix/nestjs-drizzle-crud";
 import type { User } from "../db/schema";
 import type { CreateUserDto } from "./dto/create-user.dto";
 import type { UpdateUserDto } from "./dto/update-user.dto";
@@ -130,7 +130,7 @@ export class UsersService extends SqlBaseCrudService<
 
 ```ts accent=nest title="users.module.ts"
 import { Module } from "@nestjs/common";
-import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { DrizzleCrudModule } from "@avytrix/nestjs-drizzle-crud";
 import { users } from "../db/schema";
 import { UsersController } from "./users.controller";
 import { UsersService } from "./users.service";
@@ -156,7 +156,7 @@ The closest match to `@Crud()` is the controller factory, which registers list, 
 
 ```ts accent=nest title="users.controller.ts"
 import { Controller } from "@nestjs/common";
-import { createCrudController } from "nestjs-drizzle-crud";
+import { createCrudController } from "@avytrix/nestjs-drizzle-crud";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { UsersService } from "./users.service";

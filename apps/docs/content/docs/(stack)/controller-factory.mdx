@@ -19,7 +19,7 @@ Extend the class the factory returns and put `@Controller` on your subclass:
 
 ```ts accent=nest title="projects.controller.ts"
 import { Controller } from '@nestjs/common';
-import { createCrudController } from 'nestjs-drizzle-crud';
+import { createCrudController } from '@avytrix/nestjs-drizzle-crud';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { ProjectsService } from './projects.service';

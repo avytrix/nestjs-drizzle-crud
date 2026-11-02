@@ -21,7 +21,7 @@ To build a NestJS multi tenant API on Drizzle with `nestjs-drizzle-crud`, set `s
 The scope reads the call's context and returns the `column: value` pairs every row must match:
 
 ```ts accent=nest title="projects.crud.ts"
-import type { CrudFeatureConfig } from "nestjs-drizzle-crud";
+import type { CrudFeatureConfig } from "@avytrix/nestjs-drizzle-crud";
 
 export const projectsCrud = {
   scope: (ctx) => ({ tenant_id: ctx.tenantId }),
@@ -38,7 +38,7 @@ export const projectsCrud = {
 
 ```ts accent=nest title="projects.module.ts"
 import { type MiddlewareConsumer, Module, type NestModule } from "@nestjs/common";
-import { CrudContext, DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { CrudContext, DrizzleCrudModule } from "@avytrix/nestjs-drizzle-crud";
 import { projects } from "../db/schema";
 import { ProjectsController } from "./projects.controller";
 import { projectsCrud } from "./projects.crud";

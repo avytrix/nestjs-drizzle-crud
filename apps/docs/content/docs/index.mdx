@@ -148,7 +148,7 @@ What changed in each release, where to ask for help, and how to support the proj
 
 ## How do I install it?
 
-<InstallTabs pkg="nestjs-drizzle-crud @nestjs/common @nestjs/core drizzle-orm reflect-metadata" />
+<InstallTabs pkg="@avytrix/nestjs-drizzle-crud @nestjs/common @nestjs/core drizzle-orm reflect-metadata" />
 
 Then add a driver: `postgres` for PostgreSQL, or a Drizzle instance you build yourself for MySQL.
 [Install NestJS with Drizzle ORM](/docs/installation) covers which one you need and why.
@@ -159,7 +159,7 @@ A service is an empty class that names its row, DTO and filter types. `forFeatur
 table and builds it for you, so there is no constructor and no `@Injectable()`.
 
 ```ts title="users/users.service.ts"
-import { type CrudFilter, SqlBaseCrudService } from "nestjs-drizzle-crud";
+import { type CrudFilter, SqlBaseCrudService } from "@avytrix/nestjs-drizzle-crud";
 import type { users } from "../db/schema";
 import type { CreateUserDto, UpdateUserDto } from "./users.dto";
 
@@ -175,7 +175,7 @@ export class UsersService extends SqlBaseCrudService<
 
 ```ts accent=nest title="users/users.module.ts"
 import { Module } from "@nestjs/common";
-import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { DrizzleCrudModule } from "@avytrix/nestjs-drizzle-crud";
 import { users } from "../db/schema";
 import { UsersController } from "./users.controller";
 import { UsersService } from "./users.service";

@@ -31,7 +31,7 @@ For NestJS Drizzle Swagger docs, put `@ApiCrudList(source)` on a list route. It 
 Put the allowlists and relations in one constant, so `forFeature` and the decorator read the same facts:
 
 ```ts title="countries.crud.ts"
-import type { CrudFeatureConfig } from 'nestjs-drizzle-crud';
+import type { CrudFeatureConfig } from '@avytrix/nestjs-drizzle-crud';
 
 export const countriesCrud = {
   filterableColumns: ['name', 'code', 'region.name'],
@@ -50,7 +50,7 @@ Spread it into the module: `DrizzleCrudModule.forFeature([{ service: CountriesSe
 
 ```ts accent=nest title="countries.controller.ts"
 import { Controller, Get, Query } from '@nestjs/common';
-import { ApiCrudList } from 'nestjs-drizzle-crud';
+import { ApiCrudList } from '@avytrix/nestjs-drizzle-crud';
 import { countries } from '../db/schema';
 import { countriesCrud } from './countries.crud';
 import { CountriesService } from './countries.service';

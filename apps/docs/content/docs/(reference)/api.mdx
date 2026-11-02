@@ -37,7 +37,7 @@ abstract class SqlBaseCrudService<
 You never call the constructor yourself. `DrizzleCrudModule.forFeature` builds the service and hands it the config, so a service is normally an empty subclass:
 
 ```ts accent=nest title="users.service.ts"
-import { type CrudFilter, SqlBaseCrudService } from "nestjs-drizzle-crud";
+import { type CrudFilter, SqlBaseCrudService } from "@avytrix/nestjs-drizzle-crud";
 import type { users } from "../db/schema";
 import type { CreateUserDto, UpdateUserDto } from "./dto";
 
@@ -66,7 +66,7 @@ export class UsersService extends SqlBaseCrudService<
 Every read takes `withDeleted` or `onlyDeleted` to include or only return soft-deleted rows ([Soft delete](/docs/soft-delete)), and `counts` for `_count` on each row. On an entity with a [`scope`](/docs/multi-tenancy), a read only sees the caller's rows.
 
 ```ts twoslash title="users.service.ts"
-import { SqlBaseCrudService } from 'nestjs-drizzle-crud';
+import { SqlBaseCrudService } from '@avytrix/nestjs-drizzle-crud';
 type User = { id: number; name: string; email: string };
 declare class UsersService extends SqlBaseCrudService<User, User, Partial<User>, Partial<User>> {}
 declare const usersService: UsersService;
@@ -174,7 +174,7 @@ These are not callable from outside the service. Override the hooks in your subc
 `hooks: { skipBefore: true }` or `{ skipAfter: true }` in the options skips the before or after hooks for one call. See [Hooks and validation](/docs/hooks-validation).
 
 ```ts twoslash title="users.service.ts"
-import { SqlBaseCrudService } from 'nestjs-drizzle-crud';
+import { SqlBaseCrudService } from '@avytrix/nestjs-drizzle-crud';
 type User = { id: number; name: string };
 class UsersService extends SqlBaseCrudService<User, Omit<User, 'id'>, Partial<User>, Partial<User>> {
   // Called from inside a service method.

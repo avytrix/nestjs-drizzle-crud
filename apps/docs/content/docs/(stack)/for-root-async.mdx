@@ -50,7 +50,7 @@ The module is global, exactly like `forRoot`, and exports the same tokens (`DRIZ
 ```ts accent=nest title="app.module.ts"
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
 import * as schema from './db/schema';
 
 @Module({
@@ -88,7 +88,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
 import * as schema from './db/schema';
 
 @Module({
@@ -136,7 +136,7 @@ Provide the class from a module, import that module, and call it from the factor
 ```ts accent=nest title="crud-config.module.ts"
 import { Injectable, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { DrizzleCrudConfig } from 'nestjs-drizzle-crud';
+import type { DrizzleCrudConfig } from '@avytrix/nestjs-drizzle-crud';
 import * as schema from './db/schema';
 
 @Injectable()

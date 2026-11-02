@@ -1,15 +1,17 @@
 # nestjs-drizzle-crud
 
 [![docs](https://img.shields.io/badge/docs-crud.avytrix.dev-E0234E)](https://crud.avytrix.dev)
-[![npm](https://img.shields.io/npm/v/nestjs-drizzle-crud?color=E0234E)](https://www.npmjs.com/package/nestjs-drizzle-crud)
-[![license](https://img.shields.io/npm/l/nestjs-drizzle-crud)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@avytrix/nestjs-drizzle-crud?color=E0234E)](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud)
+[![license](https://img.shields.io/npm/l/@avytrix/nestjs-drizzle-crud)](./LICENSE)
 [![Sponsor @avytrix](https://img.shields.io/badge/Sponsor-%40avytrix-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/avytrix)
 
 **nestjs-drizzle-crud is a NestJS + Drizzle ORM CRUD library: extend one base class and every table gets type-safe find, create, update, delete, filtering, pagination, relations and soft delete, on PostgreSQL or MySQL.**
 
 ```bash
-pnpm add nestjs-drizzle-crud drizzle-orm
+pnpm add @avytrix/nestjs-drizzle-crud drizzle-orm
 ```
+
+> **Renamed.** From 3.5.1 the package is `@avytrix/nestjs-drizzle-crud`; the unscoped `nestjs-drizzle-crud` is deprecated. Change the dependency and the imports, nothing else changes.
 
 ```typescript
 // app.module.ts: configure the connection once
@@ -28,7 +30,7 @@ export class UsersService extends SqlBaseCrudService<
 DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
 ```
 
-**[Read the docs at crud.avytrix.dev](https://crud.avytrix.dev)**, starting with the [quick start](https://crud.avytrix.dev/docs/quick-start/). Also on [npm](https://www.npmjs.com/package/nestjs-drizzle-crud) and [GitHub](https://github.com/avytrix/nestjs-drizzle-crud).
+**[Read the docs at crud.avytrix.dev](https://crud.avytrix.dev)**, starting with the [quick start](https://crud.avytrix.dev/docs/quick-start/). Also on [npm](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud) and [GitHub](https://github.com/avytrix/nestjs-drizzle-crud).
 
 Built and maintained by **[Avytrix Technologies](https://avytrix.dev/?utm_source=nestjs-drizzle-crud&utm_medium=docs&utm_campaign=readme)**. Need help shipping? [Hire the team behind the library](https://crud.avytrix.dev/docs/commercial-support/).
 
@@ -118,11 +120,11 @@ sponsors are what make keeping it free sustainable.
 ## Installation
 
 ```bash
-pnpm add nestjs-drizzle-crud
+pnpm add @avytrix/nestjs-drizzle-crud
 # or
-npm install nestjs-drizzle-crud
+npm install @avytrix/nestjs-drizzle-crud
 # or
-yarn add nestjs-drizzle-crud
+yarn add @avytrix/nestjs-drizzle-crud
 ```
 
 Peer dependencies (install the ones you use):
@@ -177,7 +179,7 @@ export type User = typeof users.$inferSelect;
 ```typescript
 // app.module.ts
 import { Module } from '@nestjs/common';
-import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
 import { schema } from './db/schema';
 import { UsersModule } from './users/users.module';
 
@@ -201,7 +203,7 @@ application shutdown (when the module built it from a `connectionString`).
 
 ```typescript
 // users/users.service.ts
-import { SqlBaseCrudService } from 'nestjs-drizzle-crud';
+import { SqlBaseCrudService } from '@avytrix/nestjs-drizzle-crud';
 import type { User } from '../db/schema';
 
 export interface CreateUserDto { name: string; email: string }
@@ -221,7 +223,7 @@ export class UsersService extends SqlBaseCrudService<
 ```typescript
 // users/users.module.ts
 import { Module } from '@nestjs/common';
-import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
 import { users } from '../db/schema';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
@@ -1149,7 +1151,7 @@ service stamps `created_at`/`updated_at` automatically.
 ## Testing
 
 ```typescript
-import { TestCrudFactory } from 'nestjs-drizzle-crud';
+import { TestCrudFactory } from '@avytrix/nestjs-drizzle-crud';
 
 const mockDb = TestCrudFactory.createMockDb();
 const mockTable = TestCrudFactory.createMockTable();
@@ -1169,18 +1171,18 @@ const service = TestCrudFactory.createTestService(UsersService, mockDb, mockTabl
 when they use it. Copy the pointer template to the filename your tool reads:
 
 ```bash
-cp node_modules/nestjs-drizzle-crud/AGENTS.template.md ./AGENTS.md   # Codex, Cursor, Copilot, Zed, Cline, Windsurf
-cp node_modules/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md   # Claude Code
+cp node_modules/@avytrix/nestjs-drizzle-crud/AGENTS.template.md ./AGENTS.md   # Codex, Cursor, Copilot, Zed, Cline, Windsurf
+cp node_modules/@avytrix/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md   # Claude Code
 # Gemini CLI reads ./GEMINI.md, Aider reads ./CONVENTIONS.md
 ```
 
-Each template is one `@node_modules/nestjs-drizzle-crud/AGENT.md` line, so an
+Each template is one `@node_modules/@avytrix/nestjs-drizzle-crud/AGENT.md` line, so an
 upgrade updates the rules with it and you never hold a stale copy.
 
 ### Or run the MCP server
 
 ```bash
-npx nestjs-drizzle-crud-mcp
+npx -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp
 ```
 
 A stdio MCP server, zero dependencies, that serves this package's docs to any MCP
@@ -1192,7 +1194,7 @@ client through three tools: `list_docs`, `get_doc` (`agent-guide` / `readme` /
   "mcpServers": {
     "nestjs-drizzle-crud": {
       "command": "npx",
-      "args": ["-y", "nestjs-drizzle-crud-mcp"]
+      "args": ["-y", "-p", "@avytrix/nestjs-drizzle-crud", "nestjs-drizzle-crud-mcp"]
     }
   }
 }

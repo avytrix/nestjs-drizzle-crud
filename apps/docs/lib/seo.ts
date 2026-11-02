@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 
 export const siteConfig = {
-	name: "nestjs-drizzle-crud", // the npm package: structured data, llms.txt, install commands
+	name: "@avytrix/nestjs-drizzle-crud", // the npm package: structured data, llms.txt, install commands
+	project: "nestjs-drizzle-crud", // the project and repository name, used in prose
+	/** The npm name before the move to the @avytrix scope (3.5.1). Deprecated on npm. */
+	formerName: "nestjs-drizzle-crud",
+	mcpBin: "nestjs-drizzle-crud-mcp",
 	displayName: "Nestjs Drizzle", // what readers see: header, tab titles, site name
 	logo: "/avytrix-icon.png", // Avytrix Technologies mark
 	version: "3.5.0",
@@ -15,7 +19,7 @@ export const siteConfig = {
 		"",
 	),
 	github: "https://github.com/avytrix/nestjs-drizzle-crud",
-	npm: "https://www.npmjs.com/package/nestjs-drizzle-crud",
+	npm: "https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud",
 	sponsor: "https://github.com/sponsors/avytrix",
 	author: "Suman Bonakurthi",
 	license: "MIT",
