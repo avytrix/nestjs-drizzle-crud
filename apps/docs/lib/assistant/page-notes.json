@@ -37,7 +37,7 @@
 	},
 	"/docs/ai-agents": {
 		"title": "NestJS Drizzle MCP server for AI agents",
-		"summary": "Run the NestJS Drizzle MCP server with npx nestjs-drizzle-crud-mcp so Claude Code, Cursor or Copilot read the docs, and add the package rules file.",
+		"summary": "Run the NestJS Drizzle MCP server with npx so Claude Code, Cursor or Copilot can read the package docs, and add the AGENT.md rules file to your repo.",
 		"topics": [
 			{
 				"heading": "What are the server's stable facts?",
