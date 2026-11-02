@@ -10,6 +10,7 @@ Every export below is available from the package root: `import { ... } from 'nes
 | Export | Kind | Description |
 | --- | --- | --- |
 | `SqlBaseCrudService` | class | The base class your services extend. See [API reference](/docs/api). |
+| `parseCrudQuery` | function | `parseCrudQuery(query, table, options?)` turns an HTTP query object into filters, pagination and options. Since 3.4.0. See [Parse query strings](/docs/query-parsing). |
 
 ## Module & DI tokens
 
@@ -67,6 +68,18 @@ All exceptions extend `@nestjs/common`'s `HttpException`, so Nest's default exce
 | `PrimaryKeyType` | `'serial' \| 'bigserial' \| 'int' \| 'bigint' \| 'uuid'`. The `primaryKeyType` setting that uses it is deprecated. |
 | `SortColumn` | `{ column, order }`. |
 | `SortOrder` | `'asc' \| 'desc'`. |
+| `SortInput` | `string \| Array<string \| SortColumn>`, the caller `sortBy`. Since 3.4.0. |
+| `CrudFilter` | the filter object of `findAll`, `findByCursor` and `count`, groups included. Since 3.4.0. |
+| `FilterGroup` | `{ and?, or?, not? }`. Since 3.4.0. |
+| `FilterOperators` | every filter operator and its operand. Since 3.4.0. |
+| `FilterOperator` | `keyof FilterOperators`. Since 3.4.0. |
+| `ColumnFilter`, `FilterScalar` | what one column accepts. Since 3.4.0. |
+| `CursorPaginationOptions` | the second argument of `findByCursor`. Since 3.4.0. |
+| `CursorPage` | `{ data, limit, nextCursor, total? }`. Since 3.4.0. |
+| `CrudAllowlists` | the six allowlist keys of `SqlCrudConfig`. Since 3.4.0. |
+| `UpsertOptions` | `{ conflictTarget?, update? }`. Since 3.4.0. |
+| `BulkMode` | `'set' \| 'perItem'`. Since 3.4.0. |
+| `ParseCrudQueryOptions`, `ParsedCrudQuery` | input and output of `parseCrudQuery`. Since 3.4.0. |
 
 ## Re-exported Drizzle helpers
 
@@ -76,6 +89,7 @@ For convenience, the package re-exports the Drizzle helpers most commonly used i
 import {
   and,
   asc,
+  between,
   desc,
   eq,
   gt,
@@ -88,6 +102,8 @@ import {
   lt,
   lte,
   ne,
+  not,
+  notInArray,
   or,
   sql,
 } from 'nestjs-drizzle-crud';

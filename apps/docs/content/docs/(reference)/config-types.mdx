@@ -130,8 +130,18 @@ interface SqlCrudConfig {
 
   // ---- Relations: belongs-to, has-many, many-to-many, nested ----
   relations?: Record<string, RelationConfig>;
+
+  // ---- Allowlists (CrudAllowlists). Unset allows everything. ----
+  filterableColumns?: string[];   // columns and 'relation.column'
+  sortableColumns?: string[];     // columns and 'belongsTo.column'
+  selectableColumns?: string[];   // columns and dotted paths
+  searchableColumns?: string[];
+  loadableRelations?: string[];   // relation paths
+  writableColumns?: string[];     // create, update, upsert
 }
 ```
+
+The allowlists are described in [Allowlists](/docs/allowlists). Arrays replace, they do not merge, across the config layers.
 
 ## `RelationConfig`, `RelationsConfig` and `RelationType`
 
@@ -202,6 +212,46 @@ interface SqlSearchOptions {
 The default mode is `ilike`, which searches each configured column with a
 contains-style pattern and joins the column predicates with `OR`. `fullText` is
 PostgreSQL-only and compiles to `to_tsvector(...) @@ plainto_tsquery(...)`.
+
+## Filter, sort, cursor and upsert types
+
+Added in 3.4.0. See [Filtering](/docs/filtering), [Pagination & sorting](/docs/pagination-sorting), [Cursor pagination](/docs/cursor-pagination) and [Upsert](/docs/upsert).
+
+```ts
+type FilterScalar = string | number | boolean | bigint | Date;
+type ColumnFilter = FilterScalar | FilterScalar[] | FilterOperators | null | undefined;
+
+interface FilterOperators {
+  eq?; neq?; gt?; gte?; lt?; lte?;
+  like?: string; ilike?: string;
+  in?: unknown[]; notIn?: unknown[]; between?: [unknown, unknown];
+  isNull?: boolean | 'true' | 'false'; isNotNull?: boolean | 'true' | 'false';
+  startsWith?: string; endsWith?: string; contains?: string;
+  iStartsWith?: string; iEndsWith?: string; iContains?: string;
+  arrayContains?: unknown[]; arrayOverlaps?: unknown[]; jsonContains?: unknown;
+}
+type FilterOperator = keyof FilterOperators;
+
+interface FilterGroup { and?: CrudFilter[]; or?: CrudFilter[]; not?: CrudFilter }
+type CrudFilter = FilterGroup & { [key: string]: ColumnFilter | CrudFilter | CrudFilter[] };
+
+type SortInput = string | Array<string | SortColumn>;
+
+interface CursorPaginationOptions {
+  cursor?: string | null;
+  after?: string | null;   // alias of cursor
+  limit?: number;
+  sortBy?: SortInput;
+  sortOrder?: 'asc' | 'desc';
+  count?: boolean;         // default false
+}
+interface CursorPage<T> { data: T[]; limit: number; nextCursor: string | null; total?: number }
+
+interface UpsertOptions { conflictTarget?: string | string[]; update?: string[] }
+type BulkMode = 'set' | 'perItem';
+```
+
+`ParseCrudQueryOptions` and `ParsedCrudQuery` are on [Parse query strings into filters](/docs/query-parsing#what-does-it-return).
 
 ## `CrudFeature`
 

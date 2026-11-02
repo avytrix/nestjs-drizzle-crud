@@ -81,6 +81,8 @@ DrizzleCrudModule.forFeature([
 | `defaultSort` | Ordered column list for `findAll()` when no `sortBy` is passed. |
 | `sql` | Per-entity dialect tuning. |
 | `relations` | Belongs-to, has-many and many-to-many relations, keyed by relation name. See [Relations](/docs/relations). |
+| `filterableColumns`, `sortableColumns`, `selectableColumns`, `searchableColumns`, `loadableRelations` | What a caller may filter, sort, select, search and eager-load. Unset allows everything. See [Allowlists](/docs/allowlists). |
+| `writableColumns` | The columns create, update and upsert may write; anything else is a 400. Unset, the package ignores the columns it manages. See [Allowlists](/docs/allowlists#which-columns-can-a-body-write-by-default). |
 
 ### Does a camelCase schema need extra config?
 

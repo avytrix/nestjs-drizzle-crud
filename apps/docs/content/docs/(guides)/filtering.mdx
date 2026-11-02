@@ -1,6 +1,6 @@
 ---
 title: Filtering
-description: "Build filter objects for findAll() and count(): bare values, arrays, operators like eq, gte and isNull, date strings, and the exact-vs-pattern gotcha."
+description: "Build filter objects for findAll() and count(): bare values, arrays, operators such as gte, between, notIn and contains, or / and / not groups, and relation filters."
 ---
 
 `findAll(filters)` and `count(filters)` accept a plain object keyed by column name. `null` and `undefined` values are skipped, so a query DTO with empty fields can go straight in. A key that is not a column or a configured relation is a 400 (`BadRequestException`), the same as an unknown `sortBy`.
@@ -37,9 +37,13 @@ A value the column cannot hold, such as `'abc'` for an integer or an enum label 
   wildcards:
 
   ```ts
-  await service.findAll({ name: { ilike: 'jo%' } });   // starts with "jo"
-  await service.findAll({ name: { ilike: '%doe%' } }); // contains "doe"
+  await service.findAll({ name: { startsWith: 'jo' } }); // starts with "jo"
+  await service.findAll({ name: { contains: 'doe' } });  // contains "doe"
+  await service.findAll({ name: { ilike: 'jo%n' } });    // your own pattern
   ```
+
+  `startsWith`, `endsWith` and `contains` escape `%`, `_` and `\` for you,
+  so `{ contains: '50%' }` matches the text "50%".
 </Callout>
 
 ## Operator object
@@ -57,7 +61,7 @@ await service.findAll({
 });
 ```
 
-Multiple operators in the same object are AND-ed together. An operator the package does not know, such as `{ between: [1, 2] }`, is a 400 rather than being dropped.
+Multiple operators in the same object are AND-ed together. An operator the package does not know, such as `{ roughly: 2 }`, is a 400 rather than being dropped.
 
 ### Operator reference
 
@@ -69,8 +73,17 @@ Multiple operators in the same object are AND-ed together. An operator the packa
 | `like` | `LIKE` | Caller supplies `%` wildcards. |
 | `ilike` | `ILIKE` (PostgreSQL) / `LIKE` (MySQL) | Case-insensitive. Caller supplies `%`. MySQL has no `ILIKE`; its default collations already ignore case. |
 | `in` | `IN (...)` | The value must be an array, otherwise 400. |
+| `notIn` | `NOT IN (...)` | The value must be an array, otherwise 400. |
+| `between` | `BETWEEN a AND b` | `[from, to]`, both inclusive. Date strings are parsed. |
 | `isNull` | `IS NULL` / `IS NOT NULL` | `true` or `"true"` gives `IS NULL`, `false` or `"false"` gives `IS NOT NULL`. Anything else is a 400. |
 | `isNotNull` | `IS NOT NULL` / `IS NULL` | The mirror of `isNull`. |
+| `startsWith` / `endsWith` / `contains` | `LIKE 'x%'`, `'%x'`, `'%x%'` | Text columns only. The value is escaped. Case-insensitive unless `sql.caseSensitive` is `true` (`ILIKE` on Postgres, `LIKE` on MySQL). |
+| `iStartsWith` / `iEndsWith` / `iContains` | `ILIKE` (PostgreSQL) / `LIKE` (MySQL) | Always case-insensitive, whatever `caseSensitive` says. |
+| `arrayContains` | `@>` | PostgreSQL array columns: the column holds every value. `{ tags: { arrayContains: ['a', 'b'] } }`. |
+| `arrayOverlaps` | `&&` | PostgreSQL array columns: the column holds at least one value. |
+| `jsonContains` | `@> '...'::jsonb` | PostgreSQL `jsonb` columns: `{ meta: { jsonContains: { plan: 'pro' } } }`. |
+
+A pattern operator on a column that is not text, an array operator on a column that is not an array, or a PostgreSQL only operator on MySQL is a 400 that says so.
 
 ## Combining filters
 
@@ -82,11 +95,34 @@ await service.findAll({
 });
 ```
 
-All top-level keys are AND-ed. There is no built-in OR for plain column filters; for that, drop down to a custom method that uses `or(...)` from `drizzle-orm` directly. The package re-exports the most common operators:
+All top-level keys are AND-ed.
 
-```ts accent=drizzle
-import { or, and, sql } from 'nestjs-drizzle-crud';
+## How do I OR two filters?
+
+Put them in an `or` array. `and`, `or` and `not` are group keys; each member is a full filter object, so it can hold columns, relation filters, collection filters and more groups:
+
+```ts
+await posts.findAll({
+  status: 'published',
+  or: [
+    { author: { name: 'Ann' } },     // a belongs-to relation
+    { views: { gte: 1000 } },
+  ],
+  not: { tags: { name: 'internal' } }, // a many-to-many: no internal tag
+});
+// status = 'published'
+//   AND (author.name = 'Ann' OR views >= 1000)
+//   AND NOT (id IN (SELECT ... tags.name = 'internal'))
 ```
+
+Groups nest, work inside a relation filter (`{ states: { or: [{ name: 'Kerala' }, { name: 'Assam' }] } }`) and apply to `count` too. An `or` whose member is empty matches every row, so it adds nothing. A table column named `and`, `or` or `not` wins over the group key.
+
+<Callout type="info" title="NOT and a missing parent">
+  A belongs-to filter inside `not` compares against a `LEFT JOIN`. A row whose
+  parent is missing has `NULL` there, and `NOT (NULL = 'Ann')` is not true, so
+  `{ not: { author: { name: 'Ann' } } }` also leaves out rows with no author.
+  Add `{ or: [{ not: ... }, { author_id: { isNull: true } }] }` if you want them.
+</Callout>
 
 ## List search across columns
 
@@ -148,15 +184,17 @@ the list endpoint's filters and count query.
 
 It is rejected with a 400 (`BadRequestException`, message `Unknown filter column: <key>`). Before 3.3.1 the key was dropped, so a typo such as `{ titel: 'x' }` returned every row. The same rule covers a column inside a relation filter (`{ author: { nmae: 'Bob' } }`) and an unknown operator.
 
-Pull pagination and other non-filter fields out of the query DTO before passing it on, and let `ValidationPipe({ whitelist: true })` strip keys the DTO does not declare:
+The simplest controller hands the query string to [`parseQuery`](/docs/query-parsing), which splits off pagination, sort and options, coerces the values and rejects unknown keys before any SQL runs:
 
 ```ts accent=nest
 @Get()
-findAll(@Query() query: UserQueryDto) {
-  const { page, limit, sortBy, sortOrder, ...filters } = query;
-  return this.users.findAll(filters, { page, limit, sortBy, sortOrder });
+findAll(@Query() query: Record<string, unknown>) {
+  const q = this.users.parseQuery(query);
+  return this.users.findAll(q.filters, q.pagination, q.options);
 }
 ```
+
+Set [allowlists](/docs/allowlists) so a client can only filter on the columns you mean to expose.
 
 ## Combining with pagination & sorting
 
@@ -190,5 +228,6 @@ await service.findAll({
 
 ## Next
 
+- → [Parse query strings into filters](/docs/query-parsing)
 - → [Pagination & sorting, `findAll` shape and default sort](/docs/pagination-sorting)
 - → [Relations: eager loading and related-column filters](/docs/relations)

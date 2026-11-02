@@ -58,13 +58,17 @@ DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
 - [Defining services](#defining-services)
 - [API reference](#api-reference)
 - [Filtering](#filtering)
+- [Query strings: parseQuery](#query-strings-parsequery)
+- [Allowlists](#allowlists)
 - [Pagination & sorting](#pagination--sorting)
+- [Cursor pagination](#cursor-pagination)
 - [Relations](#relations)
 - [Column selection](#column-selection)
 - [Primary keys (serial / uuid)](#primary-keys-serial--uuid)
 - [Soft delete](#soft-delete)
 - [Timestamps](#timestamps)
 - [Bulk operations](#bulk-operations)
+- [Upsert](#upsert)
 - [Transactions](#transactions)
 - [Full-text search (PostgreSQL)](#full-text-search-postgresql)
 - [Lifecycle hooks & validation](#lifecycle-hooks--validation)
@@ -80,9 +84,12 @@ DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
 - 🧩 **Configure once**, `forRoot()` owns the connection; services only declare a table
 - ⚡ **Type-safe**. Generics over your entity, create/update DTOs and filter types
 - 🗃️ **PostgreSQL & MySQL**. Dialect-aware (`RETURNING` vs `insertId`)
-- 🔄 **Soft delete**. Opt-in soft delete with `restore`
-- 📦 **Bulk operations**. Mass create/update/delete inside a transaction
-- 🔍 **Rich filtering**. Equality, `in`, comparison operators, `like`/`ilike`, null checks
+- 🔄 **Soft delete**. Opt-in soft delete with `restore`, a trash view (`onlyDeleted`) and `forceDelete`
+- 📦 **Bulk operations**. One statement per mass create/update/delete, inside a transaction, plus `upsert`
+- 🔍 **Rich filtering**. Comparison, `in`/`notIn`, `between`, escaped `contains`/`startsWith`, array and JSON operators, `or`/`not` groups
+- 🧾 **Query string parsing**. `parseQuery` turns `?age[gte]=18&sortBy=-name` into typed filters
+- 🛡️ **Allowlists**. Limit what a client may filter, sort, select and write
+- 📜 **Cursor pagination**. `findByCursor` with an opaque `nextCursor`
 - 🔎 **Full-text search**. PostgreSQL `tsvector`/`tsquery`
 - 🔗 **Relations**. Belongs-to, has-many, many-to-many and nested eager loading with no N+1, plus filtering by related columns
 - 🎯 **Column selection**. Ask for the columns you need, relation columns included
@@ -220,9 +227,11 @@ import { CreateUserDto, UpdateUserDto, UsersService } from './users.service';
 export class UsersController {
   constructor(private readonly users: UsersService) {}
 
+  // ?status=active&age[gte]=18&sortBy=-created_at&page=2&limit=20
   @Get()
-  findAll(@Query('page') page = '1', @Query('limit') limit = '20') {
-    return this.users.findAll({}, { page: +page, limit: +limit });
+  findAll(@Query() query: Record<string, unknown>) {
+    const q = this.users.parseQuery(query);
+    return this.users.findAll(q.filters, q.pagination, q.options);
   }
 
   @Get(':id')
@@ -365,10 +374,12 @@ export class UsersService extends SqlBaseCrudService<User, CreateUserDto, Update
 | Method | Returns | Notes |
 |---|---|---|
 | `find(id, options?)` | `Promise<T \| null>` | By primary key. Skips soft-deleted rows. |
-| `findOne(where, options?)` | `Promise<T \| null>` | `where` is a `Partial<T>` (equality only). |
+| `findOne(where, options?)` | `Promise<T \| null>` | Exact values, `null` for `IS NULL`, or operator objects. |
 | `findAll(filters?, pagination?, options?)` | `Promise<{ data: T[]; total: number; page: number; limit: number }>` | See [Filtering](#filtering) / [Pagination](#pagination--sorting). |
+| `findByCursor(filters?, pagination?, options?)` | `Promise<{ data: T[]; limit: number; nextCursor: string \| null; total?: number }>` | Keyset pages. See [Cursor pagination](#cursor-pagination). |
 | `exists(id, options?)` | `Promise<boolean>` | |
 | `count(filters?, options?)` | `Promise<number>` | |
+| `parseQuery(query, options?)` | `ParsedCrudQuery` | See [Query strings](#query-strings-parsequery). |
 
 ### Write
 
@@ -379,6 +390,8 @@ export class UsersService extends SqlBaseCrudService<User, CreateUserDto, Update
 | `delete(id, options?)` | `Promise<boolean>` | Hard delete. |
 | `softDelete(id, options?)` | `Promise<boolean>` | Requires soft delete enabled. |
 | `restore(id, options?)` | `Promise<T>` | Clears the soft-delete column. |
+| `forceDelete(id, options?)` | `Promise<boolean>` | Hard delete, soft-deleted or not. |
+| `upsert(data, upsert?, options?)` | `Promise<T>` | Insert or update by a unique key. See [Upsert](#upsert). |
 
 ### Bulk (run inside a transaction)
 
@@ -389,6 +402,8 @@ export class UsersService extends SqlBaseCrudService<User, CreateUserDto, Update
 | `massSoftDelete(ids[], options?)` | `Promise<boolean>` |
 | `massRestore(ids[], options?)` | `Promise<T[]>` |
 | `massDelete(ids[], options?)` | `Promise<boolean>` |
+| `massForceDelete(ids[], options?)` | `Promise<boolean>` |
+| `massUpsert(data[], upsert?, options?)` | `Promise<T[]>` |
 
 ### Search
 
@@ -426,6 +441,10 @@ interface SqlOperationOptions {
   hooks?: { skipBefore?: boolean; skipAfter?: boolean };
   lock?: 'update' | 'share' | 'none';
   forNoKeyUpdate?: boolean;
+  withDeleted?: boolean;        // also return soft-deleted rows
+  onlyDeleted?: boolean;        // only soft-deleted rows: the trash view
+  skipAllowlists?: boolean;     // trusted, server-side call
+  bulkMode?: 'set' | 'perItem'; // mass writes: one statement, or one call per item
 }
 ```
 
@@ -448,8 +467,10 @@ await service.findAll({
   role: ['admin', 'editor'],       // array: IN (...)
   age: { gte: 18, lt: 65 },        // comparison operators
   created_at: { gte: '2025-01-01' }, // date strings are parsed; an invalid date is a 400
-  name: { ilike: 'jo%' },          // pattern match: you supply the wildcards
+  name: { startsWith: 'jo' },      // escaped pattern: % and _ are literal
   archived_at: { isNull: false },  // IS NOT NULL
+  or: [{ team: { name: 'Core' } }, { role: 'admin' }], // OR group, relations included
+  not: { tags: { name: 'internal' } },                  // NOT, here over a collection
 });
 ```
 
@@ -461,8 +482,16 @@ await service.findAll({
 | `gt` / `gte` / `lt` / `lte` | `>` `>=` `<` `<=` |
 | `neq` | `<>` |
 | `like` / `ilike` | `LIKE` / `ILIKE` (`LIKE` on MySQL), **pass your own `%` wildcards** |
-| `in` | `IN (...)` |
+| `in` / `notIn` | `IN (...)` / `NOT IN (...)` |
+| `between` | `BETWEEN a AND b`, `[from, to]` |
 | `isNull` / `isNotNull` | `true` / `"true"` gives `IS NULL` / `IS NOT NULL`, `false` / `"false"` the opposite |
+| `startsWith` / `endsWith` / `contains` | escaped `LIKE`, case-insensitive unless `sql.caseSensitive` |
+| `iStartsWith` / `iEndsWith` / `iContains` | escaped `ILIKE` (`LIKE` on MySQL), always case-insensitive |
+| `arrayContains` / `arrayOverlaps` | PostgreSQL arrays, `@>` / `&&` |
+| `jsonContains` | PostgreSQL `jsonb`, `@>` |
+
+`and`, `or` and `not` group filter objects and nest. Each member is a full
+filter, so it can hold column, relation and collection filters.
 
 `findOne(where)` takes exact values, `null` for `IS NULL`, or an operator
 object. If every value is `undefined`, or a key is not a column, it throws a 400
@@ -473,7 +502,53 @@ instead of returning an arbitrary row.
 > `lower(column) = lower(value)`, so the match is
 > case-insensitive and `%` / `_` / `\` in the value are treated as literal
 > characters. Not wildcards. For partial/pattern matching, use the explicit
-> `like` / `ilike` operators and supply your own wildcards.
+> `like` / `ilike` operators and supply your own wildcards, or `startsWith` /
+> `endsWith` / `contains`, which escape the value for you.
+
+---
+
+## Query strings: parseQuery
+
+`service.parseQuery(query)` (or `parseCrudQuery(query, table, options)`) turns
+an HTTP query object into the arguments `findAll` takes, coercing every value by
+its Drizzle column type. An unknown column, operator, relation or sort column is
+a 400 before any SQL runs.
+
+```typescript
+// GET /users?status=active&age[gte]=18&team[name]=Core&or[0][role]=admin&or[1][role]=owner
+//          &sortBy=team.name,-created_at&page=2&limit=20&fields=id,name&with=team&search=jo
+const q = this.users.parseQuery(query);
+return q.isCursor
+  ? this.users.findByCursor(q.filters, q.pagination, q.options)
+  : this.users.findAll(q.filters, q.pagination, q.options);
+```
+
+Numbers, bigints, booleans and dates are coerced (a bad one is a 400), `numeric`
+is checked and kept as an exact string, and text, uuid and enum stay strings.
+`withDeleted` / `onlyDeleted` are only read with `allowTrash: true`. Type the
+service's filter generic as `CrudFilter`.
+
+---
+
+## Allowlists
+
+Per entity, in `forFeature` config. Unset lists allow everything; anything
+outside a set list is a 400, in the service and in `parseQuery`:
+
+```typescript
+config: {
+  filterableColumns: ['status', 'role', 'team.name'],
+  sortableColumns: ['name', 'created_at', 'team.name'],
+  selectableColumns: ['id', 'name', 'email', 'team.name'], // never password_hash
+  searchableColumns: ['name', 'email'],
+  loadableRelations: ['team'],
+  writableColumns: ['name', 'email', 'role'],
+}
+```
+
+Set them on every entity a client can reach. Without `writableColumns`, create
+and update ignore the soft delete column, and update ignores the primary key and
+`createdAt`. `skipAllowlists: true` skips the lists for a trusted call.
 
 ---
 
@@ -491,6 +566,14 @@ await service.findAll(
 The primary key is always the last `ORDER BY` column, so rows that tie on the
 sort column never repeat or go missing between pages.
 
+`sortBy` also takes a list, ascending unless prefixed with `-`, and a dotted
+entry sorts by a belongs-to column:
+
+```typescript
+await service.findAll({}, { sortBy: ['team.name', '-created_at'] });
+// LEFT JOIN teams ... ORDER BY teams.name ASC, created_at DESC, id ASC
+```
+
 ### Default sort
 
 When the caller passes no `sortBy`, `findAll` falls back to the entity's
@@ -507,6 +590,26 @@ await service.findAll({}, { sortBy: 'name' }); // ORDER BY name DESC, id ASC  (d
 Set it per entity in [`forFeature`](#drizzlecrudmoduleforfeatureentities) config (or via
 `@CrudService`). Alternatively, set [`defaults.sortOrder`](#drizzlecrudmoduleforrootconfig)
 in `forRoot` to apply a `created_at` fallback to every entity that doesn't define its own.
+
+---
+
+## Cursor pagination
+
+`findByCursor` pages with `WHERE (sort columns) > (last row)` instead of
+`OFFSET`, so deep pages stay fast and rows inserted earlier do not shift the
+next page:
+
+```typescript
+let cursor: string | null = null;
+do {
+  const page = await service.findByCursor({ status: 'active' }, { sortBy: ['-created_at'], limit: 50, cursor });
+  handle(page.data);
+  cursor = page.nextCursor; // null on the last page
+} while (cursor);
+```
+
+The cursor is opaque (base64url of the sort values plus the primary key). Pass
+`count: true` for a `total`. A cursor for a different sort is a 400.
 
 ---
 
@@ -693,10 +796,10 @@ Enable per-project via `defaults.softDelete` or per-entity via `forFeature` conf
   and a soft-deleted belongs-to parent comes back as `null`.
 - `column` is the key in your Drizzle table object (`deletedAt` for
   `deletedAt: timestamp('deleted_at')`). A key the table lacks fails at startup.
-- To list or purge soft-deleted rows, query the table with Drizzle in a
-  service method: `this.config.db.select().from(users).where(isNotNull(users.deletedAt))`.
-  A filter such as `{ deletedAt: { isNotNull: true } }` always returns nothing,
-  because reads already add `deleted_at IS NULL`.
+- The trash view: pass `onlyDeleted: true` (or `withDeleted: true` for both)
+  to any read, e.g. `findAll({}, {}, { onlyDeleted: true })`.
+- `forceDelete(id)` / `massForceDelete(ids)` hard-delete rows whether they are
+  in the trash or not. `delete(id)` answers 404 for a row in the trash.
 
 ---
 
@@ -752,15 +855,34 @@ await service.massUpdate([1, 2, 3], { status: 'archived' });
 await service.massSoftDelete([1, 2, 3]);
 ```
 
-All bulk methods run inside a single transaction, with a savepoint per item.
-If any item fails, a `BulkOperationException` (400) is thrown and the
-transaction rolls back. Its response body lists only the items that failed:
+Each bulk method is one statement for the whole set (plus one `SELECT` that
+checks the ids exist), inside a single transaction: `massUpdate` over 100 ids is
+two queries. If any item fails, a `BulkOperationException` (400) is thrown and
+the transaction rolls back. The failing items are found by replaying the batch
+inside a savepoint that is rolled back, and the response body lists only them:
 
 ```json
 { "statusCode": 400, "error": "Bad Request",
   "message": "Mass create errors. 1 error(s) occurred.",
   "errors": [{ "index": 1, "status": 409, "message": "users with email 'a@x.io' already exists" }] }
 ```
+
+`bulkMode: 'perItem'` runs the single-row method per item instead, as in 3.3.
+
+---
+
+## Upsert
+
+```typescript
+await users.upsert(
+  { email: 'ada@example.com', name: 'Ada' },
+  { conflictTarget: 'email' },          // update: [...] limits the overwritten columns
+);
+await users.massUpsert(rows, { conflictTarget: 'email' });
+```
+
+`ON CONFLICT DO UPDATE` on PostgreSQL, `ON DUPLICATE KEY UPDATE` on MySQL. A
+clash on another unique key is a 409, bad input a 400.
 
 ---
 
@@ -905,14 +1027,16 @@ export class XService extends SqlBaseCrudService<X, CreateXDto, UpdateXDto, XFil
 - The table is passed in `forFeature`, **not** in the service.
 - If tables lack timestamp/soft-delete columns, set `defaults: { softDelete: false, timestamps: false }`. The settings name table **keys** (`deletedAt`, not `deleted_at`, for a camelCase schema), and a missing key fails at startup.
 - `findAll` returns `{ data, total, page, limit }`. Not a bare array.
-- Filter operators live inside an object value: `{ age: { gte: 18 } }`. `like`/`ilike` require caller-supplied `%` wildcards; a bare string is exact match. An unknown filter key or operator is a 400; `{ isNull: false }` is `IS NOT NULL`.
+- Filter operators live inside an object value: `{ age: { gte: 18 } }`. `like`/`ilike` require caller-supplied `%` wildcards; `startsWith`/`endsWith`/`contains` escape the value; a bare string is exact match. Also `notIn`, `between`, the `i` pattern forms and, on PostgreSQL, `arrayContains`/`arrayOverlaps`/`jsonContains`. `or`/`and`/`not` group filters and nest. An unknown filter key or operator is a 400; `{ isNull: false }` is `IS NOT NULL`.
+- In a controller, `service.parseQuery(@Query() query)` builds filters, pagination and options from the query string; use `findByCursor` when `isCursor` is true. Set the allowlists (`filterableColumns`, `sortableColumns`, `selectableColumns`, `searchableColumns`, `loadableRelations`, `writableColumns`) on any entity a client can reach.
+- Soft-deleted rows: `onlyDeleted: true` / `withDeleted: true` on any read; `forceDelete(id)` purges. Bulk methods are one statement per set; `upsert(dto, { conflictTarget })` exists.
 - `delete`/`softDelete` return `boolean`; `update`/`restore` return the entity and throw `EntityNotFoundException` when missing.
 - Postgres error codes are translated for you: `23505` unique -> 409, `22001`/`23514`/`22003`/`22P02`/`22007`/`22008` bad value -> 400 (reads included), `23503` on create/update (missing FK target) -> 400 `ForeignKeyViolationException`, `23503` on delete (still referenced) -> 409 `EntityInUseException`.
 - Relations: declare in forFeature `config.relations` and eager-load via `options.relations: ['relName']`, where a dotted path nests (`['states', 'states.cities']`, `['state.country']`; the parent path is pulled in automatically). Belongs-to is `{ table, localKey, references? }`, LEFT JOINed into the main query, resolving to an object or `null`. Has-many is `{ table, type: 'hasMany', foreignKey, parentKey?, orderBy? }`. Many-to-many is `{ table, type: 'manyToMany', through, throughLocalKey, throughForeignKey, references?, parentKey?, orderBy? }`. Nested relations live in a `relations` map on the relation. Every collection and every nested level costs exactly one extra query for the whole result set, never one per row. Filter via `findAll({ relName: { col: value } })` with the same operators; collection filters compile to `parentKey IN (SELECT ... WHERE ...)`, so `total` stays correct. Filters are one level deep, so go through the intermediate table's columns, e.g. `state.country_id`.
 - `options.select` narrows the projection and takes dotted relation paths at any depth: `['id', 'name', 'region.code', 'states.cities.name']`. Unknown names are ignored; an all-dotted list leaves the base row complete; the parent key, the child foreign key and any nested key are re-added automatically.
 - Primary keys: `primaryKey` (default `'id'`) per entity in forFeature config (`primaryKeyType` is deprecated and does nothing). UUID works on Postgres via RETURNING; with uuid keys, route params are strings. Don't use `ParseIntPipe`.
 - Full-text search is PostgreSQL-only.
-- Exports: `SqlBaseCrudService`, `DrizzleCrudModule`, `DRIZZLE_DB`, `DRIZZLE_CRUD_CONFIG`, `TestCrudFactory`, exceptions (`EntityNotFoundException`, `DuplicateEntityException`, `ForeignKeyViolationException`, `EntityInUseException`, `ValidationFailedException`, `BulkOperationException`, plus the deprecated `DatabaseConnectionException` and `TransactionException`), and types (`SqlCrudConfig`, `SqlOperationOptions`, `DrizzleCrudConfig`, `CrudFeature`, `CrudFeatureConfig`, `PaginationOptions`, `OperationOptions`, `SqlSearchOptions`, `SqlSearchMode`, `BulkOperationResult`, `BulkOperationItemError`, `SqlDialect`, `PrimaryKeyType`).
+- Exports: `SqlBaseCrudService`, `DrizzleCrudModule`, `DRIZZLE_DB`, `DRIZZLE_CRUD_CONFIG`, `TestCrudFactory`, exceptions (`EntityNotFoundException`, `DuplicateEntityException`, `ForeignKeyViolationException`, `EntityInUseException`, `ValidationFailedException`, `BulkOperationException`, plus the deprecated `DatabaseConnectionException` and `TransactionException`), and types (`SqlCrudConfig`, `SqlOperationOptions`, `DrizzleCrudConfig`, `CrudFeature`, `CrudFeatureConfig`, `PaginationOptions`, `OperationOptions`, `SqlSearchOptions`, `SqlSearchMode`, `BulkOperationResult`, `BulkOperationItemError`, `SqlDialect`, `PrimaryKeyType`, `CrudFilter`, `FilterOperators`, `SortInput`, `CursorPaginationOptions`, `CursorPage`, `CrudAllowlists`, `UpsertOptions`, `BulkMode`, `ParsedCrudQuery`), and `parseCrudQuery`.
 
 ### `SqlCrudConfig`
 
@@ -940,6 +1064,13 @@ interface SqlCrudConfig {
     orderBy?: SortColumn[];        // collections: order the children in SQL
     relations?: RelationsConfig;   // nested relations, addressed as 'rel.child'
   }>;
+  // Allowlists: unset allows everything, anything outside a set list is a 400
+  filterableColumns?: string[];
+  sortableColumns?: string[];
+  selectableColumns?: string[];
+  searchableColumns?: string[];
+  loadableRelations?: string[];
+  writableColumns?: string[];
 }
 ```
 

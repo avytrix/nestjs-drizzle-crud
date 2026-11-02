@@ -1,9 +1,9 @@
 ---
 title: Soft delete
-description: Enable per-project or per-entity soft delete with a deleted_at column, restore soft-deleted rows, and list or purge them with raw Drizzle.
+description: "Enable soft delete with a deleted_at column, restore rows, list the trash with onlyDeleted or withDeleted, and purge rows for good with forceDelete."
 ---
 
-Soft delete sets a `deleted_at` timestamp on a row instead of removing it. Reads (`find`, `findOne`, `findAll`, `count`) automatically exclude soft-deleted rows; `restore(id)` clears the column and brings the row back.
+Soft delete sets a `deleted_at` timestamp on a row instead of removing it. Reads (`find`, `findOne`, `findAll`, `findByCursor`, `count`) exclude soft-deleted rows unless you pass `withDeleted` or `onlyDeleted`; `restore(id)` clears the column and brings the row back, and `forceDelete(id)` removes it for good.
 
 ## Enabling
 
@@ -73,10 +73,8 @@ Throws `EntityNotFoundException` if the row didn't exist (or didn't have a soft-
 <Callout type="info">
   `restore` is independent of soft-delete state. It will happily
   re-`restore` a row that wasn't soft-deleted (effectively a no-op on
-  the column). `find` and `findOne` cannot tell you whether a row is in the
-  trash, because they always add `deleted_at IS NULL`. To check, query the
-  column with Drizzle directly, as shown in
-  [How do I list or purge soft-deleted rows?](#how-do-i-list-or-purge-soft-deleted-rows)
+  the column). To check whether a row is in the trash, read it with
+  `onlyDeleted`: `await users.exists(42, { onlyDeleted: true })`.
 </Callout>
 
 ### `massSoftDelete(ids, options?)` → `Promise<boolean>`
@@ -85,7 +83,7 @@ Throws `EntityNotFoundException` if the row didn't exist (or didn't have a soft-
 await users.massSoftDelete([1, 2, 3]);
 ```
 
-Same as `softDelete` but in a single transaction. If any of the IDs don't exist, the entire operation is rolled back and `BulkOperationException` is thrown, listing only the IDs that failed.
+Same as `softDelete` for a set of ids: one `SELECT` to check they exist and one `UPDATE ... WHERE id IN (...)`, in a transaction. If any id does not exist or is already in the trash, nothing changes and `BulkOperationException` lists the ids that failed. `massRestore(ids)` is the reverse.
 
 ### Reads automatically exclude soft-deleted rows
 
@@ -99,39 +97,45 @@ await users.count({});
 
 A belongs-to relation follows the same rule. When the related table has the soft-delete column, a soft-deleted parent comes back as `null` on an eager load, and a relation filter such as `{ author: { name: 'Bob' } }` does not match it.
 
-## How do I list or purge soft-deleted rows?
+## How do I list soft-deleted rows?
 
-Write a small method on your service that queries the table with Drizzle directly. The package's read methods always add `deleted_at IS NULL`, so a filter such as `findAll({ deletedAt: { isNotNull: true } })` can never return a deleted row: the two conditions cancel out and the result is always empty. A built-in trash view is planned.
+Pass `onlyDeleted: true` for the trash view, or `withDeleted: true` for live and deleted rows together. Both work on every read: `find`, `findOne`, `findAll`, `findByCursor`, `count`, `exists` and `fullTextSearch`.
 
-```ts title="users/users.service.ts"
-import { and, eq, isNotNull } from 'drizzle-orm';
-import { SqlBaseCrudService } from 'nestjs-drizzle-crud';
-import { users, type User } from '../db/schema';
+```ts
+// The trash, newest first
+const trash = await users.findAll({}, { sortBy: '-deletedAt' }, { onlyDeleted: true });
 
-export class UsersService extends SqlBaseCrudService<User, CreateUserDto, UpdateUserDto, UserFilterDto> {
-  // The trash view: only soft-deleted rows.
-  findDeleted() {
-    return this.config.db.select().from(users).where(isNotNull(users.deletedAt));
-  }
+// Everything, deleted or not
+const all = await users.count({}, { withDeleted: true });
 
-  // Is this row in the trash?
-  async isDeleted(id: number): Promise<boolean> {
-    const [row] = await this.config.db
-      .select({ id: users.id })
-      .from(users)
-      .where(and(eq(users.id, id), isNotNull(users.deletedAt)));
-    return !!row;
-  }
+// Is this row in the trash?
+const inTrash = await users.exists(42, { onlyDeleted: true });
+```
 
-  // Hard-delete a row that is already soft-deleted. delete(id) cannot do it:
-  // its existence check skips soft-deleted rows and answers 404.
-  purge(id: number) {
-    return this.config.db
-      .delete(users)
-      .where(and(eq(users.id, id), isNotNull(users.deletedAt)));
-  }
+The flags only change the service's own table. Related tables keep hiding their soft-deleted rows, so an eager-loaded parent that is in the trash still comes back as `null`. `onlyDeleted` on an entity without soft delete is a 400.
+
+A filter on the column itself, such as `{ deletedAt: { isNotNull: true } }`, still returns nothing without one of the flags, because the default `deleted_at IS NULL` is ANDed with it.
+
+Over HTTP, [`parseQuery`](/docs/query-parsing) reads `?onlyDeleted=true` and `?withDeleted=true`, but only when you opt in with `allowTrash: true`. Without it they are unknown filter columns, so a client cannot open the trash on a route that is not meant to show it.
+
+```ts accent=nest title="users.controller.ts"
+@Get('trash')
+trash(@Query() query: Record<string, unknown>) {
+  const q = this.users.parseQuery({ ...query, onlyDeleted: 'true' }, { allowTrash: true });
+  return this.users.findAll(q.filters, q.pagination, q.options);
 }
 ```
+
+## How do I purge a soft-deleted row?
+
+`forceDelete(id)` hard-deletes the row whether it is in the trash or not, and runs the delete hooks. `massForceDelete(ids)` does the same for a set of ids in one statement.
+
+```ts
+await users.forceDelete(42);           // gone, even if it was soft-deleted
+await users.massForceDelete([7, 8, 9]); // one DELETE ... WHERE id IN (...)
+```
+
+`delete(id)` keeps its meaning: it only sees live rows, so it answers 404 for a row that is already in the trash. The same is true of `massDelete`. Both `delete` and `forceDelete` accept the same options, so `delete(id, { withDeleted: true })` is the long way of writing `forceDelete(id)`.
 
 ## The schema column
 
@@ -162,9 +166,11 @@ The package exposes both `softDelete` and `delete`:
 | Method | Behavior |
 | --- | --- |
 | `delete(id, options?)` | Hard delete, removes the row. Its existence check skips soft-deleted rows, so it answers 404 for a row that is already in the trash. |
+| `forceDelete(id, options?)` | Hard delete, whether the row is in the trash or not. |
 | `softDelete(id, options?)` | Sets `deleted_at = now()`. Reads afterwards exclude it. |
-| `massDelete(ids, options?)` | Hard delete, transactional. |
-| `massSoftDelete(ids, options?)` | Soft delete, transactional. |
+| `massDelete(ids, options?)` | Hard delete of live rows, one statement, transactional. |
+| `massForceDelete(ids, options?)` | Hard delete of live and trashed rows, one statement, transactional. |
+| `massSoftDelete(ids, options?)` | Soft delete, one statement, transactional. |
 
 Use `delete` when you really want the row gone (e.g. GDPR right-to-erasure flows). Use `softDelete` when you want reversibility and audit trails.
 
