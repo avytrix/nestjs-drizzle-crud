@@ -45,6 +45,11 @@ jobs:
         run: |
           export NEXT_PUBLIC_SITE_URL="https://$(cat CNAME)"
           pnpm turbo run build --filter=nestjs-drizzle-crud-docs
+      - name: SEO gate
+        # Fails the deploy on any SEO/AEO regression (apps/docs/scripts/seo_check.py).
+        run: |
+          export NEXT_PUBLIC_SITE_URL="https://$(cat CNAME)"
+          python3 apps/docs/scripts/seo_check.py apps/docs/out
       - name: Preserve custom domain + disable Jekyll
         run: |
           cp CNAME apps/docs/out/CNAME
