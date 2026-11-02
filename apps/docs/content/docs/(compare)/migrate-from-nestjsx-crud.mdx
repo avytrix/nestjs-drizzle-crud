@@ -1,0 +1,348 @@
+---
+title: Migrating from @nestjsx/crud
+description: Migrating from @nestjsx/crud to Drizzle ORM in NestJS. Convert entities to tables, services and @Crud controllers, and map every filter operator.
+icon: ArrowRightLeft
+---
+
+Migrating from @nestjsx/crud to nestjs-drizzle-crud means four moves per entity: describe the table in Drizzle instead of TypeORM, replace the `TypeOrmCrudService` with an empty `SqlBaseCrudService` subclass, replace the `@Crud()` controller with `createCrudController` or your own routes, and update clients from the `filter=field||$op||value` syntax to bracket keys such as `field[op]=value`. You can move one entity at a time.
+
+<Callout type="warn" title="The schema conversion is yours">
+  This package does not read TypeORM entities or convert them. You write (or generate) the Drizzle schema. Drizzle Kit can introspect an existing database into a `schema.ts` with `drizzle-kit pull` ([Drizzle docs](https://orm.drizzle.team/docs/drizzle-kit-pull), checked 2 November 2026), which is the quickest start when the tables already exist. Review what it generates before you rely on it.
+</Callout>
+
+## What changes, piece by piece?
+
+| @nestjsx/crud | nestjs-drizzle-crud |
+| --- | --- |
+| TypeORM `@Entity()` class | Drizzle table (`pgTable` or `mysqlTable`) |
+| `TypeOrmModule.forFeature([User])` | `DrizzleCrudModule.forFeature([{ service, table }])` |
+| `TypeOrmCrudService<User>` with an injected repository | Empty `SqlBaseCrudService<User, ...>` subclass, no constructor |
+| `@Crud({ model: { type: User } })` controller | `createCrudController(UsersService, options)` or a hand-written controller |
+| `filter=age\|\|$gte\|\|18` | `age[gte]=18` |
+| `{ data, count, total, page, pageCount }` | `{ data, total, page, limit }` |
+
+## How do I migrate one entity?
+
+The examples use one `users` table on PostgreSQL. Every step after the first works the same on MySQL.
+
+<Steps>
+
+<Step>
+
+### Wire the module once
+
+Register the connection in the root module. The defaults turn on soft delete (`deleted_at`) and timestamps (`created_at`, `updated_at`) for every entity; switch either off in `defaults` if your tables do not have those columns.
+
+<InstallTabs pkg="nestjs-drizzle-crud drizzle-orm postgres" />
+
+```ts accent=nest title="app.module.ts"
+import { Module } from "@nestjs/common";
+import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import * as schema from "./db/schema";
+import { UsersModule } from "./users/users.module";
+
+@Module({
+  imports: [
+    DrizzleCrudModule.forRoot({
+      dialect: "postgresql",
+      connectionString: process.env.DATABASE_URL,
+      schema,
+    }),
+    UsersModule,
+  ],
+})
+export class AppModule {}
+```
+
+You can keep `TypeOrmModule` registered next to it while you migrate the other entities.
+
+</Step>
+
+<Step>
+
+### Turn the entity into a Drizzle table
+
+A TypeORM entity like this one:
+
+```ts title="user.entity.ts"
+@Entity("users")
+export class User {
+  @PrimaryGeneratedColumn() id: number;
+  @Column() name: string;
+  @Column() email: string;
+  @CreateDateColumn() created_at: Date;
+  @UpdateDateColumn() updated_at: Date;
+  @DeleteDateColumn() deleted_at: Date | null;
+}
+```
+
+becomes a Drizzle table. Keep the object keys equal to the names you will use in filters and config, because the package refers to columns by key.
+
+```ts accent=drizzle title="db/schema.ts"
+import { pgTable, serial, timestamp, varchar } from "drizzle-orm/pg-core";
+
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  name: varchar("name").notNull(),
+  email: varchar("email").notNull(),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deleted_at: timestamp("deleted_at", { withTimezone: true }),
+});
+
+export type User = typeof users.$inferSelect;
+```
+
+`@DeleteDateColumn` maps to the package's soft delete column, and the two date columns map to its timestamps. If your columns have other names, set `softDelete.column` and `timestamps` in the entity config. See [Soft delete](/docs/soft-delete) and [Timestamps](/docs/timestamps).
+
+</Step>
+
+<Step>
+
+### Replace the TypeORM service
+
+The `@nestjsx/crud` service needs a constructor and an injected repository:
+
+```ts title="users.service.ts (before)"
+@Injectable()
+export class UsersService extends TypeOrmCrudService<User> {
+  constructor(@InjectRepository(User) repo: Repository<User>) {
+    super(repo);
+  }
+}
+```
+
+The new one is empty. It is not `@Injectable()` and has no constructor of its own, because `forFeature` builds it and passes the config in:
+
+```ts accent=nest title="users.service.ts"
+import { type CrudFilter, SqlBaseCrudService } from "nestjs-drizzle-crud";
+import type { User } from "../db/schema";
+import type { CreateUserDto } from "./dto/create-user.dto";
+import type { UpdateUserDto } from "./dto/update-user.dto";
+
+export class UsersService extends SqlBaseCrudService<
+  User,
+  CreateUserDto,
+  UpdateUserDto,
+  CrudFilter
+> {}
+```
+
+```ts accent=nest title="users.module.ts"
+import { Module } from "@nestjs/common";
+import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { users } from "../db/schema";
+import { UsersController } from "./users.controller";
+import { UsersService } from "./users.service";
+
+@Module({
+  imports: [
+    DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]),
+  ],
+  controllers: [UsersController],
+})
+export class UsersModule {}
+```
+
+Custom logic you had in overridden service methods moves to the protected hooks (`validateCreate`, `beforeCreate`, `afterUpdate` and the rest). See [Hooks and validation](/docs/hooks-validation).
+
+</Step>
+
+<Step>
+
+### Replace the @Crud controller
+
+The closest match to `@Crud()` is the controller factory, which registers list, get, create, update, delete, soft delete, restore and trash routes, and four bulk routes you can turn on:
+
+```ts accent=nest title="users.controller.ts"
+import { Controller } from "@nestjs/common";
+import { createCrudController } from "nestjs-drizzle-crud";
+import { CreateUserDto } from "./dto/create-user.dto";
+import { UpdateUserDto } from "./dto/update-user.dto";
+import { UsersService } from "./users.service";
+
+@Controller("users")
+export class UsersController extends createCrudController(UsersService, {
+  dto: { create: CreateUserDto, update: UpdateUserDto },
+  routes: { bulkCreate: true },
+}) {}
+```
+
+The routes do not match `@nestjsx/crud` one to one:
+
+| @nestjsx/crud route | nestjs-drizzle-crud route |
+| --- | --- |
+| `getManyBase`: `GET /users` | `list`: `GET /users` |
+| `getOneBase`: `GET /users/:id` | `get`: `GET /users/:id` |
+| `createOneBase`: `POST /users` | `create`: `POST /users` |
+| `createManyBase`: `POST /users/bulk`, body `{ bulk: [...] }` | `bulkCreate`: `POST /users/bulk`, body is the array itself, off by default |
+| `updateOneBase`: `PATCH /users/:id` | `update`: `PATCH /users/:id` |
+| `replaceOneBase`: `PUT /users/:id` | No equivalent |
+| `deleteOneBase`: `DELETE /users/:id` | `delete`: `DELETE /users/:id`, hard by default, soft with `deleteMode: "soft"` |
+| `recoverOneBase` (`PATCH`) | `restore`: `POST /users/:id/restore` |
+
+If you overrode many routes, a hand-written controller can be simpler. `parseQuery` does the query string work, so a list route is still short:
+
+```ts accent=nest title="users.controller.ts"
+import {
+  Body, Controller, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, Query,
+} from "@nestjs/common";
+import { CreateUserDto } from "./dto/create-user.dto";
+import { UpdateUserDto } from "./dto/update-user.dto";
+import { UsersService } from "./users.service";
+
+@Controller("users")
+export class UsersController {
+  constructor(private readonly users: UsersService) {}
+
+  @Get()
+  list(@Query() query: Record<string, unknown>) {
+    const q = this.users.parseQuery(query);
+    return q.isCursor
+      ? this.users.findByCursor(q.filters, q.pagination, q.options)
+      : this.users.findAll(q.filters, q.pagination, q.options);
+  }
+
+  @Get(":id")
+  async get(@Param("id", ParseIntPipe) id: number) {
+    const user = await this.users.find(id);
+    if (!user) throw new NotFoundException();
+    return user;
+  }
+
+  @Post()
+  create(@Body() body: CreateUserDto) {
+    return this.users.create(body);
+  }
+
+  @Patch(":id")
+  update(@Param("id", ParseIntPipe) id: number, @Body() body: UpdateUserDto) {
+    return this.users.update(id, body);
+  }
+}
+```
+
+See [CRUD controller factory](/docs/controller-factory) for every option.
+
+</Step>
+
+<Step>
+
+### Map the query strings
+
+Clients built for `@nestjsx/crud` send its syntax ([wiki](https://github.com/nestjsx/crud/wiki/Requests)): `filter=field||$condition||value`, `or=`, `sort=field,ASC`, `join=` and `s=` with JSON. The table below shows what each becomes. If a client uses `RequestQueryBuilder`, replace those calls; this package has no client builder.
+
+| @nestjsx/crud parameter | nestjs-drizzle-crud parameter |
+| --- | --- |
+| `filter=name\|\|$eq\|\|Jo` | `name[eq]=Jo` |
+| `filter=a\|\|$eq\|\|1&filter=b\|\|$eq\|\|2` (AND) | `a[eq]=1&b[eq]=2` (keys are ANDed) |
+| `or=name\|\|$eq\|\|Jo&or=name\|\|$eq\|\|Al` | `or[0][name][eq]=Jo&or[1][name][eq]=Al` |
+| `filter=...&or=...`, meaning `(filters) OR (ors)` | `or[0][...]=...&or[1][...]=...`, one `or` member per side |
+| `s={"name": "Jo"}` (JSON search) | Bracket keys and `or`, `and`, `not` groups; there is no JSON parameter |
+| `fields=id,name` | `fields=id,name` |
+| `sort=name,ASC&sort=id,DESC` | `sortBy=name,-id` |
+| `join=profile` | `with=profile` |
+| `join=profile\|\|bio` | `with=profile&fields=id,name,profile.bio` |
+| `filter=profile.bio\|\|$cont\|\|x` | `profile[bio][contains]=x` or `profile.bio[contains]=x` |
+| `limit=10` or `per_page=10` | `limit=10` (capped at `maxLimit`, 100 by default) |
+| `page=2` | `page=2` |
+| `offset=10` | No equivalent; use `page`, or `cursor` for keyset pages |
+| `cache=0` | No equivalent; the package has no query cache |
+
+`or` is an array of filter objects, and the top-level keys are ANDed with it, so `(a AND b) OR c` is `or[0][a]=1&or[0][b]=2&or[1][c]=3`. See [Filtering](/docs/filtering#how-do-i-or-two-filters).
+
+</Step>
+
+<Step>
+
+### Map the filter operators
+
+Every `@nestjsx/crud` condition from its [wiki](https://github.com/nestjsx/crud/wiki/Requests) and [`CondOperator` enum](https://github.com/nestjsx/crud/blob/master/packages/crud-request/src/types/request-query.types.ts), with the nestjs-drizzle-crud form for `name`:
+
+| @nestjsx/crud | nestjs-drizzle-crud | Notes |
+| --- | --- | --- |
+| `$eq` | `name[eq]=x` | Plain `=`, case-sensitive on PostgreSQL |
+| `$ne` | `name[neq]=x` | |
+| `$gt`, `$lt`, `$gte`, `$lte` | `name[gt]=x`, `name[lt]=x`, `name[gte]=x`, `name[lte]=x` | Values coerced by column type |
+| `$starts` | `name[startsWith]=x` | Follows `sql.caseSensitive` (default `false`, so case-insensitive) |
+| `$ends` | `name[endsWith]=x` | Same |
+| `$cont` | `name[contains]=x` | Same |
+| `$excl` | `not[name][contains]=x` | A `not` group |
+| `$in` | `name[in]=a,b` or `name=a&name=b` | |
+| `$notin` | `name[notIn]=a,b` | |
+| `$isnull` | `name[isNull]=true` | |
+| `$notnull` | `name[isNotNull]=true` | |
+| `$between` | `name[between]=a,b` | Exactly two values, inclusive |
+| `$eqL` | `name=x` | A bare value on a text column is `lower(name) = lower(x)` while `sql.caseSensitive` is `false` |
+| `$neL` | `not[name]=x` | Same rule, negated |
+| `$startsL`, `$endsL`, `$contL` | `name[iStartsWith]=x`, `name[iEndsWith]=x`, `name[iContains]=x` | Always case-insensitive |
+| `$exclL` | `not[name][iContains]=x` | |
+| `$inL`, `$notinL` | No direct equivalent | `in` and `notIn` compare as stored |
+
+The pattern operators escape `%`, `_` and `\` in your value. Use `like` or `ilike` to write a pattern with wildcards yourself. An unknown column or operator is a 400 with a message that names it.
+
+</Step>
+
+<Step>
+
+### Update clients for the response shape
+
+A paginated `getMany` in `@nestjsx/crud` returns `{ data, count, total, page, pageCount }` ([source](https://github.com/nestjsx/crud/blob/master/packages/crud/src/interfaces/get-many-default-response.interface.ts)). `findAll` returns `{ data, total, page, limit }`, plus `hasMore` when you skip the count with `withCount=false`. A client that read `count` can use `data.length`, and `pageCount` is `Math.ceil(total / limit)`. See [Pagination and sorting](/docs/pagination-sorting).
+
+</Step>
+
+<Step>
+
+### Lock down what clients may query
+
+`@nestjsx/crud` had `allow`, `exclude` and `join` options per controller. The equivalent here is the allowlists in the entity config. With none set, a client may filter, sort and select any column, so add them before you expose the route:
+
+```ts accent=nest title="users.module.ts"
+DrizzleCrudModule.forFeature([
+  {
+    service: UsersService,
+    table: users,
+    config: {
+      filterableColumns: ["id", "name", "email"],
+      sortableColumns: ["name", "created_at"],
+      selectableColumns: ["id", "name", "email", "created_at"],
+      writableColumns: ["name", "email"],
+    },
+  },
+]);
+```
+
+See [Allowlists](/docs/allowlists).
+
+</Step>
+
+</Steps>
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Does nestjs-drizzle-crud convert TypeORM entities to Drizzle?">
+    No. You write the Drizzle schema yourself, or generate it from the existing database with `drizzle-kit pull` and review the result.
+  </Accordion>
+  <Accordion title="Can I migrate one entity at a time?">
+    Yes. `DrizzleCrudModule` has no dependency on TypeORM, so you can keep `TypeOrmModule` for the entities you have not moved yet and switch each one when it is ready.
+  </Accordion>
+  <Accordion title="What replaces filter=field||$eq||value?">
+    `field[eq]=value` for a case-sensitive match, or a bare `field=value`, which is case-insensitive on text columns while `sql.caseSensitive` is `false`, the default.
+  </Accordion>
+  <Accordion title="Is there a PUT replace route?">
+    No. The controller factory has `PATCH /:id` for updates and no `PUT` route. Add one by hand if your clients depend on it.
+  </Accordion>
+  <Accordion title="What replaces RequestQueryBuilder?">
+    Nothing in this package. Clients build the query string themselves, for example with `URLSearchParams`.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Code />} title="Parse query strings into filters" href="/docs/query-parsing" description="Every parameter the parser reads and what it becomes." />
+  <Card icon={<Filter />} title="Filtering" href="/docs/filtering" description="All 22 operators and the or, and, not groups." />
+  <Card icon={<Server />} title="CRUD controller factory" href="/docs/controller-factory" description="Routes, id parsing, DTO validation and per-route decorators." />
+  <Card icon={<GitCompare />} title="nestjs-drizzle-crud vs @nestjsx/crud" href="/docs/vs-nestjsx-crud" description="Feature and maintenance comparison before you migrate." />
+</Cards>

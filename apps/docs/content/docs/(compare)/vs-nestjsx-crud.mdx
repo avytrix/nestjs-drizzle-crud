@@ -1,0 +1,129 @@
+---
+title: nestjs-drizzle-crud vs @nestjsx/crud
+description: nestjs-drizzle-crud vs @nestjsx/crud compared. One builds CRUD on Drizzle ORM, the other on TypeORM, with a different query syntax and release history.
+icon: GitCompare
+---
+
+nestjs-drizzle-crud vs @nestjsx/crud comes down to your ORM and how current you need the library to be. `@nestjsx/crud` generates REST controllers with a `@Crud()` decorator and ships a TypeORM service and a frontend request builder. nestjs-drizzle-crud gives you a CRUD service for Drizzle ORM tables, a query string parser and an optional controller factory. The last stable `@nestjsx/crud` release is from May 2020.
+
+<Callout title="How this page was checked">
+  Facts about `@nestjsx/crud` come from its own README, wiki, source and npm entry, checked on 2 November 2026, with a link next to each one. Facts about nestjs-drizzle-crud come from the package source at version <Version />. If something here has changed upstream, the linked source wins.
+</Callout>
+
+## How do the two libraries differ at a glance?
+
+They solve the same problem (stop writing the same list, get, create, update and delete code per entity) from opposite ends: `@nestjsx/crud` starts from the controller, nestjs-drizzle-crud starts from the service.
+
+| | nestjs-drizzle-crud | @nestjsx/crud |
+| --- | --- | --- |
+| ORM | Drizzle ORM (`drizzle-orm` from 0.28.0 up to, not including, 1.0.0) | TypeORM, through [`@nestjsx/crud-typeorm`](https://github.com/nestjsx/crud#packages) |
+| Databases | PostgreSQL and MySQL (`dialect: "postgresql" \| "mysql"`) | Through TypeORM; the README lists no databases of its own |
+| Entry point | `SqlBaseCrudService` subclass per table | `@Crud()` decorator on a controller |
+| Generated routes | Optional, with `createCrudController` | Always, from `@Crud()` |
+| Query string | `age[gte]=18&sortBy=-name&with=region` | `filter=age\|\|$gte\|\|18&sort=name,DESC&join=region` ([wiki](https://github.com/nestjsx/crud/wiki/Requests)) |
+| Frontend query builder | No | Yes, `RequestQueryBuilder` in [`@nestjsx/crud-request`](https://github.com/nestjsx/crud#packages) |
+| Replace (`PUT`) route | No | Yes, `replaceOneBase` ([wiki](https://github.com/nestjsx/crud/wiki/Controllers)) |
+| Soft delete | Yes, on by default, with restore, trash and force delete | Yes, `query.softDelete` plus a recover route in the [source](https://github.com/nestjsx/crud/blob/master/packages/crud/src/interfaces/query-options.interface.ts) |
+| Keyset (cursor) pagination | Yes, `findByCursor` | Not documented |
+| Optimistic locking, tenant scopes, upsert | Yes | Not documented |
+| License | MIT | MIT |
+
+"Not documented" means the [README](https://github.com/nestjsx/crud) and [wiki](https://github.com/nestjsx/crud/wiki) do not describe it. It does not mean it is impossible to build on top.
+
+## What is the current state of @nestjsx/crud?
+
+As of November 2026 the npm and GitHub records show no release since early 2021:
+
+| Fact | Value | Source |
+| --- | --- | --- |
+| Latest version on npm (`latest` tag) | `5.0.0-alpha.3`, published 11 February 2021 | [npm registry](https://registry.npmjs.org/@nestjsx/crud) |
+| Last non-prerelease version | `4.6.2`, published 14 May 2020 | [npm registry](https://registry.npmjs.org/@nestjsx/crud) |
+| Last commit on `master` | 7 December 2022 | [commit history](https://github.com/nestjsx/crud/commits/master) |
+| Repository archived | No | [GitHub](https://github.com/nestjsx/crud) |
+| Open issues and pull requests | 290 | [GitHub](https://github.com/nestjsx/crud/issues) |
+| Packages | `@nestjsx/crud`, `@nestjsx/crud-request`, `@nestjsx/crud-typeorm` | [README](https://github.com/nestjsx/crud#packages) |
+
+A community fork, [`@dataui/crud`](https://www.npmjs.com/package/@dataui/crud) ([gid-oss/dataui-nestjs-crud](https://github.com/gid-oss/dataui-nestjs-crud)), last published `5.3.4` on 9 April 2024, also as of November 2026.
+
+## What does @nestjsx/crud do better?
+
+Three things, all documented in its own [README](https://github.com/nestjsx/crud):
+
+- **A frontend request builder.** `RequestQueryBuilder` from `@nestjsx/crud-request` builds the query string in the browser, so client code does not concatenate `||` strings by hand. nestjs-drizzle-crud has no client package.
+- **Controllers first.** One `@Crud()` decorator registers every route, including `PUT` replace and `POST /bulk`. In nestjs-drizzle-crud the bulk routes are off until you turn them on, and there is no `PUT`.
+- **TypeORM.** If your entities are TypeORM classes and you do not plan to move, nestjs-drizzle-crud cannot use them: it reads Drizzle table objects.
+
+## What does nestjs-drizzle-crud do that @nestjsx/crud does not document?
+
+Everything below is in the nestjs-drizzle-crud source today:
+
+- **Keyset pagination** with `findByCursor` and `?cursor=`, beside offset pages. See [Cursor pagination](/docs/cursor-pagination).
+- **Collection filters** with `some`, `none` and `every` on has-many and many-to-many relations, compiled to subqueries so `total` stays right. See [Relation filters](/docs/relation-filters).
+- **Allowlists** for filter, sort, select, search, load and write, each one a 400 when broken. See [Allowlists](/docs/allowlists).
+- **Writes beyond create and update**: `upsert`, `massUpdate`, `massSoftDelete`, `restore`, `forceDelete`, optimistic locking and row locks.
+- **Tenant scopes** read from a per-request `CrudContext`. See [Multi-tenancy](/docs/multi-tenancy).
+- **Typed exceptions** that map to 404, 409 and 400 without a custom filter. See [Errors](/docs/errors).
+
+## How do the query strings compare?
+
+Both libraries read filters, sort, pagination, field selection and relations from the URL, with different syntax. The same request in each:
+
+| Intent | nestjs-drizzle-crud | @nestjsx/crud |
+| --- | --- | --- |
+| Exact match | `name=Asia` | `filter=name\|\|$eq\|\|Asia` |
+| Operator | `population[gte]=1000000` | `filter=population\|\|$gte\|\|1000000` |
+| OR | `or[0][code]=IN&or[1][code]=NP` | `or=code\|\|$eq\|\|IN&or=code\|\|$eq\|\|NP` |
+| Sort | `sortBy=-name,id` | `sort=name,DESC&sort=id,ASC` |
+| Page | `page=2&limit=20` | `page=2&limit=20` |
+| Fields | `fields=id,name` | `fields=id,name` |
+| Relation | `with=region` | `join=region` |
+| Relation column filter | `region[name]=Asia` | `join=region&filter=region.name\|\|$eq\|\|Asia` |
+
+In nestjs-drizzle-crud a bare value on a text column (`name=Asia`) is case-insensitive while `sql.caseSensitive` is `false`, the default; `name[eq]=Asia` is a plain `=`. The full operator mapping is on [Migrating from @nestjsx/crud](/docs/migrate-from-nestjsx-crud). Note that in nestjs-drizzle-crud an unknown column or operator is always a 400, never ignored. See [Parse query strings into filters](/docs/query-parsing).
+
+## When should I choose @nestjsx/crud?
+
+Choose `@nestjsx/crud` when:
+
+- your project is on TypeORM and will stay there,
+- you already run it in production and it does what you need, or
+- you want the `RequestQueryBuilder` client and the generated `PUT` route.
+
+Check that its peer and transitive dependencies fit your NestJS and TypeORM versions first, given that the last stable release dates from May 2020.
+
+## When should I choose nestjs-drizzle-crud?
+
+Choose nestjs-drizzle-crud when:
+
+- your schema is in Drizzle ORM, or you are moving to it,
+- you want the CRUD logic in a service you can call from code, jobs and controllers alike,
+- you need cursor pagination, upsert, tenant scopes or optimistic locking without writing them, or
+- you want a library with recent releases (see the [changelog](/docs/changelog)).
+
+It is not the right pick on TypeORM or Prisma, or on a database other than PostgreSQL or MySQL.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Can nestjs-drizzle-crud use my TypeORM entities?">
+    No. It reads Drizzle table objects such as `pgTable(...)`, so you need a Drizzle schema for each table first. Drizzle Kit can pull one from an existing database.
+  </Accordion>
+  <Accordion title="Is @nestjsx/crud still maintained?">
+    As of November 2026 its latest npm version is `5.0.0-alpha.3` from February 2021, the last stable one is `4.6.2` from May 2020, and the last commit on `master` is from December 2022. The repository is not archived.
+  </Accordion>
+  <Accordion title="Does nestjs-drizzle-crud have a query builder for the frontend?">
+    No. Clients write the query string themselves, as in `age[gte]=18&sortBy=-name`. The `@nestjsx/crud-request` package has `RequestQueryBuilder` for that job.
+  </Accordion>
+  <Accordion title="Does nestjs-drizzle-crud generate controllers like @Crud()?">
+    Yes, with `createCrudController(Service, options)`. It is optional: the service works on its own, and you can write the controller by hand.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Workflow />} title="Migrating from @nestjsx/crud" href="/docs/migrate-from-nestjsx-crud" description="Entity to Drizzle table, service, controller and query strings, step by step." />
+  <Card icon={<Code />} title="Parse query strings into filters" href="/docs/query-parsing" description="The query string syntax nestjs-drizzle-crud reads." />
+  <Card icon={<Server />} title="CRUD controller factory" href="/docs/controller-factory" description="Generated routes, the closest match to @Crud()." />
+  <Card icon={<GitCompare />} title="nestjs-drizzle-crud vs nestjs-paginate" href="/docs/vs-nestjs-paginate" description="How it compares with the TypeORM pagination helper." />
+</Cards>

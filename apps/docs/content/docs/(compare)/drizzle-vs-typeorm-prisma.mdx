@@ -1,0 +1,153 @@
+---
+title: Drizzle vs TypeORM vs Prisma for NestJS
+description: Drizzle vs TypeORM vs Prisma for NestJS CRUD. How each defines the schema, queries, migrates and plugs into Nest, and which CRUD layers fit each.
+icon: Database
+---
+
+Drizzle vs TypeORM vs Prisma for NestJS CRUD is a choice between three ways of describing your data. Drizzle declares tables as TypeScript functions and queries with a SQL-like builder. TypeORM maps decorated entity classes and supports both Data Mapper and Active Record. Prisma generates a typed client from its own schema file. All three work with NestJS; they differ in schema style, Nest integration and the CRUD libraries built on top.
+
+<Callout title="Facts checked on 2 November 2026">
+  Every statement about an ORM links to its own docs, the NestJS docs or its npm entry, read on 2 November 2026. This page makes no speed or popularity claims, because none of those sources publish numbers that compare the three. nestjs-drizzle-crud supports Drizzle only.
+</Callout>
+
+## How do the three ORMs compare?
+
+| | Drizzle ORM | TypeORM | Prisma ORM |
+| --- | --- | --- | --- |
+| Schema | TypeScript functions such as `pgTable` ([Drizzle](https://orm.drizzle.team/docs/overview)) | Classes with `@Entity()` and `@Column()` decorators ([TypeORM](https://typeorm.io/)) | A Prisma schema, from which a type-safe client is generated ([NestJS docs](https://docs.nestjs.com/techniques/database)) |
+| Query style | SQL-like builder plus a relational query API ([Drizzle](https://orm.drizzle.team/docs/overview)) | Data Mapper (repositories) or Active Record ([TypeORM](https://typeorm.io/)) | Generated client methods ([NestJS docs](https://docs.nestjs.com/data/prisma)) |
+| Code generation step | None ([NestJS docs](https://docs.nestjs.com/data/drizzle)) | None; entities are your own decorated classes | Yes, the client is generated |
+| Migrations | Drizzle Kit: `drizzle-kit generate`, `drizzle-kit migrate` ([NestJS docs](https://docs.nestjs.com/data/drizzle)) | Built in, with automatic generation ([TypeORM](https://typeorm.io/)) | Prisma Migrate ([Prisma](https://www.prisma.io/docs/orm/v7/prisma-migrate)) |
+| Introspect an existing database | `drizzle-kit pull` ([Drizzle](https://orm.drizzle.team/docs/drizzle-kit-pull)) | Not covered here | Not covered here |
+| Databases | PostgreSQL, MySQL, SQLite, SingleStore, MSSQL, CockroachDB ([Drizzle](https://orm.drizzle.team/docs/overview)) | CockroachDB, Google Spanner, MariaDB, MongoDB, SQL Server, MySQL, Oracle, PostgreSQL, SAP HANA, SQLite ([TypeORM](https://typeorm.io/)) | Prisma 7: CockroachDB, MariaDB, SQL Server, MongoDB, MySQL, PostgreSQL, SQLite ([Prisma](https://www.prisma.io/docs/orm/v7/reference/supported-databases)) |
+| Nest package | `@nestjs/drizzle`, maintained by the Nest team | `@nestjs/typeorm`, maintained by the Nest team | None; you expose the generated client through a provider |
+| Latest on npm | `drizzle-orm` `0.45.4` (8 October 2026); `1.0.0-rc.5` on the `rc` tag | `typeorm` `1.1.2` (8 October 2026) | `@prisma/client` `7.10.1` (15 October 2026) |
+| License | Apache-2.0 | MIT | Apache-2.0 |
+
+The Nest package row comes from the [NestJS database chapter](https://docs.nestjs.com/techniques/database): "The Nest team maintains the `@nestjs/typeorm`, `@nestjs/drizzle`, `@nestjs/mongoose`, and `@nestjs/sequelize` packages", and Prisma "has no Nest-specific package". npm versions and dates are from the npm registry for [drizzle-orm](https://www.npmjs.com/package/drizzle-orm), [typeorm](https://www.npmjs.com/package/typeorm) and [@prisma/client](https://www.npmjs.com/package/@prisma/client).
+
+"Not covered here" means this page did not check that feature, not that the ORM lacks it.
+
+## What does the same table look like in each?
+
+One `users` table with an id, a name and an email.
+
+<Tabs items={["Drizzle", "TypeORM", "Prisma"]}>
+
+<Tab value="Drizzle">
+
+```ts accent=drizzle title="db/schema.ts"
+import { pgTable, serial, varchar } from "drizzle-orm/pg-core";
+
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  name: varchar("name").notNull(),
+  email: varchar("email").notNull(),
+});
+
+export type User = typeof users.$inferSelect;
+```
+
+The row type is inferred from the table, so there is no class to keep in sync.
+
+</Tab>
+
+<Tab value="TypeORM">
+
+```ts title="user.entity.ts"
+import { Column, Entity, PrimaryGeneratedColumn } from "typeorm";
+
+@Entity("users")
+export class User {
+  @PrimaryGeneratedColumn() id: number;
+  @Column() name: string;
+  @Column() email: string;
+}
+```
+
+The class is both the schema and the row type.
+
+</Tab>
+
+<Tab value="Prisma">
+
+```txt title="schema.prisma"
+model User {
+  id    Int    @id @default(autoincrement())
+  name  String
+  email String
+}
+```
+
+The client and its types are generated from this file.
+
+</Tab>
+
+</Tabs>
+
+## Which CRUD libraries exist for each?
+
+A CRUD layer is tied to one ORM, so this choice often decides the ORM, or the other way round.
+
+| ORM | Library | What it covers | State as of November 2026 |
+| --- | --- | --- | --- |
+| Drizzle | nestjs-drizzle-crud (this package) | Service with reads and writes, query string parser, optional generated controller | Version <Version />, see the [changelog](/docs/changelog) |
+| TypeORM | [`@nestjsx/crud`](https://github.com/nestjsx/crud) | `@Crud()` generated controllers, TypeORM service, frontend request builder | Last stable `4.6.2` (May 2020), latest tag `5.0.0-alpha.3` (February 2021) |
+| TypeORM | [`nestjs-paginate`](https://github.com/ppetzold/nestjs-paginate) | Paginated, filtered lists | `16.0.1` (19 October 2026) |
+
+This page does not list CRUD libraries for Prisma, because none were checked. The detailed comparisons are on [nestjs-drizzle-crud vs @nestjsx/crud](/docs/vs-nestjsx-crud) and [nestjs-drizzle-crud vs nestjs-paginate](/docs/vs-nestjs-paginate).
+
+## Can I use nestjs-drizzle-crud with @nestjs/drizzle?
+
+Check the Drizzle version first. nestjs-drizzle-crud declares `drizzle-orm` from 0.28.0 up to, not including, 1.0.0 as its peer range. The [NestJS Drizzle chapter](https://docs.nestjs.com/data/drizzle) installs `drizzle-orm@rc`, which on 2 November 2026 resolves to `1.0.0-rc.5`, outside that range. On `drizzle-orm` `0.45.x` you can open the connection yourself and pass it to `DrizzleCrudModule.forRoot` as `db`; the module then uses it as is and never closes it. See [forRoot](/docs/for-root).
+
+## When should I choose Drizzle?
+
+Choose Drizzle when:
+
+- you want the schema and its types in plain TypeScript, with no decorators and no generate step,
+- you think in SQL and want a query builder that reads like it, or
+- you want a CRUD layer such as nestjs-drizzle-crud on top.
+
+## When should I choose TypeORM?
+
+Choose TypeORM when:
+
+- your team already models data as decorated classes, or uses Active Record,
+- you need a database Drizzle does not list, such as Oracle, SAP HANA or Google Spanner, or
+- you want `@nestjsx/crud` or `nestjs-paginate`, which are built on it.
+
+## When should I choose Prisma?
+
+Choose Prisma when:
+
+- you prefer one schema file that drives both the client and migrations,
+- you are fine wiring the generated client into Nest with a provider of your own.
+
+Check the version you install: on 2 November 2026 the `latest` tag of the `prisma` CLI on npm is `8.0.0-rc.29`, a release candidate, and the [NestJS Prisma chapter](https://docs.nestjs.com/data/prisma) tells you to install `prisma@7` and `@prisma/client@7` explicitly.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Does nestjs-drizzle-crud work with TypeORM or Prisma?">
+    No. It reads Drizzle table objects and runs Drizzle queries, so it needs a Drizzle schema. It supports PostgreSQL and MySQL.
+  </Accordion>
+  <Accordion title="Does NestJS have an official Drizzle package?">
+    Yes. The NestJS database chapter lists `@nestjs/drizzle` among the packages the Nest team maintains. Its npm version on 2 November 2026 is `0.0.2`.
+  </Accordion>
+  <Accordion title="Which ORM is fastest for NestJS?">
+    This page does not say, because none of the sources it uses publish a benchmark comparing the three. Measure with your own queries and data.
+  </Accordion>
+  <Accordion title="Can I move an existing database to Drizzle?">
+    Yes. `drizzle-kit pull` introspects an existing database and writes a Drizzle schema file, which you then review and keep in your code.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Rocket />} title="Quick start" href="/docs/quick-start" description="Wire one Drizzle table end to end with nestjs-drizzle-crud." />
+  <Card icon={<Workflow />} title="Migrating from @nestjsx/crud" href="/docs/migrate-from-nestjsx-crud" description="Move a TypeORM CRUD app to Drizzle, step by step." />
+  <Card icon={<GitCompare />} title="nestjs-drizzle-crud vs @nestjsx/crud" href="/docs/vs-nestjsx-crud" description="The Drizzle CRUD layer against the TypeORM one." />
+  <Card icon={<GitCompare />} title="nestjs-drizzle-crud vs nestjs-paginate" href="/docs/vs-nestjs-paginate" description="A full CRUD layer against a TypeORM pagination helper." />
+</Cards>
