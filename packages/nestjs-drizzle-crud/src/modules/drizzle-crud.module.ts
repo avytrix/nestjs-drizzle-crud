@@ -4,6 +4,7 @@ import type {
 	DrizzleCrudConfig,
 } from "../core/interfaces/drizzle-crud-config.interface";
 import type { SqlCrudConfig } from "../core/interfaces/sql-crud-config.interface";
+import { mergeCrudConfig } from "../core/utils/merge-config";
 import {
 	DRIZZLE_CONNECTION,
 	DRIZZLE_CRUD_CONFIG,
@@ -20,8 +21,13 @@ function normalizeConfig(config: DrizzleCrudConfig) {
 		defaults: {
 			softDelete: true,
 			timestamps: true,
-			pagination: { defaultLimit: 20, maxLimit: 100 },
 			...config.defaults,
+			// Merged, so `pagination: { defaultLimit: 5 }` keeps maxLimit.
+			pagination: {
+				defaultLimit: 20,
+				maxLimit: 100,
+				...config.defaults?.pagination,
+			},
 		},
 		sql: {
 			caseSensitive: false,
@@ -42,15 +48,20 @@ function normalizeConfig(config: DrizzleCrudConfig) {
 function buildEntityConfig(
 	service: any,
 	table: any,
-	entityConfig: Record<string, any> | undefined,
+	entityConfig: CrudFeature["config"],
 	db: any,
 	globalConfig: any,
 ): SqlCrudConfig {
 	const decoratorConfig = Reflect.getMetadata?.("crud:config", service) || {};
-	const perEntity = { ...decoratorConfig, ...(entityConfig || {}) };
+	// Each layer merges one level deep for softDelete, timestamps, pagination and
+	// sql, so an override only has to name the settings it changes.
+	const perEntity: Record<string, any> = mergeCrudConfig(
+		decoratorConfig,
+		entityConfig,
+	);
 	const gd = globalConfig?.defaults || {};
 
-	const finalConfig: any = {
+	const projectConfig: any = {
 		dialect: globalConfig?.dialect,
 		db,
 		primaryKey: "id",
@@ -66,11 +77,11 @@ function buildEntityConfig(
 				? undefined
 				: { createdAt: "created_at", updatedAt: "updated_at" },
 	};
-	if (gd.pagination) finalConfig.pagination = gd.pagination;
-	if (globalConfig?.sql) finalConfig.sql = globalConfig.sql;
+	if (gd.pagination) projectConfig.pagination = gd.pagination;
+	if (globalConfig?.sql) projectConfig.sql = globalConfig.sql;
 
 	// Per-entity overrides win over project defaults.
-	Object.assign(finalConfig, perEntity);
+	const finalConfig: any = mergeCrudConfig(projectConfig, perEntity);
 	finalConfig.table = table ?? perEntity.table;
 
 	// Opt-in global fallback: when no per-entity defaultSort was provided and a

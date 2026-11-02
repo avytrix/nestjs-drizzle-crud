@@ -28,7 +28,8 @@ interface DrizzleCrudConfig {
   defaults?: {
     softDelete?: boolean;
     timestamps?: boolean;
-    pagination?: { defaultLimit: number; maxLimit: number };
+    /** Either key alone keeps the other's default. */
+    pagination?: { defaultLimit?: number; maxLimit?: number };
     sortOrder?: 'asc' | 'desc';
   };
 
@@ -36,9 +37,14 @@ interface DrizzleCrudConfig {
   sql?: {
     caseSensitive?: boolean;
     useReturning?: boolean;
+    /** @deprecated Has no effect. */
     jsonSupport?: boolean;
+    /** @deprecated Has no effect. */
     enableFullTextSearch?: boolean;
   };
+
+  /** @deprecated Has no effect: there are no global hooks. */
+  hooks?: { enableGlobalHooks?: boolean };
 }
 ```
 
@@ -55,10 +61,10 @@ defaults: {
 sql: {
   caseSensitive: false,
   useReturning: dialect === 'postgresql',
-  jsonSupport: true,
-  enableFullTextSearch: false,
 }
 ```
+
+`sql.jsonSupport`, `sql.enableFullTextSearch`, `hooks.enableGlobalHooks` and `primaryKeyType` are deprecated. Nothing reads them, so they have no effect. They are still accepted so existing configs compile, and will be removed in the next major version.
 
 ## `SqlCrudConfig`
 
@@ -71,6 +77,8 @@ global defaults (DrizzleCrudConfig)
       → db, table (set by forFeature)
 ```
 
+`softDelete`, `timestamps`, `pagination` and `sql` merge one level deep at every layer, so each layer only names the settings it changes. Any other key replaces the value from the layer before. When the service is built it checks that the `softDelete.column` and `timestamps` keys exist on the table, and throws with the key to use if one does not.
+
 ```ts twoslash
 type RelationConfig = { table: any };
 // ---cut---
@@ -82,19 +90,20 @@ interface SqlCrudConfig {
 
   // ---- Primary key ----
   primaryKey: string;              // default 'id'
-  primaryKeyType:
+  /** @deprecated Has no effect: the type comes from the column. */
+  primaryKeyType?:
     | 'serial' | 'bigserial' | 'int' | 'bigint' | 'uuid';
 
   // ---- Soft delete ----
   softDelete?: {
     enabled: boolean;
-    column: string;               // e.g. 'deleted_at'
+    column: string;               // the table key, e.g. 'deleted_at' or 'deletedAt'
   };
 
   // ---- Timestamps ----
   timestamps?: {
-    createdAt: string;            // e.g. 'created_at'
-    updatedAt: string;            // e.g. 'updated_at'
+    createdAt: string;            // the table key, e.g. 'created_at'
+    updatedAt: string;            // the table key, e.g. 'updated_at'
   };
 
   // ---- Pagination ----
@@ -113,7 +122,9 @@ interface SqlCrudConfig {
   sql?: {
     caseSensitive: boolean;
     useReturning: boolean;
+    /** @deprecated Has no effect. */
     jsonSupport: boolean;
+    /** @deprecated Has no effect. */
     enableFullTextSearch: boolean;
   };
 
@@ -137,7 +148,7 @@ interface RelationConfig {
   references?: string;         // the target column (defaults to 'id')
   // has-many
   foreignKey?: string;         // the column on the *target* table pointing back here (required)
-  parentKey?: string;          // the column on the current table it matches (defaults to primaryKey)
+  parentKey?: string;          // the column on the current table it matches (defaults to that table's primary key)
   // many-to-many
   through?: any;               // the join table (required)
   throughLocalKey?: string;    // join column matching parentKey (required)
@@ -199,14 +210,23 @@ The input to `forFeature`:
 ```ts twoslash
 import { SqlBaseCrudService, type SqlCrudConfig } from 'nestjs-drizzle-crud';
 // ---cut---
+type CrudFeatureConfig = Partial<
+  Omit<SqlCrudConfig, 'softDelete' | 'timestamps' | 'pagination' | 'sql'>
+> & {
+  softDelete?: Partial<NonNullable<SqlCrudConfig['softDelete']>>;
+  timestamps?: Partial<NonNullable<SqlCrudConfig['timestamps']>>;
+  pagination?: Partial<NonNullable<SqlCrudConfig['pagination']>>;
+  sql?: Partial<NonNullable<SqlCrudConfig['sql']>>;
+};
+
 interface CrudFeature {
   service: typeof SqlBaseCrudService;
-  table: any;                       // Drizzle table
-  config?: Partial<SqlCrudConfig>;  // per-entity overrides
+  table: any;                  // Drizzle table
+  config?: CrudFeatureConfig;  // per-entity overrides
 }
 ```
 
-`config` is `SqlCrudConfig` minus `db` and `dialect` (those are injected by `forFeature`).
+`CrudFeatureConfig` is exported. Every key is optional, `db`, `table` and `dialect` are set for you, and the four object settings merge with the project defaults. Before 3.3.1 `config` was typed `Record<string, any>`, so a typo or a half-filled `pagination` compiled.
 
 ## `SqlDialect`, `PrimaryKeyType`, `SortColumn`, `SortOrder`
 

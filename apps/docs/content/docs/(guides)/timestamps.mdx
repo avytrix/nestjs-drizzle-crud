@@ -19,14 +19,18 @@ DrizzleCrudModule.forRoot({
 The package uses the **application** clock and stamps columns only on writes that go through the package:
 
 - `create()` sets both `created_at` and `updated_at`.
-- `update()` and `softDelete()` bump `updated_at`.
-- `restore()` does not touch timestamps.
+- `update()`, `softDelete()` and `restore()` bump `updated_at`.
+- `update()` with nothing to change is a 400. It does not bump `updated_at` on its own.
 
-Column names default to `created_at` / `updated_at`. Override per entity:
+The settings name the **keys** in your Drizzle table object, `created_at` / `updated_at` by default. A camelCase schema (`updatedAt: timestamp('updated_at')`) needs them set per entity:
 
 ```ts
 config: { timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' } }
 ```
+
+### Why does my service fail at startup with a timestamps error?
+
+Because a configured key is not on the table. Before 3.3.1 the package wrote `updated_at` into the values, Drizzle ignored the unknown key, and `updatedAt` silently never moved. The service now checks both keys when it is built and stops with a message that names the key to use. Set the keys as above, or turn timestamps off for that entity with `timestamps: undefined` (or project wide with `defaults: { timestamps: false }`).
 
 <Callout type="warn" title="Application clock, partial coverage">
   Package-managed timestamps use the application server's clock, not the

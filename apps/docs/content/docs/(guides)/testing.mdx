@@ -28,11 +28,12 @@ export const buildUsersServiceFixture = () => {
   const mockTable = TestCrudFactory.createMockTable(users);
   return TestCrudFactory.createTestService(UsersService, mockDb, mockTable, {
     primaryKey: 'id',
-    primaryKeyType: 'serial',
     softDelete: { enabled: true, column: 'deleted_at' },
   });
 };
 ```
+
+`createTestService` turns soft delete and timestamps on with the snake_case keys, which `createMockTable()` has. If you pass a real Drizzle table instead, set `softDelete` and `timestamps` to its keys (or turn them off): the service checks them when it is built and throws if one is missing.
 
 | Method | Returns | Notes |
 | --- | --- | --- |
@@ -61,7 +62,6 @@ describe('UsersService', () => {
     const mockTable = TestCrudFactory.createMockTable(users);
     service = TestCrudFactory.createTestService(UsersService, mockDb, mockTable, {
       primaryKey: 'id',
-      primaryKeyType: 'serial',
       softDelete: { enabled: true, column: 'deleted_at' },
     });
 

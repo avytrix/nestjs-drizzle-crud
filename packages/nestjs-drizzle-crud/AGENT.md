@@ -93,7 +93,7 @@ the connection.
 
 ```typescript
 DrizzleCrudModule.forFeature([
-  { service: TagsService, table: tags, config: { primaryKeyType: 'uuid' } },
+  { service: TagsService, table: tags },
 ]);
 ```
 
@@ -146,22 +146,31 @@ Every method takes `options`: `{ transaction, relations, select, search, hooks, 
 # Filtering
 
 `findAll(filters)` and `count(filters)` take an object keyed by column name.
-Unknown keys and `null` or `undefined` values are ignored, so you can pass a
-query DTO straight through.
+`null` and `undefined` values are skipped. A key that is not a column or a
+configured relation is a 400, so pull `page`, `limit`, `sortBy` and other
+non-filter fields out of the query DTO before passing the rest through.
 
 ```typescript
 await service.findAll({
-  status: 'active',           // exact match, case-insensitive by default
+  status: 'active',           // exact match, case-insensitive on text columns
+  author_id: '1',             // a query string value is fine on an integer column
   role: ['admin', 'editor'],  // IN (...)
   age: { gte: 18, lt: 65 },
+  created_at: { gte: '2025-01-01' }, // parsed to a Date; an invalid date is a 400
   name: { ilike: 'jo%' },     // you supply the wildcards
-  deleted_at: { isNull: true },
+  archived_at: { isNull: false },    // IS NOT NULL
 });
 ```
 
-Operators inside an object value: `gt`, `gte`, `lt`, `lte`, `neq`, `like`,
-`ilike`, `in`, `isNull`, `isNotNull`. A bare string is an exact match, not a
-pattern, and `%` in it is a literal character.
+Operators inside an object value: `eq`, `gt`, `gte`, `lt`, `lte`, `neq`, `like`,
+`ilike`, `in`, `isNull`, `isNotNull`. Any other operator is a 400. A bare string
+is an exact match, not a pattern, and `%` in it is a literal character.
+`isNull` and `isNotNull` take `true` / `false` or the strings `"true"` /
+`"false"`.
+
+`findOne(where)` throws a 400 when no condition is left (every value
+`undefined`) or a key is not a column, and `null` means `IS NULL`. Never feed it
+an optional field without checking it first.
 
 **Never build a filter form or a where clause by hand in a controller.** Map the
 query DTO to the filter object and let the service compile the SQL.
@@ -248,13 +257,17 @@ you asked for them or not.
 
 # Keys, soft delete and timestamps
 
-- **Primary keys:** `primaryKey` (default `id`) and `primaryKeyType`
-  (`serial`, `bigserial`, `int`, `bigint`, `uuid`) per entity. With uuid keys
-  route params are strings, so do not apply `ParseIntPipe`.
+- **Primary keys:** `primaryKey` (default `id`) per entity. The type comes from
+  the column; `primaryKeyType` is deprecated and does nothing. With uuid keys
+  route params are strings, so do not apply `ParseIntPipe`. The primary key is
+  always the last `ORDER BY` column, so pages are stable.
 - **Soft delete:** enable per project (`defaults.softDelete`) or per entity.
-  Reads then exclude deleted rows automatically. If your table has no
-  `deleted_at` column, turn it off, or inserts and reads will reference a
-  column that does not exist.
+  Reads then exclude deleted rows automatically, including a soft-deleted
+  belongs-to parent. `softDelete.column` and the `timestamps` keys name the key
+  in the Drizzle table object (`deletedAt` for a camelCase schema). A key the
+  table does not have stops the app at startup. To list or purge deleted rows,
+  query the table with Drizzle in a service method; a
+  `{ deletedAt: { isNotNull: true } }` filter always returns nothing.
 - **Timestamps:** prefer schema managed (`defaultNow()` plus `$onUpdate()`) so
   every write path is stamped by the database. The package managed option uses
   the application clock and only covers writes that go through the package.
@@ -285,8 +298,9 @@ translate them again.
 
 Driver error codes are translated at the service boundary, so bad client input
 never reaches the caller as a 500: a unique violation is a 409, a value that is
-too long or fails a check is a 400, a foreign key pointing at a row that does
-not exist is a 400, and a delete blocked by dependent rows is a 409.
+too long, fails a check, has the wrong type or is not a valid date is a 400 (on
+reads too), a foreign key pointing at a row that does not exist is a 400, and a
+delete blocked by dependent rows is a 409.
 
 ---
 
@@ -300,11 +314,14 @@ await service.executeSqlTransaction(async (tx) => {
 ```
 
 Pass `{ transaction: tx }` to enlist any method. All bulk methods already run in
-a single transaction and roll back as a unit, reporting per row failures through
-`BulkOperationException`.
+a single transaction, with a savepoint per item, and roll back as a unit. The
+400 from `BulkOperationException` lists only the failed items:
+`errors: [{ index | id, status, message }]`.
 
 Take a row lock with `options.lock: 'update' | 'share'` only inside a
-transaction, and prefer `forNoKeyUpdate` when the key is not changing.
+transaction, and prefer `forNoKeyUpdate` when the key is not changing. The lock
+covers the service's own table only (`FOR UPDATE OF <table>`), so it works with
+an eager belongs-to.
 
 ---
 

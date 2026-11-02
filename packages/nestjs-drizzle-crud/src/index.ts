@@ -24,9 +24,15 @@ export {
 } from "drizzle-orm";
 // Core abstractions
 export { SqlBaseCrudService } from "./core/abstract/sql-base-crud.service";
-export type { ICrudService } from "./core/interfaces/crud-service.interface";
+export type {
+	BulkOperationResult,
+	ICrudService,
+	OperationOptions,
+	PaginationOptions,
+} from "./core/interfaces/crud-service.interface";
 export type {
 	CrudFeature,
+	CrudFeatureConfig,
 	DrizzleCrudConfig,
 } from "./core/interfaces/drizzle-crud-config.interface";
 // Configuration interfaces
@@ -38,6 +44,8 @@ export type {
 	SelectTree,
 	SqlCrudConfig,
 	SqlOperationOptions,
+	SqlSearchMode,
+	SqlSearchOptions,
 } from "./core/interfaces/sql-crud-config.interface";
 // Types
 export type {
@@ -49,6 +57,7 @@ export type {
 // Decorators
 export { CrudService } from "./decorators/crud-service.decorator";
 // Exceptions
+export type { BulkOperationItemError } from "./exceptions/crud.exceptions";
 export {
 	BulkOperationException,
 	DatabaseConnectionException,

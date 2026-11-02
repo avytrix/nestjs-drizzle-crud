@@ -1,6 +1,6 @@
 {
 	"name": "nestjs-drizzle-crud",
-	"version": "3.3.0",
+	"version": "3.3.1",
 	"description": "A complete CRUD abstraction layer for Drizzle ORM in NestJS applications",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
@@ -23,9 +23,9 @@
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"prepublishOnly": "pnpm run build && pnpm test",
 		"release": "pnpm publish --access public --no-git-checks",
-		"test": "jest",
-		"test:watch": "jest --watch",
-		"test:cov": "jest --coverage",
+		"test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+		"test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+		"test:cov": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
 		"lint": "biome lint src",
 		"format": "biome format --write src"
 	},
@@ -73,6 +73,7 @@
 		}
 	},
 	"devDependencies": {
+		"@electric-sql/pglite": "^0.5.4",
 		"@jest/globals": "^30.0.0",
 		"@nestjs/common": "^11.1.28",
 		"@nestjs/core": "^11.1.28",

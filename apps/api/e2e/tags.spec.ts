@@ -33,3 +33,33 @@ test.describe("tags: write paths on a uuid primary key", () => {
 		expect((await request.get(`/tags/${createdId}`)).status()).toBe(404);
 	});
 });
+
+// massDelete runs every id in its own savepoint inside one transaction: one bad
+// id is reported on its own, and nothing is deleted unless every id succeeds.
+test.describe("tags: bulk delete", () => {
+	const missing = "99999999-9999-4999-8999-999999999999";
+
+	test("reports each failed id in the response body", async ({ request }) => {
+		const created = await (
+			await request.post("/tags", { data: { name: `bulk-${process.pid}` } })
+		).json();
+
+		const res = await request.post("/tags/bulk-delete", {
+			data: { ids: [missing, created.id] },
+		});
+		expect(res.status()).toBe(400);
+		const body = await res.json();
+		expect(body.message).toContain("1 error(s)");
+		expect(body.errors).toEqual([
+			{ id: missing, status: 404, message: expect.any(String) },
+		]);
+		// The good id was rolled back with the rest, so the tag is still there.
+		expect((await request.get(`/tags/${created.id}`)).status()).toBe(200);
+
+		const ok = await request.post("/tags/bulk-delete", {
+			data: { ids: [created.id] },
+		});
+		expect(ok.status()).toBe(200);
+		expect((await request.get(`/tags/${created.id}`)).status()).toBe(404);
+	});
+});

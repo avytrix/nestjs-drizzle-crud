@@ -4,6 +4,12 @@ import { ArrowRight } from "lucide-react";
 // Newest first; the top banner announces RELEASES[0].
 export const RELEASES = [
 	{
+		version: "3.3.1",
+		date: "Nov 2, 2026",
+		title: "Audit fixes: filters, soft delete, bulk errors",
+		body: "String and date filters work on every column type, a soft-deleted parent no longer comes back through a join, and bulk calls report only the items that failed in the 400 body. Unknown filter keys, an empty findOne and bad input on reads are now 400s, and every list ends with a primary key sort.",
+	},
+	{
 		version: "3.3.0",
 		date: "Aug 10, 2026",
 		title: "Has-many eager loading without N+1",

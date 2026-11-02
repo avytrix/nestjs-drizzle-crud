@@ -17,20 +17,11 @@ The package ships a single `fullTextSearch()` method on `SqlBaseCrudService`. It
   `findAll` and `count`.
 </Callout>
 
-## Enabling
+## Do I need to enable it?
 
-The method is opt-in per project:
+No. `fullTextSearch()` works on any PostgreSQL entity. The `sql.enableFullTextSearch` flag is deprecated and has no effect.
 
-```ts accent=nest title="app.module.ts"
-DrizzleCrudModule.forRoot({
-  dialect: 'postgresql',
-  connectionString: process.env.DATABASE_URL,
-  schema,
-  sql: { enableFullTextSearch: true },
-});
-```
-
-You also need either an `english` (or other language) tsvector index on the columns you're searching, or a generated `tsvector` column. Drizzle has helpers for both. See the [Drizzle docs on full-text search](https://orm.drizzle.team/docs/full-text-search) for the schema side.
+You do need either an `english` (or other language) tsvector index on the columns you're searching, or a generated `tsvector` column. Drizzle has helpers for both. See the [Drizzle docs on full-text search](https://orm.drizzle.team/docs/full-text-search) for the schema side.
 
 ## Usage
 
@@ -41,20 +32,24 @@ const { data, total, page, limit } = await users.fullTextSearch(
   { page: 1, limit: 20 },   // optional pagination
 );
 
-// data:  20 rows ordered by ts_rank
+// data:  at most 20 rows ordered by ts_rank
 // total: total number of matching rows
 // page:  resolved (clamped) page: 1-indexed
 // limit: resolved (clamped) limit
 ```
 
+Without the pagination argument the entity's default page and limit still apply (page 1, `defaultLimit` rows), and the envelope reports the values that were used. Before 3.3.1 an omitted pagination returned every match while the envelope said `limit: 20`. The data and count queries run together.
+
+Every name in the columns list must be a column key on the table. An unknown name, or an empty list, is a 400.
+
 The columns are passed to a Drizzle `sql` template that generates:
 
 ```sql
-to_tsvector('english', coalesce("name", '') || ' ' || coalesce("email", '') || ' ' || coalesce("bio", ''))
+to_tsvector('english', "name") || to_tsvector('english', "email") || to_tsvector('english', "bio")
   @@ plainto_tsquery('english', $1)
 ```
 
-The exact generated SQL depends on the column types. Numeric columns are cast to text. Nullable columns are coalesced to the empty string.
+A `NULL` column contributes nothing to the vector, so a row still matches on its other columns.
 
 ## Full-text search inside list endpoints
 
@@ -84,7 +79,7 @@ folded into its filtering and count behavior.
 
 ## Ordering
 
-Results are ordered by `ts_rank(...)` descending. The first result is the strongest match. Tiebreaker is the entity's `defaultSort` (or the row's primary key, if no `defaultSort`).
+Results are ordered by `ts_rank(...)` descending, then by the primary key ascending. The first result is the strongest match, and rows with the same rank keep a stable order across pages.
 
 ## Limitations
 

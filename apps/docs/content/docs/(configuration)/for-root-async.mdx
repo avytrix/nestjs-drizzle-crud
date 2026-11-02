@@ -85,7 +85,7 @@ DrizzleCrudModule.forRootAsync({
     connectionString: cfg.getOrThrow('DATABASE_URL'),
     schema,
     sql: {
-      enableFullTextSearch: flags.isEnabled('fts'),
+      caseSensitive: flags.isEnabled('case-sensitive-filters'),
     },
   }),
 })

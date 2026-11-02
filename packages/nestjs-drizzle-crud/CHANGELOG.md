@@ -8,6 +8,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Scope note: the 3.0.x line is PostgreSQL-first. MySQL-specific paths (non-`RETURNING`
 restore, `ER_DUP_ENTRY` mapping, dialect locking) are tracked separately and unchanged here.
 
+## [3.3.1] - 2026-11-02
+
+Fixes from the November 2026 audit. Every fix below is proven by a spec that runs real SQL against
+PGlite (`test/pglite.integration.spec.ts`) and failed before the change.
+
+### Fixed
+- **String filters on integer, uuid and enum columns no longer return a 500.** Query strings send
+  every value as text, and with the default `caseSensitive: false` a filter such as
+  `{ author_id: '1' }` became `lower(author_id)`, which Postgres rejects. `lower()` now only wraps
+  text, varchar and char columns; every other column compares with `=` and Postgres casts the value.
+  Relation and collection filters get the same fix.
+- **Date strings work on date and timestamp columns.** `{ publishedAt: { gt: '2024-01-01' } }` used
+  to crash inside the driver (`value.toISOString is not a function`). The string is now turned into
+  a `Date`; a value that is not a date is a 400.
+- **A soft-deleted belongs-to parent is no longer returned.** The `LEFT JOIN` for an eager load or a
+  relation filter now carries `deleted_at IS NULL` in its `ON` clause, so the parent comes back as
+  `null` and `{ author: { name: 'Bob' } }` does not match a deleted author.
+- **`findOne` can no longer hand back an arbitrary row.** `findOne({ email: undefined })` used to run
+  `LIMIT 1` with no condition and return the first row in the table. It is now a 400, as is a key
+  that is not a column. `null` now means `IS NULL` instead of being skipped. An operator object works
+  as it does in `findAll`.
+- **A soft-delete or timestamp column the table does not have is caught at startup.** With
+  camelCase keys (`deletedAt: timestamp('deleted_at')`) the default config used to break every read
+  with a SQL syntax error, and `updatedAt` silently never moved. The service now throws when it is
+  built, naming the key to use: `softDelete.column is "deleted_at", but the table has no column
+  under that key. The column "deleted_at" is declared under the key "deletedAt"; set
+  softDelete.column to "deletedAt".`
+- **One bad item in a bulk call no longer fails every item after it.** Each item now runs in its own
+  savepoint, so `massCreate([ok, duplicate, ok, ok])` reports the duplicate alone instead of two more
+  `25P02` "current transaction is aborted" errors. The whole call still rolls back. The items still
+  run one query (or two) at a time; set-based bulk writes are planned separately.
+- **Bulk errors reach the HTTP response.** `BulkOperationException` now answers with
+  `{ statusCode, error, message, errors: [{ index | id, status, message }] }`, one entry per failed
+  item with the status that item alone would have produced. An error that is not an HTTP exception
+  shows as `status: 500` with a generic message, so SQL never leaks.
+- **`{ isNull: false }` means `IS NOT NULL`.** The value used to be ignored. `isNull` and `isNotNull`
+  also accept the strings `"true"` and `"false"`; anything else is a 400.
+- **Filters the package does not understand are rejected instead of dropped.** A new `eq` operator
+  is supported, a `Date` value is an equality match instead of an empty operator object, and an
+  unknown column, relation column or operator is a 400. Each of these used to return every row.
+- **Bad input is a 400 on reads too.** Postgres `22P02` (wrong type, unknown enum label), `22007` and
+  `22008` (bad dates) now map to `ValidationFailedException` on every path, including `find`,
+  `findAll`, `count` and `fullTextSearch`. `fullTextSearch` checks its column names (an unknown one
+  used to be a SQL syntax error), and `update` with nothing to set is a 400 instead of a raw
+  "No values to set".
+- **`fullTextSearch` always paginates.** Without a pagination argument it returned every match while
+  the envelope said `limit: 20`. The resolved page and limit now always apply, and the data and count
+  queries run together.
+- **A partial pagination override keeps the other half.** `pagination: { defaultLimit: 5 }` used to
+  replace the whole object, leaving `maxLimit` undefined and the query with no limit at all.
+  `softDelete`, `timestamps`, `pagination` and `sql` now merge one level deep at every config layer:
+  `forRoot` defaults, `@CrudService`, `forFeature` and the service constructor.
+- **Search and the `ilike` operator emit `LIKE` on MySQL**, which has no `ILIKE`. MySQL's default
+  collations already compare case-insensitively.
+- **Pages are stable.** The primary key is now always the last `ORDER BY` column, so rows that tie on
+  the sort columns, or a list with no sort at all, can no longer repeat or skip between pages.
+- **A row lock works with an eager belongs-to.** Locks are now `FOR UPDATE OF <base table>` (and the
+  same for `share` and `no key update`). Postgres used to refuse with `FOR UPDATE cannot be applied
+  to the nullable side of an outer join`.
+- **Nested collections key on their own table.** A nested has-many or many-to-many used the root
+  service's `primaryKey` as its default `parentKey`, so a root keyed on `uid` loaded
+  `author.posts` as `[]`. A nested level now defaults to its host table's own primary key column.
+- **Types in public signatures are exported.** `PaginationOptions`, `OperationOptions`,
+  `SqlSearchOptions`, `SqlSearchMode` and `BulkOperationResult` come from the package root, along
+  with the new `CrudFeatureConfig` and `BulkOperationItemError`.
+- `CrudFeature.config` is typed as `CrudFeatureConfig` instead of `Record<string, any>`, so a typo in
+  a key no longer compiles.
+
+### Changed
+These fixes change behaviour that existing code may rely on. Check each one before upgrading.
+- **An unknown filter key is a 400.** `findAll` and `count` used to drop keys that were not columns,
+  so passing a whole query DTO through worked even with `page` or `sortBy` in it. Strip non-filter
+  fields first. The same goes for an unknown column inside a relation or collection filter, and for
+  an unknown operator. `null` and `undefined` values are still skipped.
+- **`findOne` with no usable condition, or an unknown key, is a 400.** It used to return the first
+  row in the table.
+- **`findOne({ col: null })` matches `IS NULL`.** It used to skip the key.
+- **A configured soft-delete or timestamp key the table lacks stops the app at startup.** This
+  includes the project defaults: with `defaults.timestamps` on (the default), every table needs
+  `created_at` and `updated_at` keys, or the entity must set its own keys or turn timestamps off
+  with `timestamps: undefined`. Before, a missing timestamp key was silently ignored.
+- **Every `findAll` and `fullTextSearch` ends with `ORDER BY <primary key> ASC`.** A list with no
+  sort configured used to come back in whatever order Postgres chose; it now comes back by primary
+  key.
+- **`update(id, {})` is a 400**, also when timestamps are on. It used to bump `updated_at` alone.
+- **`{ isNull: false }` returns the non-null rows** instead of the null ones.
+- **`BulkOperationException` has a different response body.** `message` is unchanged; `errors` is
+  new. The `errors` property on the exception still holds the original errors.
+- **Read errors from bad input are 400s.** `find('abc')` on an integer key used to be a 500.
+- Row locks now carry `OF <table>`. A subclass that relied on locking joined rows must take that
+  lock itself.
+
+### Deprecated
+- `sql.jsonSupport`, `sql.enableFullTextSearch`, `hooks.enableGlobalHooks` and `primaryKeyType`.
+  Nothing reads them, so they have no effect. They are still accepted and will be removed in the
+  next major version. `primaryKeyType` is now optional. The docs no longer claim that `jsonSupport`
+  enables JSON handling or that `enableFullTextSearch` gates `fullTextSearch()`.
+- `DatabaseConnectionException` and `TransactionException`. Nothing in the package throws them.
+
 ## [3.3.0] - 2026-08-10
 
 ### Added

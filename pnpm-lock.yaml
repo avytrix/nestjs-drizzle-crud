@@ -138,6 +138,9 @@ importers:
 
   packages/nestjs-drizzle-crud:
     devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.5.4
+        version: 0.5.4
       '@jest/globals':
         specifier: ^30.0.0
         version: 30.4.1

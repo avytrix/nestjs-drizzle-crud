@@ -261,13 +261,19 @@ export class UsersController {
 | `schema` | `Record<string, unknown>` | Drizzle schema, used when building from `connectionString`. |
 | `defaults.softDelete` | `boolean` | Enable soft delete for all entities (default `true`). |
 | `defaults.timestamps` | `boolean` | Auto-manage `created_at`/`updated_at` for all entities (default `true`). |
-| `defaults.pagination` | `{ defaultLimit, maxLimit }` | Pagination defaults (default `{ 20, 100 }`). |
-| `defaults.sortOrder` | `'asc' \| 'desc'` | Opt-in default sort: entities **without** an explicit `defaultSort` fall back to ordering by their `created_at` column in this direction. Omit to leave `findAll` unsorted by default. |
-| `sql` | `{ caseSensitive, useReturning, jsonSupport, enableFullTextSearch }` | Dialect tuning. `useReturning` defaults to `true` for PostgreSQL, `false` for MySQL. |
+| `defaults.pagination` | `{ defaultLimit?, maxLimit? }` | Pagination defaults (default `{ 20, 100 }`). Either key alone keeps the other's default. |
+| `defaults.sortOrder` | `'asc' \| 'desc'` | Opt-in default sort: entities **without** an explicit `defaultSort` fall back to ordering by their `created_at` column in this direction. Omit it and `findAll` orders by the primary key only. |
+| `sql` | `{ caseSensitive?, useReturning? }` | Dialect tuning. `useReturning` defaults to `true` for PostgreSQL, `false` for MySQL. `jsonSupport` and `enableFullTextSearch` are deprecated and do nothing. |
 
 > **Provide exactly one of `connectionString` or `db`.** If your tables have no
 > `created_at`/`updated_at`/`deleted_at` columns, set
-> `defaults: { softDelete: false, timestamps: false }`.
+> `defaults: { softDelete: false, timestamps: false }`. The soft-delete and
+> timestamp settings name the **key** in your Drizzle table object; with
+> camelCase keys (`deletedAt: timestamp('deleted_at')`) set them per entity:
+> `softDelete: { column: 'deletedAt' }`,
+> `timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' }`. A key the
+> table does not have stops the app at startup, and the message names the key
+> to use.
 
 **Build the connection yourself (any dialect, recommended for MySQL):**
 
@@ -308,7 +314,6 @@ DrizzleCrudModule.forFeature([
     table: posts,
     config: {
       primaryKey: 'uuid',
-      primaryKeyType: 'uuid',
       softDelete: { enabled: true, column: 'deleted_at' },
       // Default ORDER BY for findAll() when the caller passes no sortBy.
       defaultSort: [
@@ -432,15 +437,19 @@ interface SqlOperationOptions {
 ## Filtering
 
 `findAll(filters)` / `count(filters)` accept an object keyed by column name.
-Unknown keys and `null`/`undefined` values are ignored.
+`null`/`undefined` values are skipped. A key that is not a column or a
+configured relation, or an unknown operator, is a 400 rather than being
+dropped, so a typo can never return every row.
 
 ```typescript
 await service.findAll({
-  status: 'active',                // string: exact match (case-insensitive when sql.caseSensitive === false)
+  status: 'active',                // string: exact match (case-insensitive on text columns)
+  author_id: '1',                  // strings are fine on integer, uuid and enum columns
   role: ['admin', 'editor'],       // array: IN (...)
   age: { gte: 18, lt: 65 },        // comparison operators
+  created_at: { gte: '2025-01-01' }, // date strings are parsed; an invalid date is a 400
   name: { ilike: 'jo%' },          // pattern match: you supply the wildcards
-  deleted_at: { isNull: true },    // null checks
+  archived_at: { isNull: false },  // IS NOT NULL
 });
 ```
 
@@ -448,14 +457,20 @@ await service.findAll({
 
 | Operator | SQL |
 |---|---|
+| `eq` | `=` (exact, case-sensitive) |
 | `gt` / `gte` / `lt` / `lte` | `>` `>=` `<` `<=` |
 | `neq` | `<>` |
-| `like` / `ilike` | `LIKE` / `ILIKE`, **pass your own `%` wildcards** |
+| `like` / `ilike` | `LIKE` / `ILIKE` (`LIKE` on MySQL), **pass your own `%` wildcards** |
 | `in` | `IN (...)` |
-| `isNull` / `isNotNull` | `IS NULL` / `IS NOT NULL` |
+| `isNull` / `isNotNull` | `true` / `"true"` gives `IS NULL` / `IS NOT NULL`, `false` / `"false"` the opposite |
 
-> A bare string value is an **exact** match. When `sql.caseSensitive` is `false`
-> (the default) it compares `lower(column) = lower(value)`, so the match is
+`findOne(where)` takes exact values, `null` for `IS NULL`, or an operator
+object. If every value is `undefined`, or a key is not a column, it throws a 400
+instead of returning an arbitrary row.
+
+> A bare string value is an **exact** match. On a text column with
+> `sql.caseSensitive` set to `false` (the default) it compares
+> `lower(column) = lower(value)`, so the match is
 > case-insensitive and `%` / `_` / `\` in the value are treated as literal
 > characters. Not wildcards. For partial/pattern matching, use the explicit
 > `like` / `ilike` operators and supply your own wildcards.
@@ -473,6 +488,8 @@ await service.findAll(
 ```
 
 `limit` is capped at `pagination.maxLimit`. `sortOrder` defaults to `'desc'`.
+The primary key is always the last `ORDER BY` column, so rows that tie on the
+sort column never repeat or go missing between pages.
 
 ### Default sort
 
@@ -483,8 +500,8 @@ entirely. Per-column `order` defaults to `'asc'`; unknown columns are skipped.
 
 ```typescript
 // config.defaultSort: [{ column: 'position', order: 'asc' }, { column: 'created_at', order: 'desc' }]
-await service.findAll();                       // ORDER BY position ASC, created_at DESC
-await service.findAll({}, { sortBy: 'name' }); // ORDER BY name DESC  (default ignored)
+await service.findAll();                       // ORDER BY position ASC, created_at DESC, id ASC
+await service.findAll({}, { sortBy: 'name' }); // ORDER BY name DESC, id ASC  (default ignored)
 ```
 
 Set it per entity in [`forFeature`](#drizzlecrudmoduleforfeatureentities) config (or via
@@ -638,22 +655,21 @@ full row through `RETURNING`.
 
 ## Primary keys (serial / uuid)
 
-Each entity declares its primary key via `primaryKey` (column name, default
-`id`) and `primaryKeyType`. Both auto-increment and UUID keys are supported.
+Each entity names its primary key via `primaryKey` (the column key, default
+`id`). Both auto-increment and UUID keys are supported, and the type comes from
+the Drizzle column. `primaryKeyType` is deprecated and has no effect.
 
 ```typescript
 // serial / auto-increment (default)
-{ service: UsersService, table: users }   // primaryKey 'id', primaryKeyType 'serial'
+{ service: UsersService, table: users }   // primaryKey 'id'
 
 // UUID
 {
   service: TagsService,
   table: tags,                  // e.g. uuid('id').primaryKey().defaultRandom()
-  config: { primaryKey: 'id', primaryKeyType: 'uuid' },
 }
 ```
 
-`primaryKeyType` accepts `'serial' | 'bigserial' | 'int' | 'bigint' | 'uuid'`.
 On PostgreSQL the created row (including a DB-generated UUID) is returned via
 `RETURNING`. On MySQL (no `RETURNING`), provide the UUID in your create payload
 so the row can be re-read. Auto-increment keys use the driver's `insertId`.
@@ -673,7 +689,14 @@ Enable per-project via `defaults.softDelete` or per-entity via `forFeature` conf
 
 - `softDelete(id)` sets the column to the current timestamp.
 - `restore(id)` sets it back to `null`.
-- `find`/`findOne`/`findAll`/`count` automatically exclude soft-deleted rows.
+- `find`/`findOne`/`findAll`/`count` automatically exclude soft-deleted rows,
+  and a soft-deleted belongs-to parent comes back as `null`.
+- `column` is the key in your Drizzle table object (`deletedAt` for
+  `deletedAt: timestamp('deleted_at')`). A key the table lacks fails at startup.
+- To list or purge soft-deleted rows, query the table with Drizzle in a
+  service method: `this.config.db.select().from(users).where(isNotNull(users.deletedAt))`.
+  A filter such as `{ deletedAt: { isNotNull: true } }` always returns nothing,
+  because reads already add `deleted_at IS NULL`.
 
 ---
 
@@ -729,9 +752,15 @@ await service.massUpdate([1, 2, 3], { status: 'archived' });
 await service.massSoftDelete([1, 2, 3]);
 ```
 
-All bulk methods run inside a single transaction; if any row fails, a
-`BulkOperationException` (carrying the per-row errors) is thrown and the
-transaction rolls back.
+All bulk methods run inside a single transaction, with a savepoint per item.
+If any item fails, a `BulkOperationException` (400) is thrown and the
+transaction rolls back. Its response body lists only the items that failed:
+
+```json
+{ "statusCode": 400, "error": "Bad Request",
+  "message": "Mass create errors. 1 error(s) occurred.",
+  "errors": [{ "index": 1, "status": 409, "message": "users with email 'a@x.io' already exists" }] }
+```
 
 ---
 
@@ -874,16 +903,16 @@ export class XService extends SqlBaseCrudService<X, CreateXDto, UpdateXDto, XFil
 - Generics order: `SqlBaseCrudService<Entity, CreateDto, UpdateDto, FilterDto>`. All but `Entity` default to `Partial<Entity>`.
 - Do **not** add an `@Inject('DRIZZLE_DB')` constructor, `forFeature` constructs the service for you. Adding a constructor that calls `super({...})` is the legacy/manual pattern and is unnecessary.
 - The table is passed in `forFeature`, **not** in the service.
-- If tables lack timestamp/soft-delete columns, set `defaults: { softDelete: false, timestamps: false }`, else inserts will reference non-existent columns.
+- If tables lack timestamp/soft-delete columns, set `defaults: { softDelete: false, timestamps: false }`. The settings name table **keys** (`deletedAt`, not `deleted_at`, for a camelCase schema), and a missing key fails at startup.
 - `findAll` returns `{ data, total, page, limit }`. Not a bare array.
-- Filter operators live inside an object value: `{ age: { gte: 18 } }`. `like`/`ilike` require caller-supplied `%` wildcards; a bare string is exact match.
+- Filter operators live inside an object value: `{ age: { gte: 18 } }`. `like`/`ilike` require caller-supplied `%` wildcards; a bare string is exact match. An unknown filter key or operator is a 400; `{ isNull: false }` is `IS NOT NULL`.
 - `delete`/`softDelete` return `boolean`; `update`/`restore` return the entity and throw `EntityNotFoundException` when missing.
-- Postgres error codes are translated for you: `23505` unique -> 409, `22001`/`23514`/`22003` bad value -> 400, `23503` on create/update (missing FK target) -> 400 `ForeignKeyViolationException`, `23503` on delete (still referenced) -> 409 `EntityInUseException`.
+- Postgres error codes are translated for you: `23505` unique -> 409, `22001`/`23514`/`22003`/`22P02`/`22007`/`22008` bad value -> 400 (reads included), `23503` on create/update (missing FK target) -> 400 `ForeignKeyViolationException`, `23503` on delete (still referenced) -> 409 `EntityInUseException`.
 - Relations: declare in forFeature `config.relations` and eager-load via `options.relations: ['relName']`, where a dotted path nests (`['states', 'states.cities']`, `['state.country']`; the parent path is pulled in automatically). Belongs-to is `{ table, localKey, references? }`, LEFT JOINed into the main query, resolving to an object or `null`. Has-many is `{ table, type: 'hasMany', foreignKey, parentKey?, orderBy? }`. Many-to-many is `{ table, type: 'manyToMany', through, throughLocalKey, throughForeignKey, references?, parentKey?, orderBy? }`. Nested relations live in a `relations` map on the relation. Every collection and every nested level costs exactly one extra query for the whole result set, never one per row. Filter via `findAll({ relName: { col: value } })` with the same operators; collection filters compile to `parentKey IN (SELECT ... WHERE ...)`, so `total` stays correct. Filters are one level deep, so go through the intermediate table's columns, e.g. `state.country_id`.
 - `options.select` narrows the projection and takes dotted relation paths at any depth: `['id', 'name', 'region.code', 'states.cities.name']`. Unknown names are ignored; an all-dotted list leaves the base row complete; the parent key, the child foreign key and any nested key are re-added automatically.
-- Primary keys: `primaryKey` (default `'id'`) + `primaryKeyType` (`'serial' | 'bigserial' | 'int' | 'bigint' | 'uuid'`) per entity in forFeature config. UUID works on Postgres via RETURNING; with uuid keys, route params are strings. Don't use `ParseIntPipe`.
+- Primary keys: `primaryKey` (default `'id'`) per entity in forFeature config (`primaryKeyType` is deprecated and does nothing). UUID works on Postgres via RETURNING; with uuid keys, route params are strings. Don't use `ParseIntPipe`.
 - Full-text search is PostgreSQL-only.
-- Exports: `SqlBaseCrudService`, `DrizzleCrudModule`, `DRIZZLE_DB`, `DRIZZLE_CRUD_CONFIG`, `TestCrudFactory`, exceptions (`EntityNotFoundException`, `DuplicateEntityException`, `ForeignKeyViolationException`, `EntityInUseException`, `ValidationFailedException`, `BulkOperationException`, `DatabaseConnectionException`, `TransactionException`), and types (`SqlCrudConfig`, `SqlOperationOptions`, `DrizzleCrudConfig`, `CrudFeature`, `SqlDialect`, `PrimaryKeyType`).
+- Exports: `SqlBaseCrudService`, `DrizzleCrudModule`, `DRIZZLE_DB`, `DRIZZLE_CRUD_CONFIG`, `TestCrudFactory`, exceptions (`EntityNotFoundException`, `DuplicateEntityException`, `ForeignKeyViolationException`, `EntityInUseException`, `ValidationFailedException`, `BulkOperationException`, plus the deprecated `DatabaseConnectionException` and `TransactionException`), and types (`SqlCrudConfig`, `SqlOperationOptions`, `DrizzleCrudConfig`, `CrudFeature`, `CrudFeatureConfig`, `PaginationOptions`, `OperationOptions`, `SqlSearchOptions`, `SqlSearchMode`, `BulkOperationResult`, `BulkOperationItemError`, `SqlDialect`, `PrimaryKeyType`).
 
 ### `SqlCrudConfig`
 
@@ -893,11 +922,11 @@ interface SqlCrudConfig {
   db: any;                         // Drizzle instance (injected by forFeature)
   table: any;                      // Drizzle table (set by forFeature)
   primaryKey: string;              // default 'id'
-  primaryKeyType: 'serial' | 'bigserial' | 'int' | 'bigint' | 'uuid';
-  softDelete?: { enabled: boolean; column: string };
-  timestamps?: { createdAt: string; updatedAt: string };
+  primaryKeyType?: 'serial' | 'bigserial' | 'int' | 'bigint' | 'uuid'; // deprecated, no effect
+  softDelete?: { enabled: boolean; column: string };   // column: the table key
+  timestamps?: { createdAt: string; updatedAt: string }; // table keys
   pagination?: { defaultLimit: number; maxLimit: number };
-  sql?: { caseSensitive: boolean; useReturning: boolean; jsonSupport: boolean; enableFullTextSearch: boolean };
+  sql?: { caseSensitive: boolean; useReturning: boolean; jsonSupport: boolean; enableFullTextSearch: boolean }; // last two deprecated
   relations?: Record<string, {
     table: any;
     type?: 'belongsTo' | 'hasMany' | 'manyToMany';

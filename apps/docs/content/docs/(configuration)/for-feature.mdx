@@ -46,7 +46,7 @@ The module registers `UsersService` as a provider, passing it a fully-built `Sql
 
 ## Per-entity overrides
 
-Anything in `config` overrides the project defaults for that entity. The shape is `SqlCrudConfig` minus `db` and `dialect` (those are injected by `forFeature`).
+Anything in `config` overrides the project defaults for that entity. The type is `CrudFeatureConfig`: every `SqlCrudConfig` key is optional, and `softDelete`, `timestamps`, `pagination` and `sql` merge with the project defaults one level deep. `pagination: { defaultLimit: 5 }` keeps the project's `maxLimit`, and `sql: { caseSensitive: true }` keeps `useReturning`.
 
 ```ts accent=nest title="posts/posts.module.ts"
 DrizzleCrudModule.forFeature([
@@ -55,7 +55,6 @@ DrizzleCrudModule.forFeature([
     table: posts,
     config: {
       primaryKey: 'id',
-      primaryKeyType: 'serial',
       softDelete: { enabled: true, column: 'deleted_at' },
       // Default ORDER BY for findAll() when the caller passes no sortBy.
       defaultSort: [
@@ -74,14 +73,27 @@ DrizzleCrudModule.forFeature([
 
 | Field | Effect |
 | --- | --- |
-| `primaryKey` | Column name for the primary key (default `'id'`). |
-| `primaryKeyType` | `'serial' \| 'bigserial' \| 'int' \| 'bigint' \| 'uuid'`. See [Primary keys](/docs/primary-keys). |
-| `softDelete` | `{ enabled: boolean; column: string }`. Override the default `deleted_at` column name. |
-| `timestamps` | `{ createdAt: string; updatedAt: string }`. Override the default `created_at` / `updated_at` column names. |
-| `pagination` | `{ defaultLimit: number; maxLimit: number }`. Per-entity override of the global `defaults.pagination`. |
+| `primaryKey` | Key of the primary key column (default `'id'`). |
+| `primaryKeyType` | **Deprecated, no effect.** The key type comes from the Drizzle column. See [Primary keys](/docs/primary-keys). |
+| `softDelete` | `{ enabled?: boolean; column?: string }`. `column` is the key in your Drizzle table object, `'deleted_at'` by default. |
+| `timestamps` | `{ createdAt?: string; updatedAt?: string }`. Keys of the timestamp columns, `'created_at'` / `'updated_at'` by default. `timestamps: undefined` turns them off for this entity. |
+| `pagination` | `{ defaultLimit?: number; maxLimit?: number }`. Per-entity override of the global `defaults.pagination`; a missing key keeps the project value. |
 | `defaultSort` | Ordered column list for `findAll()` when no `sortBy` is passed. |
 | `sql` | Per-entity dialect tuning. |
-| `relations` | Many-to-one relations, keyed by relation name. See [Relations](/docs/relations). |
+| `relations` | Belongs-to, has-many and many-to-many relations, keyed by relation name. See [Relations](/docs/relations). |
+
+### Does a camelCase schema need extra config?
+
+Yes, when your keys differ from the defaults. Settings name the **key** in the Drizzle table object, not the database column. For `deletedAt: timestamp('deleted_at')` and friends:
+
+```ts
+config: {
+  softDelete: { column: 'deletedAt' },
+  timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' },
+}
+```
+
+The service checks these keys at startup. A key that is not on the table stops the app with a message such as `softDelete.column is "deleted_at", but the table has no column under that key. The column "deleted_at" is declared under the key "deletedAt"; set softDelete.column to "deletedAt".`
 
 ## Multiple entities in one feature module
 
@@ -103,7 +115,7 @@ You can also attach per-entity config to the service class itself with the `@Cru
 import { CrudService } from 'nestjs-drizzle-crud';
 
 @CrudService({
-  primaryKeyType: 'uuid',
+  primaryKey: 'id',
   softDelete: { enabled: true, column: 'deleted_at' },
 })
 export class TagsService extends SqlBaseCrudService<Tag> {}

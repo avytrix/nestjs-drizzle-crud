@@ -266,13 +266,22 @@ describe("has-many filtering", () => {
 		expect(queries[1]!.sql).toContain("in (select");
 	});
 
-	it("ignores a has-many filter with no usable columns", async () => {
+	it("rejects an unknown column in a has-many filter with a 400", async () => {
 		const { db, queries } = proxyDb([[], [[0]]]);
 		const svc = makeService(db);
 
-		await svc.findAll({ states: { nope: "x" } });
+		await expect(svc.findAll({ states: { nope: "x" } })).rejects.toThrow(
+			"Unknown filter column: states.nope",
+		);
+		expect(queries).toHaveLength(0);
+	});
 
-		expect(queries[0]!.sql).not.toContain("select 1");
+	it("ignores a has-many filter whose values are all empty", async () => {
+		const { db, queries } = proxyDb([[], [[0]]]);
+		const svc = makeService(db);
+
+		await svc.findAll({ states: { name: undefined } });
+
 		expect(queries[0]!.sql).not.toContain("in (select");
 	});
 });

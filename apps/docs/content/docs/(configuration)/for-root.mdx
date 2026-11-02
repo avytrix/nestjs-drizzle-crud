@@ -21,17 +21,20 @@ DrizzleCrudModule.forRoot(config: DrizzleCrudConfig): DynamicModule
 | `schema` | `Record<string, unknown>` | Drizzle schema, used when building from `connectionString`. |
 | `defaults.softDelete` | `boolean` | Enable soft delete for all entities (default `true`). |
 | `defaults.timestamps` | `boolean` | Auto-manage `created_at` / `updated_at` for all entities (default `true`). |
-| `defaults.pagination` | `{ defaultLimit: number; maxLimit: number }` | Pagination defaults (default `{ 20, 100 }`). |
-| `defaults.sortOrder` | `'asc' \| 'desc'` | Opt-in default sort. Entities **without** an explicit `defaultSort` fall back to ordering by their `created_at` column in this direction. Omit to leave `findAll` unsorted by default. |
-| `sql` | `{ caseSensitive, useReturning, jsonSupport, enableFullTextSearch }` | Dialect tuning. `useReturning` defaults to `true` for PostgreSQL, `false` for MySQL. |
+| `defaults.pagination` | `{ defaultLimit?: number; maxLimit?: number }` | Pagination defaults (default `{ 20, 100 }`). Set one key and the other keeps its default. |
+| `defaults.sortOrder` | `'asc' \| 'desc'` | Opt-in default sort. Entities **without** an explicit `defaultSort` fall back to ordering by their `created_at` column in this direction. Omit it and `findAll` orders by the primary key only. |
+| `sql` | `{ caseSensitive?, useReturning? }` | Dialect tuning. `useReturning` defaults to `true` for PostgreSQL, `false` for MySQL. Every key is optional. |
 
 <Callout type="warn">
   Provide **exactly one** of `connectionString` or `db`. The module will throw
   if you pass neither, or both.
 
   If your tables have no `created_at` / `updated_at` / `deleted_at` columns,
-  set `defaults: { softDelete: false, timestamps: false }`. Otherwise
-  inserts will reference columns that don't exist.
+  set `defaults: { softDelete: false, timestamps: false }`. If your schema
+  uses camelCase keys (`deletedAt: timestamp('deleted_at')`), set the key
+  names per entity in `forFeature`. Since 3.3.1 a service whose configured
+  soft-delete or timestamp key is not on its table fails at startup, and the
+  message names the key to use.
 </Callout>
 
 ## PostgreSQL: let the module build the connection
@@ -54,8 +57,6 @@ import { schema } from './db/schema';
       },
       sql: {
         caseSensitive: false,
-        jsonSupport: true,
-        enableFullTextSearch: true,
       },
     }),
   ],
@@ -125,8 +126,12 @@ export class AppModule {}
 | --- | --- | --- |
 | `caseSensitive` | `false` | When `false`, bare string filter values are compiled to `lower(column) = lower(value)` (case-insensitive exact match). When `true`, bare strings use plain equality (collation-dependent). Use the explicit `{ like }` / `{ ilike }` operators for pattern matching. |
 | `useReturning` | `true` (Postgres) / `false` (MySQL) | Use `RETURNING` after `INSERT` to fetch the created row. MySQL does not support `RETURNING`, so leave it off. |
-| `jsonSupport` | `true` | Enables JSON column handling in filters and selects. |
-| `enableFullTextSearch` | `false` | Opt-in for `fullTextSearch()`. Throws if called when `false`. |
+| `jsonSupport` | `true` | **Deprecated, no effect.** Nothing reads it. It is still accepted so existing configs compile, and will be removed in the next major version. |
+| `enableFullTextSearch` | `false` | **Deprecated, no effect.** `fullTextSearch()` and `search.mode: 'fullText'` work on PostgreSQL whatever this is set to. Removed in the next major version. |
+
+`hooks.enableGlobalHooks` is deprecated too: there are no global hooks, so it does nothing. Override the hooks on each service instead.
+
+`caseSensitive: false` only applies `lower()` to text columns (`text`, `varchar`, `char`). A string filter on an integer, uuid or enum column is a plain `=`, so a query string value such as `?author_id=1` works.
 
 ## Defaults cheat sheet
 
@@ -140,8 +145,6 @@ defaults: {
 sql: {
   caseSensitive: false,
   useReturning: dialect === 'postgresql',
-  jsonSupport: true,
-  enableFullTextSearch: false,
 }
 ```
 

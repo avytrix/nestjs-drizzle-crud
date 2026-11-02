@@ -1,4 +1,5 @@
 import type { SortOrder, SqlDialect } from "../types/sql.types";
+import type { SqlCrudConfig } from "./sql-crud-config.interface";
 
 export interface DrizzleCrudConfig {
 	// Database configuration
@@ -18,9 +19,10 @@ export interface DrizzleCrudConfig {
 	defaults?: {
 		softDelete?: boolean;
 		timestamps?: boolean;
+		// Either key can be left out; it keeps its default (20 / 100).
 		pagination?: {
-			defaultLimit: number;
-			maxLimit: number;
+			defaultLimit?: number;
+			maxLimit?: number;
 		};
 		// Opt-in fallback: entities WITHOUT an explicit defaultSort sort by their
 		// timestamps.createdAt column in this direction. Omit to leave findAll
@@ -28,19 +30,35 @@ export interface DrizzleCrudConfig {
 		sortOrder?: SortOrder;
 	};
 
-	// SQL-specific
+	// SQL-specific. Each key is optional and keeps its default when left out.
 	sql?: {
-		caseSensitive: boolean;
-		useReturning: boolean;
-		jsonSupport: boolean;
-		enableFullTextSearch: boolean;
+		caseSensitive?: boolean;
+		useReturning?: boolean;
+		/** @deprecated Has no effect. Nothing reads it; it will be removed in the next major version. */
+		jsonSupport?: boolean;
+		/** @deprecated Has no effect. Full-text search works on PostgreSQL whatever this is set to; it will be removed in the next major version. */
+		enableFullTextSearch?: boolean;
 	};
 
-	// Hooks
+	/** @deprecated Has no effect: there are no global hooks. Override the hooks on each service instead. It will be removed in the next major version. */
 	hooks?: {
-		enableGlobalHooks: boolean;
+		/** @deprecated Has no effect. */
+		enableGlobalHooks?: boolean;
 	};
 }
+
+// Per-entity overrides for forFeature. Every key is optional, and the object
+// settings (softDelete, timestamps, pagination, sql) merge over the project
+// defaults one level deep, so `pagination: { defaultLimit: 5 }` keeps the
+// project's maxLimit. `timestamps: undefined` turns timestamps off.
+export type CrudFeatureConfig = Partial<
+	Omit<SqlCrudConfig, "softDelete" | "timestamps" | "pagination" | "sql">
+> & {
+	softDelete?: Partial<NonNullable<SqlCrudConfig["softDelete"]>>;
+	timestamps?: Partial<NonNullable<SqlCrudConfig["timestamps"]>>;
+	pagination?: Partial<NonNullable<SqlCrudConfig["pagination"]>>;
+	sql?: Partial<NonNullable<SqlCrudConfig["sql"]>>;
+};
 
 // A single entity registration for DrizzleCrudModule.forFeature().
 export interface CrudFeature {
@@ -51,5 +69,5 @@ export interface CrudFeature {
 	// The Drizzle table this service operates on.
 	table: any;
 	// Per-entity config overrides (primaryKey, softDelete, timestamps, ...).
-	config?: Record<string, any>;
+	config?: CrudFeatureConfig;
 }

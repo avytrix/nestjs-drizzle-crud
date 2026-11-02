@@ -42,6 +42,7 @@ import type {
 	SqlOperationOptions,
 } from "../interfaces/sql-crud-config.interface";
 import type { SortOrder } from "../types/sql.types";
+import { isPlainObject, mergeCrudConfig } from "../utils/merge-config";
 
 // Alias a many-to-many row carries its join-table key under while it is being
 // grouped. Prefixed so it cannot collide with a real column name.
@@ -103,25 +104,75 @@ export abstract class SqlBaseCrudService<
 		return false;
 	}
 
+	// The WHERE for findOne. A lookup that ends up with no condition would run
+	// `LIMIT 1` over the whole table and hand back somebody else's row, so it is
+	// a 400 instead, and so is a key that is not a column. `undefined` is
+	// skipped (an absent DTO field), `null` means IS NULL, and a value is an
+	// exact, case-sensitive match. An operator object works as it does in
+	// findAll.
 	protected buildWhereConditionsFromPartial(where: Partial<T>): any[] {
-		if (!where) return [];
-
 		const conditions: any[] = [];
 
-		for (const [key, value] of Object.entries(where)) {
-			if (value === undefined || value === null) continue;
+		for (const [key, value] of Object.entries(where ?? {})) {
+			if (value === undefined) continue;
 
-			const column = this.config.table[key];
-			if (!column) continue;
-
-			// For Partial<T>, we only support simple equality checks
-			conditions.push(eq(column, value));
+			const column = this.columnOf(this.config.table, key);
+			if (!column) {
+				throw new BadRequestException(`Unknown filter column: ${key}`);
+			}
+			if (value === null) conditions.push(isNull(column));
+			else this.pushColumnCondition(conditions, column, value, false);
 		}
 
+		if (conditions.length === 0) {
+			throw new BadRequestException(
+				"findOne needs at least one condition; every value was undefined",
+			);
+		}
 		return conditions;
 	}
+
+	// The column stored under `name` on a Drizzle table, or undefined. Only own
+	// keys count, so `constructor` or `toString` in a filter is never mistaken
+	// for a column. Plain objects (test mocks) are read the same way.
+	protected columnOf(table: any, name: string): any | undefined {
+		if (!table || typeof name !== "string") return undefined;
+		const columns = getTableColumns(table) ?? table;
+		return Object.hasOwn(columns, name) ? columns[name] : undefined;
+	}
+
+	// The JS key of a table's primary key column, for tables other than the
+	// service's own (nested relations). Falls back to "id" when no column is
+	// flagged, as with a composite key.
+	protected primaryKeyOf(table: any): string {
+		if (table === this.config.table) return this.config.primaryKey;
+		const columns = getTableColumns(table) ?? {};
+		for (const [key, column] of Object.entries<any>(columns)) {
+			if (column?.primary) return key;
+		}
+		return "id";
+	}
+
+	// Text-like columns (text, varchar, char) are the only ones lower() accepts.
+	// Postgres rejects lower(integer), lower(uuid) and lower(enum).
+	protected isTextColumn(column: any): boolean {
+		return /(Text|VarChar|Varchar|Char)$/.test(column?.columnType ?? "");
+	}
+
+	// HTTP query values are strings, but a date-mode Drizzle column maps its
+	// parameter with toISOString(). Turn the string into a Date, and answer a
+	// value that is not a date with a 400 instead of a driver crash.
+	protected coerceFilterValue(column: any, value: any): any {
+		if (column?.dataType !== "date" || value instanceof Date) return value;
+		if (typeof value === "string" || typeof value === "number") {
+			const date = new Date(value);
+			if (!Number.isNaN(date.getTime())) return date;
+		}
+		throw new BadRequestException(`Invalid date filter value: ${value}`);
+	}
+
 	constructor(protected readonly config: SqlCrudConfig) {
-		this.config = { ...this.defaultConfig, ...config };
+		this.config = mergeCrudConfig(this.defaultConfig, config);
 		this.validateConfiguration();
 	}
 
@@ -136,7 +187,35 @@ export abstract class SqlBaseCrudService<
 			this.config.sql.useReturning = false;
 		}
 
+		this.validateColumns();
 		this.validateRelations(this.config.relations);
+	}
+
+	// A soft-delete or timestamp setting that names a key the table does not
+	// have breaks every read (isNull(undefined)) or is silently ignored on write.
+	// Fail at startup instead, and point at the key when the column exists under
+	// a camelCase name.
+	private validateColumns(): void {
+		const table = this.config.table;
+		const check = (setting: string, name?: string) => {
+			if (!name || this.columnOf(table, name)) return;
+			const declared = Object.entries<any>(getTableColumns(table) ?? {}).find(
+				([, column]) => column?.name === name,
+			)?.[0];
+			const hint = declared
+				? `The column "${name}" is declared under the key "${declared}"; set ${setting} to "${declared}".`
+				: `Set ${setting} to the key of an existing column, or turn it off for this entity.`;
+			throw new Error(
+				`[nestjs-drizzle-crud] ${this.getEntityName()}: ${setting} is "${name}", but the table has no column under that key. ${hint}`,
+			);
+		};
+		if (this.config.softDelete?.enabled) {
+			check("softDelete.column", this.config.softDelete.column);
+		}
+		if (this.config.timestamps) {
+			check("timestamps.createdAt", this.config.timestamps.createdAt);
+			check("timestamps.updatedAt", this.config.timestamps.updatedAt);
+		}
 	}
 
 	// A relation missing its key column would silently produce no join and no
@@ -278,16 +357,29 @@ export abstract class SqlBaseCrudService<
 		return select.relations[name] ?? { base: [], relations: {} };
 	}
 
-	// The columns a projection of `table` must keep so the given child relations
-	// can still be loaded from its rows.
-	protected keysForChildren(nodes: RelationNode[]): string[] {
+	// The columns a projection of `hostTable` must keep so the given child
+	// relations can still be loaded from its rows.
+	protected keysForChildren(
+		nodes: RelationNode[],
+		hostTable: any = this.config.table,
+	): string[] {
 		return nodes
 			.map((node) =>
 				this.relationType(node.config) === "belongsTo"
 					? node.config.localKey
-					: (node.config.parentKey ?? this.config.primaryKey),
+					: this.parentKeyOf(node.config, hostTable),
 			)
 			.filter((key): key is string => !!key);
+	}
+
+	// The host column a collection groups on: `parentKey` when configured,
+	// otherwise the host table's own primary key. At a nested level the host is
+	// the related table, so the service's primary key name does not apply.
+	protected parentKeyOf(
+		relation: RelationConfig,
+		hostTable: any = this.config.table,
+	): string {
+		return relation.parentKey ?? this.primaryKeyOf(hostTable);
 	}
 
 	// Batch-loading a relation needs its key in the row, so add the keys back when
@@ -323,7 +415,7 @@ export abstract class SqlBaseCrudService<
 				const picked: Record<string, any> = {};
 				for (const name of [
 					...wanted,
-					...this.keysForChildren(node.children),
+					...this.keysForChildren(node.children, node.config.table),
 				]) {
 					if (relColumns[name]) picked[name] = relColumns[name];
 				}
@@ -424,6 +516,7 @@ export abstract class SqlBaseCrudService<
 		hosts: any[],
 		nodes: RelationNode[],
 		select: SelectTree = { base: [], relations: {} },
+		hostTable: any = this.config.table,
 	): Promise<void> {
 		if (!nodes.length || !Array.isArray(hosts)) return;
 		const rows = hosts.filter((row) => row && typeof row === "object");
@@ -435,10 +528,10 @@ export abstract class SqlBaseCrudService<
 				if (!node.joined) {
 					switch (this.relationType(node.config)) {
 						case "hasMany":
-							await this.loadHasMany(db, rows, node, childSelect);
+							await this.loadHasMany(db, rows, node, childSelect, hostTable);
 							break;
 						case "manyToMany":
-							await this.loadManyToMany(db, rows, node, childSelect);
+							await this.loadManyToMany(db, rows, node, childSelect, hostTable);
 							break;
 						default:
 							await this.loadBelongsTo(db, rows, node, childSelect);
@@ -450,7 +543,13 @@ export abstract class SqlBaseCrudService<
 				const nextHosts = this.isCollection(node.config)
 					? rows.flatMap((row) => row[node.name] ?? [])
 					: rows.map((row) => row[node.name]);
-				await this.loadRelations(db, nextHosts, node.children, childSelect);
+				await this.loadRelations(
+					db,
+					nextHosts,
+					node.children,
+					childSelect,
+					node.config.table,
+				);
 			}),
 		);
 	}
@@ -479,7 +578,7 @@ export abstract class SqlBaseCrudService<
 
 		const fields = this.relationProjection(target, select.base, [
 			referencedName,
-			...this.keysForChildren(node.children),
+			...this.keysForChildren(node.children, target),
 		]);
 		const conditions = [inArray(referenced, ids)];
 		const softDeleted = this.softDeleteCondition(target);
@@ -502,13 +601,14 @@ export abstract class SqlBaseCrudService<
 		hosts: any[],
 		node: RelationNode,
 		select: SelectTree,
+		hostTable: any = this.config.table,
 	): Promise<void> {
 		const { foreignKey } = node.config;
 		if (!foreignKey) return;
 		const target = node.config.table;
 		const foreign = target[foreignKey];
 		if (!foreign) return;
-		const parentKey = node.config.parentKey ?? this.config.primaryKey;
+		const parentKey = this.parentKeyOf(node.config, hostTable);
 
 		const ids = Array.from(
 			new Set(hosts.map((host) => host[parentKey]).filter((v) => v != null)),
@@ -522,7 +622,7 @@ export abstract class SqlBaseCrudService<
 		// back to its parent.
 		const fields = this.relationProjection(target, select.base, [
 			foreignKey,
-			...this.keysForChildren(node.children),
+			...this.keysForChildren(node.children, target),
 		]);
 		const conditions = [inArray(foreign, ids)];
 		const softDeleted = this.softDeleteCondition(target);
@@ -545,6 +645,7 @@ export abstract class SqlBaseCrudService<
 		hosts: any[],
 		node: RelationNode,
 		select: SelectTree,
+		hostTable: any = this.config.table,
 	): Promise<void> {
 		const { through, throughLocalKey, throughForeignKey, references } =
 			node.config;
@@ -555,7 +656,7 @@ export abstract class SqlBaseCrudService<
 		const joinLocal = through[throughLocalKey];
 		const joinForeign = through[throughForeignKey];
 		if (!referenced || !joinLocal || !joinForeign) return;
-		const parentKey = node.config.parentKey ?? this.config.primaryKey;
+		const parentKey = this.parentKeyOf(node.config, hostTable);
 
 		const ids = Array.from(
 			new Set(hosts.map((host) => host[parentKey]).filter((v) => v != null)),
@@ -571,7 +672,7 @@ export abstract class SqlBaseCrudService<
 		const columns = getTableColumns(target);
 		const wanted =
 			select.base.length > 0
-				? [...select.base, ...this.keysForChildren(node.children)]
+				? [...select.base, ...this.keysForChildren(node.children, target)]
 				: Object.keys(columns);
 		const fields: Record<string, any> = { [JOIN_KEY]: joinLocal };
 		for (const name of wanted) {
@@ -628,10 +729,15 @@ export abstract class SqlBaseCrudService<
 		for (const name of relationNames) {
 			const rel = configured[name];
 			if (!rel?.localKey || this.isCollection(rel)) continue;
-			q = q.leftJoin(
-				rel.table,
-				eq(this.config.table[rel.localKey], rel.table[rel.references ?? "id"]),
+			// The soft-delete predicate sits in the ON clause, not the WHERE: a
+			// deleted parent then reads as "no match" (null), and the child row
+			// still comes back, as with any LEFT JOIN miss.
+			const on = eq(
+				this.config.table[rel.localKey],
+				rel.table[rel.references ?? "id"],
 			);
+			const softDeleted = this.softDeleteCondition(rel.table);
+			q = q.leftJoin(rel.table, softDeleted ? and(on, softDeleted) : on);
 		}
 		return q;
 	}
@@ -664,12 +770,24 @@ export abstract class SqlBaseCrudService<
 	// fails fast (400) rather than silently returning unsorted data. An unknown
 	// column inside the configured `defaultSort` is a developer/config mistake,
 	// so it's warned and skipped (not surfaced to the client).
+	// The primary key always comes last, so rows that tie on the sort columns
+	// (or a query with no sort at all) still page in the same order every time.
 	protected buildOrderBy(
 		sortBy?: string,
 		sortOrder: SortOrder = "desc",
 	): any[] {
+		const out = this.buildSortColumns(sortBy, sortOrder);
+		const pk = this.columnOf(this.config.table, this.config.primaryKey);
+		if (pk && !out.columns.includes(pk)) out.order.push(asc(pk));
+		return out.order;
+	}
+
+	private buildSortColumns(
+		sortBy?: string,
+		sortOrder: SortOrder = "desc",
+	): { order: any[]; columns: any[] } {
 		if (sortBy) {
-			const col = this.config.table[sortBy];
+			const col = this.columnOf(this.config.table, sortBy);
 			if (!col) {
 				throw new BadRequestException(`Unknown sort column: ${sortBy}`);
 			}
@@ -680,20 +798,25 @@ export abstract class SqlBaseCrudService<
 					`Invalid sortOrder: ${sortOrder} (expected 'asc' or 'desc')`,
 				);
 			}
-			return [sortOrder === "desc" ? desc(col) : asc(col)];
+			return {
+				order: [sortOrder === "desc" ? desc(col) : asc(col)],
+				columns: [col],
+			};
 		}
-		const out: any[] = [];
+		const order: any[] = [];
+		const columns: any[] = [];
 		for (const spec of this.config.defaultSort ?? []) {
-			const col = this.config.table[spec.column];
+			const col = this.columnOf(this.config.table, spec.column);
 			if (!col) {
 				console.warn(
 					`[nestjs-drizzle-crud] defaultSort references unknown column "${spec.column}"; skipping.`,
 				);
 				continue;
 			}
-			out.push(spec.order === "desc" ? desc(col) : asc(col));
+			order.push(spec.order === "desc" ? desc(col) : asc(col));
+			columns.push(col);
 		}
-		return out;
+		return { order, columns };
 	}
 
 	// Clamp pagination input to safe bounds: page >= 1 and 1 <= limit <= maxLimit.
@@ -703,8 +826,8 @@ export abstract class SqlBaseCrudService<
 		page?: number,
 		limit?: number,
 	): { page: number; limit: number; offset: number } {
-		const maxLimit = this.config.pagination!.maxLimit!;
-		const defaultLimit = this.config.pagination!.defaultLimit!;
+		const maxLimit = this.config.pagination?.maxLimit ?? 100;
+		const defaultLimit = this.config.pagination?.defaultLimit ?? 20;
 		const rawPage =
 			page == null || Number.isNaN(Number(page)) ? 1 : Math.floor(Number(page));
 		const rawLimit =
@@ -742,24 +865,59 @@ export abstract class SqlBaseCrudService<
 
 	// Postgres data-integrity violations caused by bad CLIENT INPUT rather than a
 	// server fault: value too long (22001), failed CHECK (23514), numeric out of
-	// range (22003). These otherwise surface as a raw 500; map them to 400 so the
-	// caller sees a client error (mirrors the unique-violation -> 409 mapping).
-	// (NOT-NULL violations are intentionally left to bubble: they usually
-	// indicate a programming/config error, not a recoverable bad value. FK
-	// violations are handled separately below.)
+	// range (22003), a value the column type cannot parse such as "abc" for an
+	// integer or an unknown enum label (22P02), and a malformed or out of range
+	// date (22007, 22008). These otherwise surface as a raw 500; map them to 400
+	// so the caller sees a client error (mirrors the unique-violation -> 409
+	// mapping). (NOT-NULL violations are intentionally left to bubble: they
+	// usually indicate a programming/config error, not a recoverable bad value.
+	// FK violations are handled separately below.)
+	private static readonly DATA_ERRORS: Record<string, string> = {
+		"22001": "a value is too long for its column",
+		"23514": "a value violates a column check constraint",
+		"22003": "a numeric value is out of range",
+		"22P02": "a value does not match its column type",
+		"22007": "a date or time value has an invalid format",
+		"22008": "a date or time value is out of range",
+	};
+
 	protected isDataException(error: any): boolean {
 		const code = error?.code ?? error?.cause?.code;
-		return code === "22001" || code === "23514" || code === "22003";
+		return Object.hasOwn(SqlBaseCrudService.DATA_ERRORS, code ?? "");
 	}
 
 	protected toDataException(error: any): ValidationFailedException {
 		const code = error?.code ?? error?.cause?.code;
-		const messages: Record<string, string> = {
-			"22001": "a value is too long for its column",
-			"23514": "a value violates a column check constraint",
-			"22003": "a numeric value is out of range",
-		};
-		return new ValidationFailedException(messages[code] ?? "invalid value");
+		return new ValidationFailedException(
+			SqlBaseCrudService.DATA_ERRORS[code] ?? "invalid value",
+		);
+	}
+
+	// Translate a driver error caused by bad input into the matching HTTP
+	// exception; anything else comes back unchanged. On a delete, a foreign key
+	// violation means other rows still point here (409), on a write it means the
+	// row points at a parent that does not exist (400).
+	protected toClientError(
+		error: any,
+		operation: "read" | "write" | "delete" = "write",
+	): unknown {
+		if (this.isUniqueViolation(error)) return this.toDuplicateException(error);
+		if (this.isDataException(error)) return this.toDataException(error);
+		if (this.isForeignKeyViolation(error)) {
+			return operation === "delete"
+				? new EntityInUseException(this.getEntityName())
+				: this.toForeignKeyException(error);
+		}
+		return error;
+	}
+
+	// Await a read query, turning bad input (22P02 and friends) into a 400.
+	protected async runRead<R>(query: PromiseLike<R>): Promise<R> {
+		try {
+			return await query;
+		} catch (error) {
+			throw this.toClientError(error, "read");
+		}
 	}
 
 	// Postgres foreign-key violation (23503). The direction decides the status:
@@ -782,9 +940,12 @@ export abstract class SqlBaseCrudService<
 	// Apply a row-level lock to a SELECT builder (Postgres only; no-op elsewhere).
 	protected applyLock(query: any, options?: SqlOperationOptions): any {
 		if (this.config.dialect !== "postgresql") return query;
-		if (options?.forNoKeyUpdate) return query.for("no key update");
+		// `OF <table>` locks the base rows only. Without it Postgres tries to lock
+		// every joined table too, and refuses on the nullable side of a LEFT JOIN.
+		const of = { of: this.config.table };
+		if (options?.forNoKeyUpdate) return query.for("no key update", of);
 		if (options?.lock && options.lock !== "none")
-			return query.for(options.lock);
+			return query.for(options.lock, of);
 		return query;
 	}
 
@@ -812,8 +973,18 @@ export abstract class SqlBaseCrudService<
 		}
 
 		const pattern = `%${term.replace(/[\\%_]/g, "\\$&")}%`;
-		const conditions = columns.map((column) => ilike(column, pattern));
+		const conditions = columns.map((column) =>
+			this.caseInsensitiveLike(column, pattern),
+		);
 		return conditions.length === 1 ? conditions[0] : or(...conditions);
+	}
+
+	// ILIKE on Postgres. MySQL has no ILIKE, and its default collations already
+	// compare case-insensitively, so LIKE gives the same result there.
+	protected caseInsensitiveLike(column: any, pattern: string): any {
+		return this.config.dialect === "mysql"
+			? like(column, pattern)
+			: ilike(column, pattern);
 	}
 
 	// The existence check that guards update / softDelete / delete only needs to
@@ -854,7 +1025,7 @@ export abstract class SqlBaseCrudService<
 			.limit(1);
 		query = this.applyLock(query, options);
 
-		const result = await query;
+		const result = await this.runRead<any[]>(query);
 		const rows = this.normalizeRelations(
 			result,
 			joined.map((node) => node.name),
@@ -888,7 +1059,7 @@ export abstract class SqlBaseCrudService<
 			.limit(1);
 		query = this.applyLock(query, options);
 
-		const result = await query;
+		const result = await this.runRead<any[]>(query);
 		const rows = this.normalizeRelations(
 			result,
 			joined.map((node) => node.name),
@@ -957,7 +1128,9 @@ export abstract class SqlBaseCrudService<
 			countQuery = countQuery.where(and(...conditions));
 		}
 
-		const [data, totalResult] = await Promise.all([dataQuery, countQuery]);
+		const [data, totalResult] = await this.runRead(
+			Promise.all([dataQuery, countQuery]),
+		);
 		const total = parseInt(totalResult[0]?.count?.toString() || "0", 10);
 
 		// One batched query per relation for the whole page, never one per row.
@@ -1012,14 +1185,9 @@ export abstract class SqlBaseCrudService<
 				return createdEntity;
 			}
 		} catch (error) {
-			// Surface a unique violation as 409 Conflict instead of a raw 500.
-			if (this.isUniqueViolation(error)) throw this.toDuplicateException(error);
-			// Bad client input (too long / failed check / out of range) -> 400.
-			if (this.isDataException(error)) throw this.toDataException(error);
-			// A reference to a row that does not exist is bad input too -> 400.
-			if (this.isForeignKeyViolation(error))
-				throw this.toForeignKeyException(error);
-			throw error;
+			// Unique violation -> 409, bad input (too long, failed check, wrong
+			// type) -> 400, a reference to a row that does not exist -> 400.
+			throw this.toClientError(error, "write");
 		}
 	}
 
@@ -1037,6 +1205,19 @@ export abstract class SqlBaseCrudService<
 			? data
 			: await this.beforeUpdate(id, data);
 		const entityData = this.mapUpdateDtoToEntity(processedData);
+
+		// Drizzle skips undefined values and keys that are not columns, so an
+		// update with none left would send an empty SET (a raw 500). With
+		// timestamps on it would quietly bump updated_at instead. Either way the
+		// caller sent nothing to change, which is a 400.
+		const settable = Object.keys(entityData).filter(
+			(key) =>
+				entityData[key] !== undefined &&
+				!!this.columnOf(this.config.table, key),
+		);
+		if (settable.length === 0) {
+			throw new ValidationFailedException("there are no columns to update");
+		}
 
 		if (this.config.timestamps?.updatedAt) {
 			entityData[this.config.timestamps.updatedAt] = new Date();
@@ -1063,11 +1244,7 @@ export abstract class SqlBaseCrudService<
 				return updatedEntity;
 			}
 		} catch (error) {
-			if (this.isUniqueViolation(error)) throw this.toDuplicateException(error);
-			if (this.isDataException(error)) throw this.toDataException(error);
-			if (this.isForeignKeyViolation(error))
-				throw this.toForeignKeyException(error);
-			throw error;
+			throw this.toClientError(error, "write");
 		}
 	}
 
@@ -1096,7 +1273,7 @@ export abstract class SqlBaseCrudService<
 			.where(eq(this.config.table[this.config.primaryKey], id));
 
 		if (this.config.sql?.useReturning) updateQuery = updateQuery.returning();
-		const result = await updateQuery;
+		const result = await this.runRead(updateQuery);
 		const success = this.wasAffected(result);
 
 		if (success && !hooks.skipAfter) await this.afterSoftDelete(id);
@@ -1126,14 +1303,14 @@ export abstract class SqlBaseCrudService<
 
 		if (this.config.sql?.useReturning) {
 			updateQuery = updateQuery.returning();
-			const result = await updateQuery;
+			const result: any[] = await this.runRead(updateQuery);
 			if (result.length === 0)
 				throw new EntityNotFoundException(this.getEntityName(), id);
 			const restoredEntity = result[0];
 			if (!hooks.skipAfter) await this.afterRestore(restoredEntity);
 			return restoredEntity;
 		} else {
-			await updateQuery;
+			await this.runRead(updateQuery);
 			const restoredEntity = await this.find(id, options);
 			if (!restoredEntity)
 				throw new EntityNotFoundException(this.getEntityName(), id);
@@ -1163,9 +1340,7 @@ export abstract class SqlBaseCrudService<
 		} catch (error) {
 			// Dependent rows still reference this one (ON DELETE RESTRICT /
 			// NO ACTION), which is a conflict, not a server fault -> 409.
-			if (this.isForeignKeyViolation(error))
-				throw new EntityInUseException(this.getEntityName());
-			throw error;
+			throw this.toClientError(error, "delete");
 		}
 	}
 
@@ -1180,10 +1355,9 @@ export abstract class SqlBaseCrudService<
 
 			for (let i = 0; i < data.length; i++) {
 				try {
-					const result = await this.create(data[i], {
-						...options,
-						transaction: tx,
-					});
+					const result = await this.savepoint(tx, (sp) =>
+						this.create(data[i], { ...options, transaction: sp }),
+					);
 					results.push(result);
 				} catch (error) {
 					errors.push({ index: i, error: error as Error });
@@ -1207,10 +1381,9 @@ export abstract class SqlBaseCrudService<
 
 			for (const id of ids) {
 				try {
-					const result = await this.update(id, data, {
-						...options,
-						transaction: tx,
-					});
+					const result = await this.savepoint(tx, (sp) =>
+						this.update(id, data, { ...options, transaction: sp }),
+					);
 					results.push(result);
 				} catch (error) {
 					errors.push({ id, error: error as Error });
@@ -1233,7 +1406,9 @@ export abstract class SqlBaseCrudService<
 			const errors: Array<{ id: any; error: Error }> = [];
 			for (const id of ids) {
 				try {
-					await this.softDelete(id, { ...options, transaction: tx });
+					await this.savepoint(tx, (sp) =>
+						this.softDelete(id, { ...options, transaction: sp }),
+					);
 				} catch (error) {
 					errors.push({ id, error: error as Error });
 				}
@@ -1252,10 +1427,9 @@ export abstract class SqlBaseCrudService<
 			const errors: Array<{ id: any; error: Error }> = [];
 			for (const id of ids) {
 				try {
-					const result = await this.restore(id, {
-						...options,
-						transaction: tx,
-					});
+					const result = await this.savepoint(tx, (sp) =>
+						this.restore(id, { ...options, transaction: sp }),
+					);
 					results.push(result);
 				} catch (error) {
 					errors.push({ id, error: error as Error });
@@ -1275,7 +1449,9 @@ export abstract class SqlBaseCrudService<
 			const errors: Array<{ id: any; error: Error }> = [];
 			for (const id of ids) {
 				try {
-					await this.delete(id, { ...options, transaction: tx });
+					await this.savepoint(tx, (sp) =>
+						this.delete(id, { ...options, transaction: sp }),
+					);
 				} catch (error) {
 					errors.push({ id, error: error as Error });
 				}
@@ -1284,6 +1460,17 @@ export abstract class SqlBaseCrudService<
 				throw new BulkOperationException("Mass delete errors", errors);
 			return true;
 		}, options?.transaction);
+	}
+
+	// Run one bulk item in a nested transaction, which Drizzle turns into a
+	// SAVEPOINT. A failed statement then rolls back that item alone; without it
+	// Postgres aborts the whole transaction and every later item fails with
+	// 25P02 ("current transaction is aborted"). The outer transaction still
+	// rolls everything back when any item failed.
+	protected savepoint<R>(tx: any, run: (sp: any) => Promise<R>): Promise<R> {
+		return typeof tx?.transaction === "function"
+			? tx.transaction(run)
+			: run(tx);
 	}
 
 	// Utility Methods
@@ -1317,40 +1504,53 @@ export abstract class SqlBaseCrudService<
 
 		query = this.applyJoins(query, filterRelations);
 		if (conditions.length > 0) query = query.where(and(...conditions));
-		const result = await query;
+		const result = await this.runRead<any[]>(query);
 		return parseInt(result[0]?.count?.toString() || "0", 10);
 	}
 
 	// Protected Helper Methods
 
 	// Build a single column condition from a filter value:
-	//   array            -> IN (...)
-	//   string           -> case-insensitive exact match (when sql.caseSensitive
-	//                        is false) or eq
+	//   array              -> IN (...)
 	//   { op: value, ... } -> comparison/pattern operators (see applyComplexFilter)
-	//   scalar           -> eq
+	//   string on a text column -> case-insensitive exact match (when
+	//                        sql.caseSensitive is false)
+	//   anything else, a Date included -> eq
+	// Date strings are turned into Dates for date columns first.
 	protected pushColumnCondition(
 		conditions: any[],
 		column: any,
 		value: any,
+		caseInsensitive = this.config.sql?.caseSensitive === false,
 	): void {
 		if (Array.isArray(value)) {
-			conditions.push(inArray(column, value));
-		} else if (
-			typeof value === "string" &&
-			this.config.sql?.caseSensitive === false
-		) {
-			// Case-insensitive *exact* match. Compare `lower(column) = lower(value)`
-			// rather than `ilike(column, value)`: ILIKE treats `%`, `_` and `\` in
-			// the value as wildcards/escapes, which silently turns an equality
-			// filter into a pattern match (returning rows that don't actually
-			// equal the value). Use the explicit `{ like: ... }` / `{ ilike: ... }`
-			// operators when pattern matching is intended.
-			conditions.push(sql`lower(${column}) = lower(${value})`);
-		} else if (typeof value === "object" && value !== null) {
+			conditions.push(
+				inArray(
+					column,
+					value.map((item) => this.coerceFilterValue(column, item)),
+				),
+			);
+		} else if (isPlainObject(value)) {
 			this.applyComplexFilter(conditions, column, value);
 		} else {
-			conditions.push(eq(column, value));
+			const coerced = this.coerceFilterValue(column, value);
+			if (
+				typeof coerced === "string" &&
+				caseInsensitive &&
+				this.isTextColumn(column)
+			) {
+				// Case-insensitive *exact* match. Compare `lower(column) = lower(value)`
+				// rather than `ilike(column, value)`: ILIKE treats `%`, `_` and `\` in
+				// the value as wildcards/escapes, which silently turns an equality
+				// filter into a pattern match (returning rows that don't actually
+				// equal the value). Use the explicit `{ like: ... }` / `{ ilike: ... }`
+				// operators when pattern matching is intended. Only text columns get
+				// lower(): Postgres has no lower(integer), lower(uuid) or lower(enum),
+				// and a plain `=` lets it cast the string parameter to the column type.
+				conditions.push(sql`lower(${column}) = lower(${coerced})`);
+			} else {
+				conditions.push(eq(column, coerced));
+			}
 		}
 	}
 
@@ -1363,6 +1563,7 @@ export abstract class SqlBaseCrudService<
 		relation: RelationConfig,
 		value: Record<string, any>,
 		db: any = this.config.db,
+		name = "relation",
 	): any | undefined {
 		const target = relation.table;
 		const manyToMany = this.relationType(relation) === "manyToMany";
@@ -1375,8 +1576,10 @@ export abstract class SqlBaseCrudService<
 		const targetConditions: any[] = [];
 		for (const [col, colValue] of Object.entries(value)) {
 			if (colValue === undefined || colValue === null) continue;
-			const column = target[col];
-			if (!column) continue;
+			const column = this.columnOf(target, col);
+			if (!column) {
+				throw new BadRequestException(`Unknown filter column: ${name}.${col}`);
+			}
 			this.pushColumnCondition(targetConditions, column, colValue);
 		}
 		if (targetConditions.length === 0) return undefined;
@@ -1400,7 +1603,7 @@ export abstract class SqlBaseCrudService<
 				.from(target)
 				.where(and(...targetConditions));
 		}
-		const parentKey = relation.parentKey ?? this.config.primaryKey;
+		const parentKey = this.parentKeyOf(relation);
 		return inArray(this.config.table[parentKey], subquery);
 	}
 
@@ -1409,6 +1612,10 @@ export abstract class SqlBaseCrudService<
 	// (e.g. { state: { name: 'X', country_id: 1 } }). A belongs-to relation is
 	// returned in `relations` so the caller can JOIN it; a collection relation
 	// becomes a subquery condition and needs no join.
+	// `undefined` and `null` values are skipped, so a query DTO can be passed
+	// through with its empty fields. A key that is neither a column nor a
+	// relation is a 400, like an unknown sortBy: dropping it would return every
+	// row for a typo.
 	protected buildFilterConditions(
 		filters?: any,
 		db: any = this.config.db,
@@ -1425,13 +1632,21 @@ export abstract class SqlBaseCrudService<
 		for (const [key, value] of Object.entries(filters)) {
 			if (value === undefined || value === null) continue;
 
-			const relation = relConfig[key];
-			if (relation && typeof value === "object" && !Array.isArray(value)) {
+			const relation = Object.hasOwn(relConfig, key)
+				? relConfig[key]
+				: undefined;
+			if (relation) {
+				if (!isPlainObject(value)) {
+					throw new BadRequestException(
+						`Filter on relation "${key}" must be an object of column filters`,
+					);
+				}
 				if (this.isCollection(relation)) {
 					const condition = this.buildCollectionFilter(
 						relation,
-						value as Record<string, any>,
+						value,
 						db,
+						key,
 					);
 					if (condition) conditions.push(condition);
 					continue;
@@ -1439,8 +1654,12 @@ export abstract class SqlBaseCrudService<
 				let used = false;
 				for (const [col, colValue] of Object.entries(value)) {
 					if (colValue === undefined || colValue === null) continue;
-					const relColumn = relation.table[col];
-					if (!relColumn) continue;
+					const relColumn = this.columnOf(relation.table, col);
+					if (!relColumn) {
+						throw new BadRequestException(
+							`Unknown filter column: ${key}.${col}`,
+						);
+					}
 					this.pushColumnCondition(conditions, relColumn, colValue);
 					used = true;
 				}
@@ -1448,8 +1667,10 @@ export abstract class SqlBaseCrudService<
 				continue;
 			}
 
-			const column = this.config.table[key];
-			if (!column) continue;
+			const column = this.columnOf(this.config.table, key);
+			if (!column) {
+				throw new BadRequestException(`Unknown filter column: ${key}`);
+			}
 			this.pushColumnCondition(conditions, column, value);
 		}
 
@@ -1460,57 +1681,87 @@ export abstract class SqlBaseCrudService<
 		return this.buildFilterConditions(filters).conditions;
 	}
 
+	// `true` / `false`, or the same as strings from a query string.
+	private parseFlag(op: string, value: unknown): boolean {
+		if (value === true || value === "true") return true;
+		if (value === false || value === "false") return false;
+		throw new BadRequestException(
+			`Invalid value for "${op}": expected true or false`,
+		);
+	}
+
 	protected applyComplexFilter(
 		conditions: any[],
 		column: any,
 		filterObj: any,
 	): void {
-		for (const [op, value] of Object.entries(filterObj)) {
+		for (const [op, raw] of Object.entries(filterObj)) {
+			// An absent operand (an empty query DTO field) adds nothing.
+			if (raw === undefined) continue;
 			// Guard the ordered-comparison ops against a non-finite numeric operand
 			// (e.g. { gt: NaN } from an unguarded Number('abc') in a controller).
 			// Letting NaN/Infinity reach SQL throws a raw DB error -> opaque 500;
 			// reject it as a 400 instead. Non-number operands (dates/strings) pass.
 			if (
 				(op === "gt" || op === "gte" || op === "lt" || op === "lte") &&
-				typeof value === "number" &&
-				!Number.isFinite(value)
+				typeof raw === "number" &&
+				!Number.isFinite(raw)
 			) {
 				throw new BadRequestException(
-					`Invalid numeric filter operand for "${op}": ${value}`,
+					`Invalid numeric filter operand for "${op}": ${raw}`,
 				);
 			}
 			switch (op) {
+				case "eq":
+					conditions.push(eq(column, this.coerceFilterValue(column, raw)));
+					break;
 				case "gt":
-					conditions.push(gt(column, value));
+					conditions.push(gt(column, this.coerceFilterValue(column, raw)));
 					break;
 				case "gte":
-					conditions.push(gte(column, value));
+					conditions.push(gte(column, this.coerceFilterValue(column, raw)));
 					break;
 				case "lt":
-					conditions.push(lt(column, value));
+					conditions.push(lt(column, this.coerceFilterValue(column, raw)));
 					break;
 				case "lte":
-					conditions.push(lte(column, value));
+					conditions.push(lte(column, this.coerceFilterValue(column, raw)));
 					break;
 				case "neq":
-					conditions.push(ne(column, value));
+					conditions.push(ne(column, this.coerceFilterValue(column, raw)));
 					break;
 				case "like":
 					// Caller supplies the pattern (e.g. 'John%'); do not re-wrap.
-					conditions.push(like(column, value as string));
+					conditions.push(like(column, raw as string));
 					break;
 				case "ilike":
-					conditions.push(ilike(column, value as string));
+					conditions.push(this.caseInsensitiveLike(column, raw as string));
 					break;
 				case "in":
-					conditions.push(inArray(column, value as any[]));
+					if (!Array.isArray(raw)) {
+						throw new BadRequestException(
+							`Filter operator "in" expects an array`,
+						);
+					}
+					conditions.push(
+						inArray(
+							column,
+							raw.map((item) => this.coerceFilterValue(column, item)),
+						),
+					);
 					break;
 				case "isNull":
-					conditions.push(isNull(column));
+					conditions.push(
+						this.parseFlag(op, raw) ? isNull(column) : isNotNull(column),
+					);
 					break;
 				case "isNotNull":
-					conditions.push(isNotNull(column));
+					conditions.push(
+						this.parseFlag(op, raw) ? isNotNull(column) : isNull(column),
+					);
 					break;
+				default:
+					throw new BadRequestException(`Unknown filter operator: ${op}`);
 			}
 		}
 	}
@@ -1545,6 +1796,19 @@ export abstract class SqlBaseCrudService<
 			throw new Error("Full-text search only supported in PostgreSQL");
 		}
 
+		if (!Array.isArray(searchColumns) || searchColumns.length === 0) {
+			throw new BadRequestException(
+				"Full-text search needs at least one column",
+			);
+		}
+		const columns = searchColumns.map((name) => {
+			const column = this.columnOf(this.config.table, name);
+			if (!column) {
+				throw new BadRequestException(`Unknown search column: ${name}`);
+			}
+			return column;
+		});
+
 		const { transaction } = options || {};
 		const db = transaction || this.config.db;
 		// Combine the per-column tsvectors into a single SQL expression. Using
@@ -1552,9 +1816,7 @@ export abstract class SqlBaseCrudService<
 		// stringifying them (which Array#join + sql.raw did, producing invalid
 		// SQL and an injection vector).
 		const tsVector = sql.join(
-			searchColumns.map(
-				(col) => sql`to_tsvector('english', ${this.config.table[col]})`,
-			),
+			columns.map((column) => sql`to_tsvector('english', ${column})`),
 			sql` || `,
 		);
 		const tsQuery = sql`plainto_tsquery('english', ${searchTerm})`;
@@ -1565,29 +1827,31 @@ export abstract class SqlBaseCrudService<
 			? and(matchExpr, isNull(this.config.table[this.config.softDelete.column]))
 			: matchExpr;
 
-		let query = db
-			.select()
-			.from(this.config.table)
-			.where(whereExpr)
-			.orderBy(sql`ts_rank(${tsVector}, ${tsQuery}) DESC`);
-
-		// Resolve page/limit even when pagination is omitted so the envelope is
-		// consistent with findAll's { data, total, page, limit }. The query is
-		// only constrained when the caller actually paginated.
+		// The page and limit always apply, with or without `pagination`, so the
+		// envelope matches what came back. Ties on rank fall back to the primary
+		// key, as in findAll.
 		const { page, limit, offset } = this.resolvePagination(
 			pagination?.page,
 			pagination?.limit,
 		);
-		if (pagination) {
-			query = query.limit(limit).offset(offset);
-		}
+		const pk = this.columnOf(this.config.table, this.config.primaryKey);
+		const orderBy = [sql`ts_rank(${tsVector}, ${tsQuery}) DESC`];
+		if (pk) orderBy.push(asc(pk));
 
-		const data = await query;
+		const dataQuery = db
+			.select()
+			.from(this.config.table)
+			.where(whereExpr)
+			.orderBy(...orderBy)
+			.limit(limit)
+			.offset(offset);
 		const countQuery = db
 			.select({ count: sql<number>`count(*)` })
 			.from(this.config.table)
 			.where(whereExpr);
-		const totalResult = await countQuery;
+		const [data, totalResult] = await this.runRead(
+			Promise.all([dataQuery, countQuery]),
+		);
 		const total = parseInt(totalResult[0]?.count?.toString() || "0", 10);
 
 		return { data, total, page, limit };

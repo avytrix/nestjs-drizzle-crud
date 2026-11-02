@@ -41,8 +41,8 @@ const { data, total, page, limit } = await service.findAll(
 | --- | --- | --- | --- |
 | `page` | `number` | `1` | 1-indexed. |
 | `limit` | `number` | `defaults.pagination.defaultLimit` | Capped at `defaults.pagination.maxLimit` (default `100`). |
-| `sortBy` | `string \| string[]` | `defaultSort` (entity) | Column name(s). |
-| `sortOrder` | `'asc' \| 'desc'` | `'desc'` | Applied when `sortBy` is a string. |
+| `sortBy` | `string` | `defaultSort` (entity) | One column key. |
+| `sortOrder` | `'asc' \| 'desc'` | `'desc'` | Direction for `sortBy`. |
 
 ## Sorting
 
@@ -55,7 +55,19 @@ await service.findAll(
 );
 ```
 
-`sortBy` accepts a string or an array. When an array is passed, `sortOrder` is ignored. Each column carries its own order via the entity's `defaultSort` definition (see below).
+`sortBy` takes one column key. For a multi-column order, use the entity's `defaultSort` (see below).
+
+### Why does every query end with the primary key?
+
+So that pages are stable. Postgres returns rows that tie on the sort columns in no fixed order, and without any `ORDER BY` the order can change between two queries. Offset pagination over an unstable order repeats some rows and skips others. Since 3.3.1 the primary key is always the last `ORDER BY` column (ascending), unless it is already in the list:
+
+```ts
+await service.findAll({}, { sortBy: 'views', sortOrder: 'desc' });
+// ORDER BY views DESC, id ASC
+
+await service.findAll();
+// no sortBy and no defaultSort: ORDER BY id ASC
+```
 
 ### Default sort per entity
 
@@ -77,17 +89,16 @@ DrizzleCrudModule.forFeature([
 ```
 
 ```ts
-// ORDER BY position ASC, created_at DESC
+// ORDER BY position ASC, created_at DESC, id ASC
 await service.findAll();
 
-// ORDER BY name DESC : the default is replaced, not appended
+// ORDER BY name DESC, id ASC : the default is replaced, not appended
 await service.findAll({}, { sortBy: 'name' });
 ```
 
 <Callout type="warn" title="sortBy replaces defaultSort">
-  An explicit `sortBy` **replaces** the entity's `defaultSort` entirely.
-  Pass an array to `sortBy` if you want the same multi-column ordering
-  behavior.
+  An explicit `sortBy` **replaces** the entity's `defaultSort` entirely. The
+  primary key tiebreaker is still added.
 </Callout>
 
 ### Opt-in `created_at` fallback
@@ -117,6 +128,8 @@ defaults: {
 }
 ```
 
+Either key can be set on its own, at the project level or per entity. `pagination: { defaultLimit: 5 }` keeps `maxLimit` at 100. Before 3.3.1 a per-entity override with one key dropped the other, and the query ran with no limit at all.
+
 <Callout type="info">
   The cap is enforced on every call. If you genuinely need to return every row
   (e.g. an export endpoint), use a custom method that bypasses `findAll` and
@@ -144,7 +157,9 @@ A `LIMIT 0` or negative `OFFSET` can never reach SQL. Every value is clamped via
 | --- | --- |
 | Caller `sortBy` not a column on the table | Mirrors the unknown-column guard, typos surface immediately instead of returning unsorted data. |
 | Caller `sortOrder` other than `'asc'` / `'desc'` | Without the guard, anything other than `'desc'` silently sorted ascending. |
-| `{ gt / gte / lt / lte: NaN }` or `{ …: Infinity }` | Reaches SQL as an opaque 500; rejected as 400 instead. Affects numeric columns only, date / string operands pass through unchanged. |
+| `{ gt / gte / lt / lte: NaN }` or `{ …: Infinity }` | Reaches SQL as an opaque 500; rejected as 400 instead. |
+| A filter key that is not a column or relation, or an unknown operator | Dropping it would return every row for a typo. See [Filtering](/docs/filtering#what-happens-with-an-unknown-filter-key). |
+| A date filter value that is not a date | `{ createdAt: { gte: 'garbage' } }`. |
 
 For the full per-method exception table (404 / 409 / 400 / 500 mapping), see [Errors](/docs/errors).
 
