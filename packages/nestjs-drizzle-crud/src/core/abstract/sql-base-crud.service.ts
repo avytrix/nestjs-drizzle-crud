@@ -1455,7 +1455,13 @@ export abstract class SqlBaseCrudService<
 		];
 		const version = this.config.versionColumn;
 		if (version) {
-			if (ids.length === 1 && options?.expectedVersion != null) {
+			// A mass write passes expectedVersions; a single write passes
+			// expectedVersion. Never apply one version to a whole set.
+			if (
+				ids.length === 1 &&
+				options?.expectedVersion != null &&
+				!options.expectedVersions
+			) {
 				conditions.push(eq(table[version], options.expectedVersion));
 			} else if (options?.expectedVersions) {
 				const checks = ids.flatMap((id) => {
