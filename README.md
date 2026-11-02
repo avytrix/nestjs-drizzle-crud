@@ -6,7 +6,7 @@
 [![CI](https://github.com/avytrix/nestjs-drizzle-crud/actions/workflows/ci.yml/badge.svg)](https://github.com/avytrix/nestjs-drizzle-crud/actions/workflows/ci.yml)
 [![Sponsor @avytrix](https://img.shields.io/badge/Sponsor-%40avytrix-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/avytrix)
 
-Built and maintained by **[Avytrix Technologies](https://avytrix.dev)**.
+Built and maintained by **[Avytrix Technologies](https://avytrix.dev/?utm_source=nestjs-drizzle-crud&utm_medium=docs&utm_campaign=readme)**. Need help shipping? [Hire the team behind the library](https://crud.avytrix.dev/docs/commercial-support/).
 
 ## ❤️ Sponsoring is what keeps this free
 
@@ -53,7 +53,9 @@ DrizzleCrudModule.forRoot({
 });
 
 // users.service.ts: a complete CRUD service
-export class UsersService extends SqlBaseCrudService<User> {}
+export class UsersService extends SqlBaseCrudService<
+  User, CreateUserDto, UpdateUserDto, CrudFilter
+> {}
 
 // users.module.ts
 DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
