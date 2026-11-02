@@ -19,7 +19,7 @@
 ## Checklist
 
 - [ ] Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
-- [ ] `npm run lint` passes
-- [ ] `npm test` passes (and I added/updated tests)
-- [ ] `npm run build` passes
-- [ ] Docs updated if needed
+- [ ] `pnpm lint`, `pnpm typecheck`, `pnpm build` and `pnpm test` pass
+- [ ] I added or updated tests for any behaviour change
+- [ ] Changelog and docs are updated in this PR (see CONTRIBUTING.md), or this PR changes no behaviour
+- [ ] No secrets, credentials or `.env` files are included

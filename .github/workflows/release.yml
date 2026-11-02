@@ -25,6 +25,9 @@ jobs:
   publish:
     name: publish nestjs-drizzle-crud
     runs-on: ubuntu-latest
+    # npm's trusted publisher requires this environment; GitHub only allows it from
+    # v* tags and holds the job until a maintainer approves the deployment.
+    environment: github-drizzle-crud
     permissions:
       contents: read
       id-token: write # npm trusted publishing (OIDC) and provenance

@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Questions & Discussions
-    url: https://github.com/myviliha/viliha-drizzle-crud/discussions
+    url: https://github.com/avytrix/nestjs-drizzle-crud/discussions
     about: Ask questions, share ideas, and get help here.
   - name: Report a security vulnerability
-    url: https://github.com/myviliha/viliha-drizzle-crud/security/advisories/new
+    url: https://github.com/avytrix/nestjs-drizzle-crud/security/advisories/new
     about: Please report vulnerabilities privately, not as a public issue.
