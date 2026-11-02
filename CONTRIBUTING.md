@@ -5,11 +5,11 @@ welcomes issues and pull requests from everyone.
 
 ## Ways to contribute
 
-- **Report a bug:** open a [Bug report](https://github.com/myviliha/viliha-drizzle-crud/issues/new/choose) issue.
+- **Report a bug:** open a [Bug report](https://github.com/avytrix/nestjs-drizzle-crud/issues/new/choose) issue.
 - **Request a feature:** open a Feature request issue.
 - **Fix or improve:** send a pull request (see below). Merged PRs make you a project contributor. 🎉
-- **Ask or discuss:** use [Discussions](https://github.com/myviliha/viliha-drizzle-crud/discussions).
-- **Fund the work:** [sponsor on GitHub](https://github.com/sponsors/myviliha). It is what keeps the package maintained and free.
+- **Ask or discuss:** use [Discussions](https://github.com/avytrix/nestjs-drizzle-crud/discussions).
+- **Fund the work:** [sponsor on GitHub](https://github.com/sponsors/avytrix). It is what keeps the package maintained and free.
 
 ## Development setup
 
@@ -19,11 +19,11 @@ runs from the repository root.
 
 ```bash
 # 1. Fork the repo on GitHub, then clone YOUR fork
-git clone https://github.com/<your-username>/viliha-drizzle-crud.git
-cd viliha-drizzle-crud
+git clone https://github.com/<your-username>/nestjs-drizzle-crud.git
+cd nestjs-drizzle-crud
 
 # 2. Add the upstream remote (to keep your fork in sync)
-git remote add upstream https://github.com/myviliha/viliha-drizzle-crud.git
+git remote add upstream https://github.com/avytrix/nestjs-drizzle-crud.git
 
 # 3. Install dependencies
 pnpm install
@@ -69,12 +69,51 @@ External contributors work from a **fork**; you do not need write access.
    - `feat(crud): add pagination to findAll`
    - `fix(module): handle null relations in update`
    - `docs:`, `test:`, `chore:`, `refactor:` and so on
-6. Push to your fork and open a pull request against `myviliha/viliha-drizzle-crud:main`.
-7. Fill in the PR template. CI (lint, typecheck, build, test) runs automatically and must pass.
+6. Push to your fork and open a pull request against `avytrix/nestjs-drizzle-crud:main`.
+7. Fill in the PR template. CI runs automatically and must pass. On your first PRs a maintainer
+   approves the CI run before it starts; that is a safety rule for outside contributors, not a judgement.
 8. A maintainer reviews. Address feedback by pushing more commits to the same branch.
 
-> Maintainers may push to `main` directly, but only on a tree whose verify set
-> just passed. Contributions from outside the org always land through a PR.
+> Every change lands through a pull request, maintainers' included. `main` cannot be
+> pushed to directly; see the collaborator guidelines below.
+
+## Collaborator guidelines
+
+These rules apply to everyone with write access, and GitHub enforces most of them.
+
+**Branches and merging**
+
+- `main` is protected by a ruleset: no direct pushes, no force pushes, no deletion.
+- Work on a branch in this repo (collaborators) or in a fork (everyone else), then open a PR.
+- A PR merges only when it has an approving review from a code owner (`.github/CODEOWNERS`),
+  every review conversation is resolved, the branch is up to date with `main`, and these
+  checks pass: `lint · typecheck · build · test (Node 20)`, `lint · typecheck · build · test (Node 24)`,
+  `Semgrep SAST`, `Gitleaks secret scan` and `Dependency audit`.
+- PRs are squash-merged, so the PR title becomes the commit on `main`. Write it as a
+  Conventional Commit. Branches are deleted after merge.
+- New pushes to a PR dismiss earlier approvals; ask for a fresh review.
+
+**Reviews**
+
+- Review for correctness, tests, the changelog and docs rule above, and the public API.
+- Do not approve your own work through a second account, and do not merge a PR you have not read.
+- Prefer requesting changes over merging and fixing later.
+
+**Releases**
+
+- Only maintainers create `v*` tags. Tags are protected; they cannot be moved or deleted.
+- Never publish to npm from a laptop except in an emergency. See "Releasing" below.
+
+**Security and dependencies**
+
+- Never commit secrets or `.env` files. Push protection blocks known secret formats; if it
+  flags something, rotate the secret instead of bypassing the block.
+- New GitHub Actions must be pinned to a full commit SHA (the repo rejects tags like `@v4`).
+- Dependencies install only after they have been public for 7 days, and pnpm refuses
+  versions whose provenance got weaker (`pnpm-workspace.yaml`). Do not loosen these rules
+  to get an install through; open an issue instead.
+- Dependabot security PRs are reviewed like any other PR.
+- Vulnerabilities go through [SECURITY.md](./SECURITY.md), never public issues.
 
 ## Changelog and docs are part of the change
 
@@ -102,17 +141,18 @@ agent.
 
 ## Releasing (maintainers)
 
-The normal path is a tag. `.github/workflows/release.yml` re-runs the verify set
-and publishes to npm with provenance:
+Releases publish from a tag through npm trusted publishing: there is no npm token.
+`.github/workflows/release.yml` re-runs the verify set, waits for a maintainer to approve
+the `github-drizzle-crud` environment, then publishes with provenance:
 
 ```bash
 pnpm lint && pnpm typecheck && pnpm build && pnpm test   # must be green first
 # bump packages/nestjs-drizzle-crud/package.json + CHANGELOG.md, commit, then:
-git tag v3.2.2 && git push origin v3.2.2
+git tag v3.3.1 && git push origin v3.3.1   # then approve the run in GitHub Actions
 ```
 
-`pnpm release` is the manual fallback. It runs `prepublishOnly` (build plus
-tests) and publishes from `packages/nestjs-drizzle-crud`, without provenance.
+`pnpm release` is an emergency-only fallback. It needs a maintainer's npm 2FA, and the
+release ships without provenance, so prefer fixing the workflow.
 
 ## Reporting security issues
 
