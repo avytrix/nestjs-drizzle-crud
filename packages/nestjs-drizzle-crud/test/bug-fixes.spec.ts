@@ -224,7 +224,11 @@ describe("Bug #6 (guard): restore returns the row on Postgres RETURNING path", (
 			where: jest.fn(() => upd),
 			returning: jest.fn(() => Promise.resolve([restored])),
 		};
-		const db: any = { update: jest.fn(() => upd) };
+		// The guard SELECT finds the row in the trash, then the UPDATE restores it.
+		const db: any = {
+			select: jest.fn(() => chain([{ id: 1 }])),
+			update: jest.fn(() => upd),
+		};
 		const svc = TestCrudFactory.createTestService(
 			Svc,
 			db,

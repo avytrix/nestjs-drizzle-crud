@@ -2644,3 +2644,79 @@ describe("re-audit R-02: deep filters are a 400", () => {
 		await expect(svc.findAll(deep(20))).resolves.toHaveProperty("total");
 	});
 });
+
+describe("re-audit: writes", () => {
+	const status = async (promise: Promise<unknown>) =>
+		(await caught(promise)).getStatus();
+
+	it("R-05: upsert onto a trashed row writes nothing and is a 404", async () => {
+		const db = await freshDb();
+		const svc = new Svc(base(db, authors));
+		await svc.softDelete(3);
+		expect(
+			await status(
+				svc.upsert(
+					{ name: "Cy2", email: "cy@x.io", role: "writer" },
+					{ conflictTarget: "email" },
+				),
+			),
+		).toBe(404);
+		const trashed = await svc.find(3, { withDeleted: true });
+		expect(trashed).toMatchObject({ name: "Cy" });
+		expect(trashed?.deleted_at).not.toBeNull();
+	});
+
+	it("R-07: a missing required value is a 400 that names the column", async () => {
+		const svc = postsService(await freshDb());
+		const error = await caught(
+			svc.create({
+				title: null,
+				author_id: 1,
+				status: "draft",
+				views: 0,
+			} as any),
+		);
+		expect(error.getStatus()).toBe(400);
+		expect(JSON.stringify(error.getResponse())).toContain("title");
+	});
+
+	it("R-08: MySQL duplicate and foreign key errors map to 409 and 400", () => {
+		const svc: any = new Svc(base({} as any, authors));
+		const dup = svc.toClientError({
+			code: "ER_DUP_ENTRY",
+			errno: 1062,
+			message: "Duplicate entry 'ann@x.io' for key 'authors.email'",
+		});
+		expect(dup.getStatus()).toBe(409);
+		expect(JSON.stringify(dup.getResponse())).toContain("email");
+		expect(svc.toClientError({ errno: 1452 }).getStatus()).toBe(400);
+		expect(svc.toClientError({ errno: 1451 }, "delete").getStatus()).toBe(409);
+	});
+
+	it("R-09: a scoped upsert without RETURNING never reads back another tenant's row", async () => {
+		const db = await freshDb();
+		const svc = docsService(db, {
+			sql: { ...base(db, docs).sql!, useReturning: false },
+		});
+		expect(
+			await status(
+				svc.upsert(
+					{ title: "mine", slug: "four" },
+					{ conflictTarget: "slug" },
+					asTenant(1),
+				),
+			),
+		).toBe(404);
+		expect((await svc.find(4, asTenant(2)))?.title).toBe("Four");
+	});
+
+	it("R-10: restore on a live row is a 404 and leaves it alone", async () => {
+		const db = await freshDb();
+		const svc = new Svc(base(db, authors));
+		const before = await svc.find(1);
+		expect(await status(svc.restore(1))).toBe(404);
+		expect((await svc.find(1))?.updated_at).toEqual(before?.updated_at);
+		await svc.softDelete(1);
+		await expect(svc.restore(1)).resolves.toMatchObject({ deleted_at: null });
+	});
+});

@@ -1253,11 +1253,13 @@ export abstract class SqlBaseCrudService<
 		};
 	}
 
-	// Detect a Postgres unique-constraint violation across driver shapes:
-	// postgres-js sets `.code` on the error; Drizzle wraps it under `.cause`.
+	// Detect a unique-constraint violation across driver shapes: postgres-js
+	// sets `.code` on the error, Drizzle wraps it under `.cause`, and mysql2
+	// reports ER_DUP_ENTRY (errno 1062).
 	protected isUniqueViolation(error: any): boolean {
 		const code = error?.code ?? error?.cause?.code;
-		return code === "23505"; // Postgres unique_violation
+		const errno = error?.errno ?? error?.cause?.errno;
+		return code === "23505" || code === "ER_DUP_ENTRY" || errno === 1062;
 	}
 
 	// Turn a Postgres unique violation into a typed 409 exception, parsing the
@@ -1265,7 +1267,14 @@ export abstract class SqlBaseCrudService<
 	// (e.g. "Key (code)=(EU) already exists.").
 	protected toDuplicateException(error: any): DuplicateEntityException {
 		const detail: string = error?.detail ?? error?.cause?.detail ?? "";
-		const m = detail.match(/Key \((?<field>.+?)\)=\((?<value>.+?)\)/);
+		const message: string = error?.cause?.message ?? error?.message ?? "";
+		// Postgres: "Key (code)=(EU) already exists."; MySQL: "Duplicate entry
+		// 'EU' for key 'countries.code'".
+		const m =
+			detail.match(/Key \((?<field>.+?)\)=\((?<value>.+?)\)/) ??
+			message.match(
+				/Duplicate entry '(?<value>.*)' for key '(?:[^']*\.)?(?<field>[^']+)'/,
+			);
 		return new DuplicateEntityException(
 			this.getEntityName(),
 			m?.groups?.field ?? "unique field",
@@ -1277,12 +1286,13 @@ export abstract class SqlBaseCrudService<
 	// server fault: value too long (22001), failed CHECK (23514), numeric out of
 	// range (22003), a value the column type cannot parse such as "abc" for an
 	// integer or an unknown enum label (22P02), and a malformed or out of range
-	// date (22007, 22008). These otherwise surface as a raw 500; map them to 400
-	// so the caller sees a client error (mirrors the unique-violation -> 409
-	// mapping). (NOT-NULL violations are intentionally left to bubble: they
-	// usually indicate a programming/config error, not a recoverable bad value.
-	// FK violations are handled separately below.)
+	// date (22007, 22008), and a missing required value (23502), which nested
+	// creates and the controller factory make client input. These otherwise
+	// surface as a raw 500; map them to 400 so the caller sees a client error
+	// (mirrors the unique-violation -> 409 mapping). FK violations are handled
+	// separately below.
 	private static readonly DATA_ERRORS: Record<string, string> = {
+		"23502": "a required value is missing",
 		"22001": "a value is too long for its column",
 		"23514": "a value violates a column check constraint",
 		"22003": "a numeric value is out of range",
@@ -1299,8 +1309,16 @@ export abstract class SqlBaseCrudService<
 
 	protected toDataException(error: any): ValidationFailedException {
 		const code = error?.code ?? error?.cause?.code;
+		const message = SqlBaseCrudService.DATA_ERRORS[code] ?? "invalid value";
+		// node-postgres and PGlite name it `column`, postgres-js `column_name`.
+		const cause = error?.cause ?? error;
+		const column =
+			error?.column ??
+			cause?.column ??
+			error?.column_name ??
+			cause?.column_name;
 		return new ValidationFailedException(
-			SqlBaseCrudService.DATA_ERRORS[code] ?? "invalid value",
+			column ? `${message}: ${column}` : message,
 		);
 	}
 
@@ -1334,9 +1352,12 @@ export abstract class SqlBaseCrudService<
 	// Postgres foreign-key violation (23503). The direction decides the status:
 	// on create/update the caller referenced a parent row that does not exist
 	// (400), on delete other rows still reference this one (409).
+	// MySQL: ER_NO_REFERENCED_ROW_2 (1452) on a write, ER_ROW_IS_REFERENCED_2
+	// (1451) on a delete.
 	protected isForeignKeyViolation(error: any): boolean {
 		const code = error?.code ?? error?.cause?.code;
-		return code === "23503";
+		const errno = error?.errno ?? error?.cause?.errno;
+		return code === "23503" || errno === 1451 || errno === 1452;
 	}
 
 	protected toForeignKeyException(error: any): ForeignKeyViolationException {
@@ -2648,15 +2669,14 @@ export abstract class SqlBaseCrudService<
 		}
 
 		const { transaction, hooks = {} } = options || {};
-		if (options?.expectedVersion != null && this.config.versionColumn) {
-			const existing = await this.findForGuard(id, {
-				...options,
-				withDeleted: true,
-				onlyDeleted: false,
-			});
-			if (!existing)
-				throw new EntityNotFoundException(this.getEntityName(), id);
-		}
+		// Only a row in the trash can be restored. A live row is a 404, before
+		// any hook or event runs, rather than a write that changes nothing.
+		const existing = await this.findForGuard(id, {
+			...options,
+			withDeleted: false,
+			onlyDeleted: true,
+		});
+		if (!existing) throw new EntityNotFoundException(this.getEntityName(), id);
 		if (!hooks.skipBefore) await this.beforeRestore(id);
 		await this.emitEvent(
 			"before",
@@ -2971,13 +2991,19 @@ export abstract class SqlBaseCrudService<
 			}
 			statement = insert.onDuplicateKeyUpdate({ set });
 		} else {
-			const scoped = this.scopeConditions(options);
+			// Only a live row of the caller's tenant is updated. A conflict with a
+			// trashed row, or another tenant's, writes nothing and comes back as
+			// missing (404), the same as update() on that row.
+			const guard = [
+				...this.scopeConditions(options),
+				...[this.softDeleteCondition(table)].filter(Boolean),
+			];
 			statement = insert.onConflictDoUpdate({
 				target: targets.length === 1 ? targets[0] : targets,
 				set,
 				// `where` renders after the SET (DO UPDATE SET ... WHERE), the same
 				// as `setWhere`, and every Drizzle version in the peer range has it.
-				...(scoped.length > 0 && { where: and(...scoped) }),
+				...(guard.length > 0 && { where: and(...guard) }),
 			});
 		}
 		if (!readBack) return statement.returning();
@@ -2985,10 +3011,19 @@ export abstract class SqlBaseCrudService<
 		const match = rows.map((row) =>
 			and(...targetKeys.map((key, i) => eq(targets[i], row[key]))),
 		);
+		// The same guard on the read-back, so a skipped conflict never hands back
+		// another tenant's row or a trashed one.
+		const softDeleted = this.softDeleteCondition(table);
 		return db
 			.select()
 			.from(table)
-			.where(match.length === 1 ? match[0] : or(...match));
+			.where(
+				and(
+					match.length === 1 ? match[0] : or(...match),
+					...this.scopeConditions(options),
+					...(softDeleted ? [softDeleted] : []),
+				),
+			);
 	}
 
 	// The value a row would have had: excluded.col on Postgres, VALUES(col) on
