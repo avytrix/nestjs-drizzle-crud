@@ -6,7 +6,7 @@
  * CHANGELOG.md) to any MCP client: Claude Code, Codex, Cursor, Copilot,
  * Gemini CLI, Windsurf, Zed, Cline and anything else that speaks the protocol.
  *
- * Run it with `npx nestjs-drizzle-crud-mcp` (stdio transport, JSON-RPC 2.0 over
+ * Run it with `npx -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp` (stdio transport, JSON-RPC 2.0 over
  * newline-delimited messages). It has no dependencies: the protocol surface used
  * here is small enough that an SDK would cost every consumer a package for no
  * gain, and the package ships zero runtime dependencies on purpose.

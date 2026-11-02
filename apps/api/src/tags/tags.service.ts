@@ -1,4 +1,4 @@
-import { type CrudFilter, SqlBaseCrudService } from "nestjs-drizzle-crud";
+import { type CrudFilter, SqlBaseCrudService } from "@avytrix/nestjs-drizzle-crud";
 import type { tags } from "../db/schema";
 import type { CreateTagDto } from "./dto/create-tag.dto";
 

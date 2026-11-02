@@ -1,12 +1,30 @@
 # Changelog
 
-All notable changes to `nestjs-drizzle-crud` are documented here.
+All notable changes to `@avytrix/nestjs-drizzle-crud` (published as `nestjs-drizzle-crud` up to 3.5.0) are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Scope note: the 3.0.x line is PostgreSQL-first. MySQL-specific paths (non-`RETURNING`
 restore, `ER_DUP_ENTRY` mapping, dialect locking) are tracked separately and unchanged here.
+
+## [3.5.1] - 2026-11-02
+
+### Changed
+
+- The package is now published as `@avytrix/nestjs-drizzle-crud`. The code is the same as 3.5.0.
+  Update the dependency and the imports:
+
+  ```sh
+  pnpm remove nestjs-drizzle-crud && pnpm add @avytrix/nestjs-drizzle-crud
+  ```
+
+  ```ts
+  import { CrudService } from "@avytrix/nestjs-drizzle-crud";
+  ```
+
+  The MCP server runs with `npx -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp`.
+  The unscoped `nestjs-drizzle-crud` package is deprecated and gets no new releases.
 
 ## [3.5.0] - 2026-11-02
 

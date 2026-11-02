@@ -32,7 +32,7 @@
 		"@types/react": "^19.3.0",
 		"@types/react-dom": "^19.3.0",
 		"drizzle-orm": "^0.45.2",
-		"nestjs-drizzle-crud": "workspace:*",
+		"@avytrix/nestjs-drizzle-crud": "workspace:*",
 		"postcss": "^8.5.10",
 		"tailwindcss": "^4.3.3",
 		"typescript": "^5.9.3"

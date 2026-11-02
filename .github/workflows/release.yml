@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   publish:
-    name: publish nestjs-drizzle-crud
+    name: publish @avytrix/nestjs-drizzle-crud
     runs-on: ubuntu-latest
     # npm's trusted publisher requires this environment; GitHub only allows it from
     # v* tags and holds the job until a maintainer approves the deployment.
@@ -42,9 +42,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Gate the release on the same checks as local "done".
       - run: pnpm lint
-      - run: pnpm --filter nestjs-drizzle-crud typecheck
-      - run: pnpm --filter nestjs-drizzle-crud build
-      - run: pnpm --filter nestjs-drizzle-crud test
+      - run: pnpm --filter @avytrix/nestjs-drizzle-crud typecheck
+      - run: pnpm --filter @avytrix/nestjs-drizzle-crud build
+      - run: pnpm --filter @avytrix/nestjs-drizzle-crud test
       # Trusted publishing needs npm >= 11.5.1; Node 24 bundles npm 11, this pins the floor
       - run: npm install -g npm@^11.5.1 && npm --version
       # npm (not pnpm) publishes: it performs the OIDC exchange. The package has no workspace: deps.

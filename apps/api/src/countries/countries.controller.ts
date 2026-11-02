@@ -10,7 +10,7 @@ import {
 	Post,
 	Query,
 } from "@nestjs/common";
-import { ApiCrudList } from "nestjs-drizzle-crud";
+import { ApiCrudList } from "@avytrix/nestjs-drizzle-crud";
 import { countries } from "../db/schema";
 // Value imports (not `import type`): NestJS DI and ValidationPipe read the
 // runtime class from emitDecoratorMetadata; type-only imports would erase them.

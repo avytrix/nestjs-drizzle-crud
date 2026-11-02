@@ -1,6 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
-import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { DrizzleCrudModule } from "@avytrix/nestjs-drizzle-crud";
 import { CountriesModule } from "./countries/countries.module";
 import { createPgliteDb, isPglite } from "./db/pglite";
 import * as schema from "./db/schema";

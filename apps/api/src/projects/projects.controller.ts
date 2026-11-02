@@ -1,6 +1,6 @@
 import { Controller } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
-import { createCrudController } from "nestjs-drizzle-crud";
+import { createCrudController } from "@avytrix/nestjs-drizzle-crud";
 import { projects } from "../db/schema";
 // Value imports: the factory hands the DTO classes to ValidationPipe.
 import { CreateProjectDto } from "./dto/create-project.dto";

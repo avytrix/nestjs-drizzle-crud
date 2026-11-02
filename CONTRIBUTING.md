@@ -38,8 +38,8 @@ pnpm test         # library unit tests, plus the api e2e (self-contained)
 Working on one workspace:
 
 ```bash
-pnpm --filter nestjs-drizzle-crud test              # unit tests
-pnpm --filter nestjs-drizzle-crud test -- -t "soft delete"
+pnpm --filter @avytrix/nestjs-drizzle-crud test              # unit tests
+pnpm --filter @avytrix/nestjs-drizzle-crud test -- -t "soft delete"
 pnpm dev                                            # docs site on :3000
 pnpm dev:api                                        # example api on :4000
 pnpm dev:all                                        # both together
@@ -131,7 +131,7 @@ requirements for docs pages, are in [`AGENTS.md`](./AGENTS.md).
 
 - TypeScript, strict. Keep the public API typed, and export anything public from `src/index.ts`.
 - Run `pnpm format` (Biome) before committing. Tabs, double quotes, 80 columns.
-- Add or adjust tests for any behaviour change. Coverage should not regress (`pnpm --filter nestjs-drizzle-crud test:cov`).
+- Add or adjust tests for any behaviour change. Coverage should not regress (`pnpm --filter @avytrix/nestjs-drizzle-crud test:cov`).
 - No new runtime dependency. The package ships with peers only.
 - Keep changes focused: one logical change per PR.
 

@@ -1,5 +1,5 @@
 import { Module } from "@nestjs/common";
-import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { DrizzleCrudModule } from "@avytrix/nestjs-drizzle-crud";
 import { tags } from "../db/schema";
 import { TagsController } from "./tags.controller";
 import { TagsService } from "./tags.service";

@@ -3,7 +3,7 @@ import {
 	Module,
 	type NestModule,
 } from "@nestjs/common";
-import { CrudContext, DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { CrudContext, DrizzleCrudModule } from "@avytrix/nestjs-drizzle-crud";
 import { projects } from "../db/schema";
 import { ProjectsController } from "./projects.controller";
 import { projectsCrud } from "./projects.crud";

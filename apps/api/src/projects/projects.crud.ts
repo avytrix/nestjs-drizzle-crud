@@ -1,4 +1,4 @@
-import type { CrudFeatureConfig } from "nestjs-drizzle-crud";
+import type { CrudFeatureConfig } from "@avytrix/nestjs-drizzle-crud";
 
 // One config for both forFeature and the OpenAPI docs of the controller.
 export const projectsCrud = {
