@@ -9,10 +9,14 @@
  */
 
 import { PGlite } from "@electric-sql/pglite";
-import { afterAll, describe, expect, it } from "@jest/globals";
+import { afterAll, describe, expect, it, jest } from "@jest/globals";
 import { BadRequestException, HttpException } from "@nestjs/common";
 import {
+	bigint,
+	boolean,
 	integer,
+	jsonb,
+	numeric,
 	pgEnum,
 	pgTable,
 	serial,
@@ -23,6 +27,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { drizzle } from "drizzle-orm/pglite";
 import { SqlBaseCrudService } from "../src/core/abstract/sql-base-crud.service";
+import { parseCrudQuery } from "../src/core/utils/query-parser";
 import type { SqlCrudConfig } from "../src/core/interfaces/sql-crud-config.interface";
 import { BulkOperationException } from "../src/exceptions/crud.exceptions";
 import { DrizzleCrudModule } from "../src/modules/drizzle-crud.module";
@@ -72,6 +77,20 @@ const notes = pgTable("notes", {
 	deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });
 
+// Column types the query parser coerces and the Postgres-only operators need.
+// `rank` is nullable, for keyset pages over NULLs.
+const items = pgTable("items", {
+	id: serial("id").primaryKey(),
+	name: text("name").notNull(),
+	labels: text("labels").array().notNull(),
+	meta: jsonb("meta").notNull(),
+	active: boolean("active").notNull(),
+	big: bigint("big", { mode: "bigint" }).notNull(),
+	price: numeric("price").notNull(),
+	rank: integer("rank"),
+	sku: varchar("sku").notNull().unique(),
+});
+
 const DDL = `
 CREATE TYPE author_role AS ENUM ('admin', 'writer');
 CREATE TYPE post_status AS ENUM ('draft', 'published');
@@ -111,6 +130,17 @@ CREATE TABLE notes (
   updated_at timestamptz DEFAULT now(),
   deleted_at timestamptz
 );
+CREATE TABLE items (
+  id serial PRIMARY KEY,
+  name text NOT NULL,
+  labels text[] NOT NULL,
+  meta jsonb NOT NULL,
+  active boolean NOT NULL,
+  big bigint NOT NULL,
+  price numeric NOT NULL,
+  rank integer,
+  sku varchar NOT NULL UNIQUE
+);
 `;
 
 // 3 authors, 30 posts (10 each, round robin). Posts 1-15 are published on
@@ -130,6 +160,11 @@ SELECT 'Post ' || n, ((n - 1) % 3) + 1,
 FROM generate_series(1, 30) AS n;
 INSERT INTO comments (body, author_id) VALUES ('first', 1), ('second', 2);
 INSERT INTO notes (body) VALUES ('hello');
+INSERT INTO items (name, labels, meta, active, big, price, rank, sku) VALUES
+  ('50% off_sale', '{red,blue}', '{"size": "L", "tags": ["a"]}', true, 9007199254740993, 10.50, 2, 'A1'),
+  ('Back\\slash', '{blue}', '{"size": "M"}', false, 1, 3.25, NULL, 'A2'),
+  ('plain', '{green}', '{"size": "L"}', true, 2, 100, 1, 'A3'),
+  ('Plain upper', '{}', '{}', false, 3, 0, NULL, 'A4');
 `;
 
 // Every database is closed after the run, so Jest exits without open handles.
@@ -138,12 +173,31 @@ afterAll(async () => {
 	await Promise.all(clients.map((client) => client.close()));
 });
 
-async function freshDb(): Promise<any> {
+async function freshDb(log?: string[]): Promise<any> {
 	const client = await PGlite.create();
 	clients.push(client);
 	await client.exec(DDL);
 	await client.exec(SEED);
-	return drizzle(client);
+	return drizzle(
+		client,
+		log ? { logger: { logQuery: (query) => log.push(query) } } : {},
+	);
+}
+
+// A fresh database that records every statement Drizzle sends. `statements`
+// counts the data statements only (SELECT, INSERT, UPDATE, DELETE), not BEGIN
+// or SAVEPOINT.
+async function countingDb() {
+	const log: string[] = [];
+	const db = await freshDb(log);
+	return {
+		db,
+		reset: () => {
+			log.length = 0;
+		},
+		statements: () =>
+			log.filter((query) => /^\s*(select|insert|update|delete)\b/i.test(query)),
+	};
 }
 
 // Read-only tests share one database. Anything that writes calls freshDb().
@@ -444,7 +498,8 @@ describe("BUG-10: unknown filters are rejected, not dropped", () => {
 
 	it("rejects an unknown operator", async () => {
 		const svc = postsService(await sharedDb());
-		await expect400(svc.findAll({ views: { between: [1, 2] } }));
+		// `between` was the example here until 3.4.0 made it an operator.
+		await expect400(svc.findAll({ views: { roughly: 2 } }));
 	});
 });
 
@@ -596,5 +651,877 @@ describe("BUG-20: nested collections key on their own table", () => {
 		});
 		expect(comment.author.name).toBe("Ann");
 		expect(comment.author.posts).toHaveLength(10);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 3.4.0 features. Same rules as above: real SQL, one fresh database per test
+// that writes.
+// ---------------------------------------------------------------------------
+
+function itemsService(db: any, overrides: Partial<SqlCrudConfig> = {}) {
+	return new Svc({
+		...base(db, items),
+		softDelete: { enabled: false, column: "deleted_at" },
+		timestamps: undefined,
+		...overrides,
+	});
+}
+
+function authorsWithPosts(db: any) {
+	return new Svc({
+		...base(db, authors),
+		relations: {
+			posts: { table: posts, type: "hasMany", foreignKey: "author_id" },
+		},
+	});
+}
+
+const ids = (res: { data: any[] }) => res.data.map((row: any) => row.id);
+
+describe("M01: parseCrudQuery", () => {
+	const parse = (query: Record<string, unknown>, options = {}) =>
+		parseCrudQuery(query, posts, {
+			relations: { author: { table: authors, localKey: "author_id" } },
+			...options,
+		});
+
+	it("coerces values by column type and the service runs them", async () => {
+		const q = parse({
+			"views[gte]": "3",
+			author_id: "1",
+			"published_at[lt]": "2024-01-05",
+		});
+		expect(q.filters).toEqual({
+			views: { gte: 3 },
+			author_id: 1,
+			published_at: { lt: new Date("2024-01-05") },
+		});
+		const svc = postsService(await sharedDb());
+		// author 1 has posts 1, 4, 7, ...; published before Jan 5: 1 and 4;
+		// views = n % 5 >= 3 keeps 4 only.
+		expect(ids(await svc.findAll(q.filters, q.pagination, q.options))).toEqual([
+			4,
+		]);
+	});
+
+	it("coerces booleans, bigints, numerics and array operands", async () => {
+		const q = parseCrudQuery(
+			{
+				active: "true",
+				"big[eq]": "9007199254740993",
+				"price[gte]": "10.5",
+				"labels[arrayContains]": "red,blue",
+			},
+			items,
+		);
+		expect(q.filters).toEqual({
+			active: true,
+			big: { eq: 9007199254740993n },
+			price: { gte: "10.5" },
+			labels: { arrayContains: ["red", "blue"] },
+		});
+		const svc = itemsService(await sharedDb());
+		expect((await svc.findAll(q.filters)).data.map((i: any) => i.sku)).toEqual([
+			"A1",
+		]);
+	});
+
+	it("reads qs-style nested objects the same as bracket keys", () => {
+		const flat = parse({ "views[gte]": "2", "author[name]": "Bob" });
+		const nested = parse({ views: { gte: "2" }, author: { name: "Bob" } });
+		expect(nested.filters).toEqual(flat.filters);
+		expect(parse({ "author.name": "Bob" }).filters).toEqual({
+			author: { name: "Bob" },
+		});
+	});
+
+	it("turns repeated keys and in/notIn/between lists into arrays", () => {
+		expect(
+			parse({
+				views: ["1", "2"],
+				"author_id[notIn]": "2,3",
+				"id[between]": "1,5",
+			}).filters,
+		).toEqual({
+			views: [1, 2],
+			author_id: { notIn: [2, 3] },
+			id: { between: [1, 5] },
+		});
+	});
+
+	it("answers bad values, unknown columns and unknown operators with a 400", () => {
+		for (const query of [
+			{ "views[gte]": "abc" },
+			{ "published_at[gt]": "garbage" },
+			{ titel: "x" },
+			{ "views[roughly]": "2" },
+			{ "author[nmae]": "Bob" },
+			{ "id[between]": "1" },
+			{ page: "0" },
+			{ limit: "ten" },
+			{ sortBy: "nope" },
+			{ sortOrder: "up" },
+			{ fields: "id,secret" },
+			{ with: "editor" },
+			{ search: "x" },
+			{ withDeleted: "true" },
+			{ "__proto__[x]": "1" },
+		]) {
+			expect(() => parse(query)).toThrow(BadRequestException);
+		}
+		expect(() => parseCrudQuery({ active: "maybe" }, items)).toThrow(
+			BadRequestException,
+		);
+	});
+
+	it("parses sort, pagination, fields, relations, search and trash flags", () => {
+		const q = parse(
+			{
+				sortBy: "-views,author.name",
+				page: "2",
+				limit: "5",
+				fields: "id,title,author.name",
+				with: "author",
+				search: " post ",
+				withDeleted: "true",
+			},
+			{ searchColumns: ["title"], allowTrash: true },
+		);
+		expect(q.sort).toEqual([
+			{ column: "views", order: "desc" },
+			{ column: "author.name", order: "asc" },
+		]);
+		expect(q.pagination).toEqual({ page: 2, limit: 5, sortBy: q.sort });
+		expect(q.options).toEqual({
+			select: ["id", "title", "author.name"],
+			relations: ["author"],
+			search: { term: "post", columns: ["title"] },
+			withDeleted: true,
+		});
+		expect(q.isCursor).toBe(false);
+		expect(parse({ cursor: "" }).pagination.cursor).toBeNull();
+		expect(parse({ after: "abc", count: "true" }).pagination).toEqual({
+			cursor: "abc",
+			count: true,
+		});
+	});
+
+	it("parses or / not groups, relations included", async () => {
+		const q = parse({
+			"or[0][status]": "draft",
+			"or[1][author][name]": "Bob",
+			"not[views]": "0",
+		});
+		expect(q.filters).toEqual({
+			or: [{ status: "draft" }, { author: { name: "Bob" } }],
+			not: { views: 0 },
+		});
+		const svc = postsService(await sharedDb());
+		// drafts (16..30) or Bob's (2, 5, ..., 29): 20 posts, minus views 0.
+		const res = await svc.findAll(q.filters, { limit: 100 });
+		expect(res.total).toBe(16);
+	});
+
+	it("service.parseQuery uses the entity's relations and allowlists", async () => {
+		const svc = postsService(await sharedDb(), {
+			filterableColumns: ["status"],
+		});
+		expect(svc.parseQuery({ status: "draft" }).filters).toEqual({
+			status: "draft",
+		});
+		expect(() => svc.parseQuery({ views: "1" })).toThrow(BadRequestException);
+	});
+});
+
+describe("M02: allowlists", () => {
+	const locked = async () =>
+		postsService(await sharedDb(), {
+			filterableColumns: ["status", "author.name"],
+			sortableColumns: ["title", "author.name"],
+			selectableColumns: ["title", "author.name"],
+			searchableColumns: ["title"],
+			loadableRelations: ["author"],
+		});
+
+	it("allows what is listed", async () => {
+		const svc = await locked();
+		const res = await svc.findAll(
+			{ status: "published", author: { name: "Ann" } },
+			{ sortBy: ["author.name", "-title"], limit: 3 },
+			{
+				select: ["id", "title", "author.name"],
+				relations: ["author"],
+				search: { term: "post", columns: ["title"] },
+			},
+		);
+		expect(res.total).toBe(5);
+		expect(Object.keys(res.data[0]).sort()).toEqual(["author", "id", "title"]);
+	});
+
+	it("rejects anything else with a 400, in the service and the parser", async () => {
+		const svc = await locked();
+		await expect400(svc.findAll({ views: 1 }));
+		await expect400(svc.count({ author: { role: "admin" } }));
+		await expect400(svc.findAll({ or: [{ views: 1 }] }));
+		await expect400(svc.findAll({}, { sortBy: "views" }));
+		await expect400(svc.findAll({}, {}, { select: ["views"] }));
+		await expect400(svc.find(1, { select: ["author_id"] }));
+		await expect400(
+			svc.findAll({}, {}, { search: { term: "x", columns: ["status"] } }),
+		);
+		await expect400(svc.fullTextSearch("post", ["status"]));
+		await expect400(svc.findByCursor({}, { sortBy: "views" }));
+		for (const query of [
+			{ views: "1" },
+			{ sortBy: "views" },
+			{ fields: "views" },
+			{ "author[role]": "admin" },
+		]) {
+			expect(() => svc.parseQuery(query)).toThrow(BadRequestException);
+		}
+	});
+
+	it("always allows the primary key in select and sort", async () => {
+		const svc = await locked();
+		const res = await svc.findAll(
+			{},
+			{ sortBy: "-id", limit: 1 },
+			{ select: ["id"] },
+		);
+		expect(res.data).toEqual([{ id: 30 }]);
+	});
+
+	it("lets a trusted call skip the lists", async () => {
+		const svc = await locked();
+		expect(await svc.count({ views: 0 }, { skipAllowlists: true })).toBe(6);
+	});
+
+	it("rejects an unlisted relation", async () => {
+		const db = await sharedDb();
+		const svc = new Svc({
+			...base(db, authors),
+			relations: {
+				posts: { table: posts, type: "hasMany", foreignKey: "author_id" },
+			},
+			loadableRelations: [],
+		});
+		await expect400(svc.find(1, { relations: ["posts"] }));
+	});
+
+	it("ignores managed columns in a body by default", async () => {
+		const db = await freshDb();
+		const svc = authorsService(db);
+		const created = await svc.create({
+			name: "D",
+			email: "d@x.io",
+			role: "writer",
+			deleted_at: new Date(),
+		});
+		expect(created.deleted_at).toBeNull();
+		const updated = await svc.update(created.id, {
+			id: 999,
+			name: "Dee",
+			created_at: new Date("2000-01-01"),
+		});
+		expect(updated.id).toBe(created.id);
+		expect(updated.name).toBe("Dee");
+		expect(updated.created_at.getTime()).toBe(created.created_at.getTime());
+		await expect400(svc.update(created.id, { id: 5 }));
+	});
+
+	it("writableColumns rejects any other column with a 400", async () => {
+		const db = await freshDb();
+		const svc = new Svc({
+			...base(db, authors),
+			writableColumns: ["name", "email", "role"],
+		});
+		await expect400(
+			svc.create({ name: "D", email: "d@x.io", role: "admin", id: 50 }),
+		);
+		await expect400(svc.update(1, { name: "A", deleted_at: null }));
+		expect((await svc.update(1, { name: "A" })).name).toBe("A");
+		await expect400(svc.massUpdate([1, 2], { role: "admin", id: 7 }));
+	});
+});
+
+describe("M03: trash view and purge", () => {
+	it("lists deleted rows with onlyDeleted and everything with withDeleted", async () => {
+		const db = await freshDb();
+		const svc = postsService(db);
+		await svc.massSoftDelete([1, 2]);
+		expect((await svc.findAll()).total).toBe(28);
+		const trash = await svc.findAll({}, {}, { onlyDeleted: true });
+		expect(ids(trash)).toEqual([1, 2]);
+		expect((await svc.findAll({}, {}, { withDeleted: true })).total).toBe(30);
+		expect(await svc.count({ author_id: 1 }, { onlyDeleted: true })).toBe(1);
+		expect(await svc.find(1)).toBeNull();
+		expect((await svc.find(1, { withDeleted: true }))?.id).toBe(1);
+		expect(
+			(await svc.findOne({ title: "Post 2" }, { onlyDeleted: true }))?.id,
+		).toBe(2);
+		expect(await svc.exists(2, { withDeleted: true })).toBe(true);
+	});
+
+	it("forceDelete hard-deletes a soft-deleted row; delete still 404s on it", async () => {
+		const db = await freshDb();
+		const svc = postsService(db);
+		await svc.softDelete(3);
+		const notFound = await caught(svc.delete(3));
+		expect((notFound as HttpException).getStatus()).toBe(404);
+		expect(await svc.forceDelete(3)).toBe(true);
+		expect(await svc.find(3, { withDeleted: true })).toBeNull();
+		expect(await svc.forceDelete(4)).toBe(true);
+	});
+
+	it("massForceDelete purges deleted and live rows in one statement", async () => {
+		const { db, reset, statements } = await countingDb();
+		const svc = postsService(db);
+		await svc.softDelete(5);
+		reset();
+		await svc.massForceDelete([5, 6]);
+		expect(statements()).toHaveLength(2);
+		expect((await svc.findAll({}, {}, { withDeleted: true })).total).toBe(28);
+	});
+
+	it("onlyDeleted on an entity without soft delete is a 400", async () => {
+		const svc = itemsService(await sharedDb());
+		await expect400(svc.findAll({}, {}, { onlyDeleted: true }));
+	});
+});
+
+describe("M04: set-based bulk writes", () => {
+	const ten = Array.from({ length: 10 }, (_, i) => i + 1);
+
+	it("massUpdate is one SELECT and one UPDATE for ten ids", async () => {
+		const { db, reset, statements } = await countingDb();
+		const svc = postsService(db);
+		reset();
+		const updated = await svc.massUpdate(ten, { title: "bulk" });
+		expect(statements().map((q) => q.split(" ")[0])).toEqual([
+			"select",
+			"update",
+		]);
+		expect(updated.map((p: any) => p.id)).toEqual(ten);
+		expect(updated.every((p: any) => p.title === "bulk")).toBe(true);
+	});
+
+	it("massCreate is one INSERT", async () => {
+		const { db, reset, statements } = await countingDb();
+		const svc = authorsService(db);
+		reset();
+		const created = await svc.massCreate(
+			ten.map((n) => ({ name: `N${n}`, email: `n${n}@x.io`, role: "writer" })),
+		);
+		expect(statements()).toHaveLength(1);
+		expect(created.map((a: any) => a.name)).toEqual(ten.map((n) => `N${n}`));
+	});
+
+	it("soft delete, restore and delete are two statements each", async () => {
+		const { db, reset, statements } = await countingDb();
+		const svc = postsService(db);
+		for (const run of [
+			() => svc.massSoftDelete(ten),
+			() => svc.massRestore(ten),
+			() => svc.massDelete(ten),
+		]) {
+			reset();
+			await run();
+			expect(statements()).toHaveLength(2);
+		}
+		expect((await svc.findAll({}, {}, { withDeleted: true })).total).toBe(20);
+	});
+
+	it("names the item that clashes with another item of the same batch", async () => {
+		const db = await freshDb();
+		const svc = authorsService(db);
+		const error = await caught(
+			svc.massCreate([
+				{ name: "D", email: "d@x.io", role: "writer" },
+				{ name: "E", email: "e@x.io", role: "writer" },
+				{ name: "D2", email: "d@x.io", role: "writer" },
+			]),
+		);
+		const body = (error as HttpException).getResponse() as any;
+		expect(body.errors).toEqual([
+			{ index: 2, status: 409, message: expect.stringContaining("d@x.io") },
+		]);
+		expect(await svc.count()).toBe(3);
+	});
+
+	it("reports a delete blocked by dependent rows as a 409 for that id", async () => {
+		const db = await freshDb();
+		const svc = authorsService(db);
+		const free = await svc.create({
+			name: "Z",
+			email: "z@x.io",
+			role: "writer",
+		});
+		const error = await caught(svc.massDelete([free.id, 1]));
+		const body = (error as HttpException).getResponse() as any;
+		expect(body.errors).toEqual([
+			{ id: 1, status: 409, message: expect.any(String) },
+		]);
+		expect(await svc.exists(free.id)).toBe(true);
+	});
+
+	it("reports an id of the wrong type as a 400 for that id", async () => {
+		const db = await freshDb();
+		const error = await caught(
+			postsService(db).massUpdate([1, "abc"], { title: "x" }),
+		);
+		const body = (error as HttpException).getResponse() as any;
+		expect(body.errors).toEqual([
+			{ id: "abc", status: 400, message: expect.any(String) },
+		]);
+	});
+
+	it("leaves nothing behind inside a caller's transaction", async () => {
+		const db = await freshDb();
+		const svc = authorsService(db);
+		await db.transaction(async (tx: any) => {
+			await caught(
+				svc.massCreate(
+					[
+						{ name: "D", email: "d@x.io", role: "writer" },
+						{ name: "Dup", email: "ann@x.io", role: "writer" },
+					],
+					{ transaction: tx },
+				),
+			);
+			expect(await svc.count({}, { transaction: tx })).toBe(3);
+		});
+		expect(await svc.count()).toBe(3);
+	});
+
+	it("runs hooks once per item", async () => {
+		const db = await freshDb();
+		const seen: any[] = [];
+		class Hooked extends SqlBaseCrudService<any, any, any, any> {
+			protected async beforeUpdate(id: any, data: any) {
+				seen.push(id);
+				return data;
+			}
+			protected async afterCreate(entity: any) {
+				seen.push(entity.email);
+			}
+		}
+		const svc = new Hooked(base(db, authors));
+		await svc.massUpdate([1, 2, 2], { role: "admin" });
+		await svc.massCreate([{ name: "D", email: "d@x.io", role: "writer" }]);
+		expect(seen).toEqual([1, 2, "d@x.io"]);
+	});
+
+	it("writes each row on its own when a hook returns different data per id", async () => {
+		const db = await freshDb();
+		class PerId extends SqlBaseCrudService<any, any, any, any> {
+			protected async beforeUpdate(id: any, data: any) {
+				return { ...data, name: `${data.name}-${id}` };
+			}
+		}
+		const svc = new PerId(base(db, authors));
+		const rows = await svc.massUpdate([2, 1], { name: "X" });
+		expect(rows.map((a: any) => a.name)).toEqual(["X-2", "X-1"]);
+	});
+
+	it('keeps the 3.3 behaviour with bulkMode: "perItem"', async () => {
+		const { db, reset, statements } = await countingDb();
+		const svc = postsService(db);
+		reset();
+		await svc.massUpdate([1, 2, 3], { title: "p" }, { bulkMode: "perItem" });
+		expect(statements()).toHaveLength(6);
+		const error = await caught(
+			svc.massUpdate([1, 999], { title: "p" }, { bulkMode: "perItem" }),
+		);
+		expect(((error as HttpException).getResponse() as any).errors).toEqual([
+			{ id: 999, status: 404, message: expect.any(String) },
+		]);
+	});
+});
+
+describe("M05: upsert", () => {
+	it("updates the row that owns the conflict key, inserts otherwise", async () => {
+		const db = await freshDb();
+		const svc = authorsService(db);
+		const updated = await svc.upsert(
+			{ name: "Annie", email: "ann@x.io", role: "admin" },
+			{ conflictTarget: "email" },
+		);
+		expect(updated.id).toBe(1);
+		expect(updated.name).toBe("Annie");
+		const inserted = await svc.upsert(
+			{ name: "New", email: "new@x.io", role: "writer" },
+			{ conflictTarget: "email" },
+		);
+		// The id is not 4: Postgres spent a sequence value on the first conflict.
+		expect(inserted.id).toBeGreaterThan(3);
+		expect(inserted.email).toBe("new@x.io");
+		expect(await svc.count()).toBe(4);
+	});
+
+	it("overwrites only the listed columns", async () => {
+		const db = await freshDb();
+		const svc = authorsService(db);
+		const row = await svc.upsert(
+			{ name: "Ignored", email: "bob@x.io", role: "admin" },
+			{ conflictTarget: "email", update: ["role"] },
+		);
+		expect([row.name, row.role]).toEqual(["Bob", "admin"]);
+		const same = await svc.upsert(
+			{ name: "Ignored", email: "bob@x.io", role: "writer" },
+			{ conflictTarget: "email", update: [] },
+		);
+		expect([same.id, same.role]).toEqual([2, "admin"]);
+	});
+
+	it("maps a clash on another unique key to a 409 and bad input to a 400", async () => {
+		const db = await freshDb();
+		const svc = itemsService(db);
+		const clash = await caught(
+			svc.upsert(
+				{
+					id: 1,
+					name: "x",
+					labels: [],
+					meta: {},
+					active: true,
+					big: 1n,
+					price: "1",
+					sku: "A2",
+				},
+				{ conflictTarget: "id" },
+			),
+		);
+		expect((clash as HttpException).getStatus()).toBe(409);
+		await expect400(
+			authorsService(db).upsert(
+				{ name: "x", email: "q@x.io", role: "boss" },
+				{ conflictTarget: "email" },
+			),
+		);
+		await expect400(
+			authorsService(db).upsert(
+				{ name: "x", email: "q@x.io", role: "admin" },
+				{ conflictTarget: "nope" },
+			),
+		);
+	});
+
+	it("massUpsert is one statement; a key repeated in the batch is a 400", async () => {
+		const { db, reset, statements } = await countingDb();
+		const svc = authorsService(db);
+		reset();
+		const rows = await svc.massUpsert(
+			[
+				{ name: "Ann2", email: "ann@x.io", role: "admin" },
+				{ name: "Eve", email: "eve@x.io", role: "writer" },
+			],
+			{ conflictTarget: "email" },
+		);
+		expect(statements()).toHaveLength(1);
+		expect(rows.map((a: any) => a.email)).toEqual(["ann@x.io", "eve@x.io"]);
+		expect(rows[0].id).toBe(1);
+		await expect400(
+			svc.massUpsert(
+				[
+					{ name: "A", email: "z@x.io", role: "admin" },
+					{ name: "B", email: "z@x.io", role: "admin" },
+				],
+				{ conflictTarget: "email" },
+			),
+		);
+		expect(await svc.count()).toBe(4);
+	});
+});
+
+describe("M06: or / and / not groups", () => {
+	it("ORs column filters", async () => {
+		const svc = postsService(await sharedDb());
+		// author 1: 10 posts; views 0: 6 posts; both: ids 10 and 25.
+		const res = await svc.findAll({ or: [{ author_id: 1 }, { views: 0 }] });
+		expect(res.total).toBe(14);
+		expect(await svc.count({ or: [{ author_id: 1 }, { views: 0 }] })).toBe(14);
+	});
+
+	it("mixes a belongs-to relation into an or and a not", async () => {
+		const svc = postsService(await sharedDb());
+		const either = { or: [{ author: { name: "Bob" } }, { status: "draft" }] };
+		expect((await svc.findAll(either)).total).toBe(20);
+		expect(await svc.count(either)).toBe(20);
+		expect(
+			(await svc.findAll({ not: { author: { name: "Ann" } } })).total,
+		).toBe(20);
+	});
+
+	it("works inside and around collection filters", async () => {
+		const svc = authorsWithPosts(await sharedDb());
+		const res = await svc.findAll({
+			posts: { or: [{ title: "Post 1" }, { title: "Post 2" }] },
+		});
+		expect(ids(res)).toEqual([1, 2]);
+		expect(
+			(await svc.findAll({ not: { posts: { title: "Post 3" } } })).total,
+		).toBe(2);
+		expect(await svc.count({ not: { posts: { status: "draft" } } })).toBe(0);
+	});
+
+	it("nests", async () => {
+		const svc = postsService(await sharedDb());
+		const res = await svc.findAll({
+			and: [
+				{ or: [{ author_id: 1 }, { author_id: 2 }] },
+				{ not: { or: [{ views: 0 }, { status: "draft" }] } },
+			],
+		});
+		// published (1..15) by author 1 or 2, without views 0 (5, 10, 15).
+		expect(ids(res)).toEqual([1, 2, 4, 7, 8, 11, 13, 14]);
+	});
+
+	it("rejects a malformed group", async () => {
+		const svc = postsService(await sharedDb());
+		await expect400(svc.findAll({ or: { status: "draft" } }));
+		await expect400(svc.findAll({ not: [{ status: "draft" }] }));
+		await expect400(svc.findAll({ or: [{ nope: 1 }] }));
+	});
+});
+
+describe("M07: operators", () => {
+	it("notIn and between", async () => {
+		const svc = postsService(await sharedDb());
+		expect((await svc.findAll({ views: { notIn: [0, 1] } })).total).toBe(18);
+		expect((await svc.findAll({ views: { between: [1, 2] } })).total).toBe(12);
+		const range = await svc.findAll({
+			published_at: { between: ["2024-01-02", "2024-01-04"] },
+		});
+		expect(ids(range)).toEqual([2, 3, 4]);
+		await expect400(svc.findAll({ views: { between: [1] } }));
+		await expect400(svc.findAll({ views: { notIn: 1 } }));
+	});
+
+	it("escapes startsWith / endsWith / contains", async () => {
+		const svc = itemsService(await sharedDb());
+		const skus = async (filter: any) =>
+			(await svc.findAll(filter)).data.map((i: any) => i.sku);
+		expect(await skus({ name: { startsWith: "50%" } })).toEqual(["A1"]);
+		expect(await skus({ name: { startsWith: "5_" } })).toEqual([]);
+		expect(await skus({ name: { contains: "_" } })).toEqual(["A1"]);
+		expect(await skus({ name: { contains: "\\" } })).toEqual(["A2"]);
+		expect(await skus({ name: { endsWith: "SALE" } })).toEqual(["A1"]);
+		expect(await skus({ name: { startsWith: "plain" } })).toEqual(["A3", "A4"]);
+	});
+
+	it("follows caseSensitive, and the i forms never do", async () => {
+		const svc = itemsService(await sharedDb(), {
+			sql: {
+				caseSensitive: true,
+				useReturning: true,
+				jsonSupport: true,
+				enableFullTextSearch: false,
+			},
+		});
+		expect((await svc.findAll({ name: { startsWith: "plain" } })).total).toBe(
+			1,
+		);
+		expect((await svc.findAll({ name: { iStartsWith: "plain" } })).total).toBe(
+			2,
+		);
+		expect((await svc.findAll({ name: { iContains: "UPPER" } })).total).toBe(1);
+	});
+
+	it("array contains / overlaps and JSON contains on Postgres", async () => {
+		const svc = itemsService(await sharedDb());
+		expect(
+			(await svc.findAll({ labels: { arrayContains: ["blue"] } })).total,
+		).toBe(2);
+		expect(
+			(await svc.findAll({ labels: { arrayOverlaps: ["red", "green"] } }))
+				.total,
+		).toBe(2);
+		expect(
+			(await svc.findAll({ meta: { jsonContains: { size: "L" } } })).total,
+		).toBe(2);
+		expect(
+			(await svc.findAll({ meta: { jsonContains: { tags: ["a"] } } })).total,
+		).toBe(1);
+	});
+
+	it("answers an operator on the wrong column type or dialect with a 400", async () => {
+		const db = await sharedDb();
+		const svc = itemsService(db);
+		await expect400(svc.findAll({ rank: { contains: "1" } }));
+		await expect400(svc.findAll({ name: { arrayContains: ["x"] } }));
+		await expect400(svc.findAll({ labels: { jsonContains: {} } }));
+		const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+		const mysql = itemsService(db, { dialect: "mysql" });
+		warn.mockRestore();
+		await expect400(mysql.findAll({ labels: { arrayContains: ["red"] } }));
+		await expect400(mysql.findAll({ meta: { jsonContains: {} } }));
+	});
+});
+
+describe("M08: keyset (cursor) pagination", () => {
+	// Every page of a cursor walk, concatenated.
+	async function walk(svc: Svc, filters: any, pagination: any, options?: any) {
+		const seen: any[] = [];
+		let cursor: string | null = null;
+		let pages = 0;
+		do {
+			const page: any = await svc.findByCursor(
+				filters,
+				{ ...pagination, cursor },
+				options,
+			);
+			seen.push(...page.data);
+			cursor = page.nextCursor;
+			pages++;
+		} while (cursor && pages < 50);
+		return seen;
+	}
+
+	const sorts: any[] = [
+		{},
+		{ sortBy: "views", sortOrder: "asc" },
+		{ sortBy: ["-views", "title"] },
+		{ sortBy: "published_at", sortOrder: "desc" },
+		{ sortBy: "published_at", sortOrder: "asc" },
+		{ sortBy: ["created_at"] },
+		{ sortBy: ["author.name", "-id"] },
+	];
+
+	it.each(sorts)(
+		"walks every row once, in the findAll order (%j)",
+		async (sort) => {
+			const svc = postsService(await sharedDb());
+			const all = await svc.findAll({}, { ...sort, limit: 100 });
+			const walked = await walk(svc, {}, { ...sort, limit: 7 });
+			expect(walked.map((p) => p.id)).toEqual(ids(all));
+		},
+	);
+
+	it("walks nullable columns both ways", async () => {
+		const svc = itemsService(await sharedDb());
+		for (const sortOrder of ["asc", "desc"] as const) {
+			const all = await svc.findAll({}, { sortBy: "rank", sortOrder });
+			const walked = await walk(
+				svc,
+				{},
+				{ sortBy: "rank", sortOrder, limit: 1 },
+			);
+			expect(walked.map((i) => i.id)).toEqual(ids(all));
+		}
+	});
+
+	it("is stable when a row is inserted before the cursor", async () => {
+		const db = await freshDb();
+		const svc = postsService(db);
+		const sort = { sortBy: "views", sortOrder: "asc" as const, limit: 5 };
+		const first = await svc.findByCursor({}, sort);
+		const before = await svc.findByCursor(
+			{},
+			{ ...sort, cursor: first.nextCursor },
+		);
+		// views -1 sorts before every row already shown.
+		await svc.create({
+			title: "New",
+			author_id: 1,
+			status: "draft",
+			views: -1,
+		});
+		const after = await svc.findByCursor(
+			{},
+			{ ...sort, cursor: first.nextCursor },
+		);
+		expect(ids(after)).toEqual(ids(before));
+		// The offset version shifts by one.
+		const offset = await svc.findAll({}, { ...sort, page: 2 });
+		expect(ids(offset)).not.toEqual(ids(before));
+	});
+
+	it("works with filters, relations, select and count", async () => {
+		const svc = postsService(await sharedDb());
+		const page = await svc.findByCursor(
+			{ status: "published", author: { name: "Bob" } },
+			{ sortBy: ["-views"], limit: 2, count: true },
+			{ select: ["id", "title", "author.name"], relations: ["author"] },
+		);
+		expect(page.total).toBe(5);
+		expect(page.data).toHaveLength(2);
+		expect(Object.keys(page.data[0]).sort()).toEqual(["author", "id", "title"]);
+		expect(page.data[0].author).toEqual({ name: "Bob" });
+		const walked = await walk(
+			svc,
+			{ status: "published", author: { name: "Bob" } },
+			{ sortBy: ["-views"], limit: 2 },
+		);
+		expect(walked).toHaveLength(5);
+		const last: any = await svc.findByCursor({ id: 1 }, { limit: 5 });
+		expect(last.nextCursor).toBeNull();
+		expect(last.total).toBeUndefined();
+	});
+
+	it("rejects a cursor that is not one, or was made for another sort", async () => {
+		const svc = postsService(await sharedDb());
+		await expect400(svc.findByCursor({}, { cursor: "garbage" }));
+		const page = await svc.findByCursor({}, { sortBy: "views", limit: 2 });
+		await expect400(
+			svc.findByCursor({}, { sortBy: "title", cursor: page.nextCursor }),
+		);
+		const forged = Buffer.from(
+			JSON.stringify({ s: "id:asc", v: [{ $b: [] }] }),
+		).toString("base64url");
+		await expect400(svc.findByCursor({}, { cursor: forged }));
+		// `after` is an alias.
+		const next = await svc.findByCursor(
+			{},
+			{ sortBy: "views", after: page.nextCursor },
+		);
+		expect(next.data).toHaveLength(20);
+	});
+});
+
+describe("M09: multi-column and relation sort", () => {
+	it("sorts by a belongs-to column, then descending by another", async () => {
+		const svc = postsService(await sharedDb());
+		const res = await svc.findAll(
+			{},
+			{ sortBy: ["author.name", "-views"], limit: 30 },
+		);
+		const key = (p: any) => [p.author_id, -p.views, p.id];
+		const expected = [...res.data].sort((a, b) => {
+			const [x, y] = [key(a), key(b)];
+			for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i];
+			return 0;
+		});
+		expect(ids(res)).toEqual(expected.map((p: any) => p.id));
+		expect(res.data[0]).not.toHaveProperty("author");
+	});
+
+	it("takes { column, order } entries and a comma list", async () => {
+		const svc = postsService(await sharedDb());
+		const a = await svc.findAll(
+			{},
+			{
+				sortBy: [{ column: "views", order: "desc" }, { column: "id" }],
+				limit: 3,
+			},
+		);
+		const b = await svc.findAll({}, { sortBy: "-views,id", limit: 3 });
+		expect(ids(a)).toEqual([4, 9, 14]);
+		expect(ids(b)).toEqual(ids(a));
+	});
+
+	it("rejects unknown and collection columns", async () => {
+		const svc = postsService(await sharedDb());
+		await expect400(svc.findAll({}, { sortBy: ["author.nope"] }));
+		await expect400(svc.findAll({}, { sortBy: ["editor.name"] }));
+		await expect400(
+			authorsWithPosts(await sharedDb()).findAll(
+				{},
+				{ sortBy: ["posts.title"] },
+			),
+		);
+		await expect400(
+			svc.findAll({}, { sortBy: [{ column: "views", order: "up" } as any] }),
+		);
 	});
 });
