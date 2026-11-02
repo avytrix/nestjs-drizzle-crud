@@ -1,0 +1,125 @@
+---
+title: SQLite, libSQL and Cloudflare D1
+description: Use NestJS with Drizzle on SQLite, libSQL (Turso) or Cloudflare D1. What works, what is a 400, and why D1 cannot run bulk writes or nested creates.
+icon: Database
+---
+
+Since 3.7.0 the package runs on SQLite with `dialect: "sqlite"`. You build the Drizzle instance with your SQLite driver and pass it as `db`; the module does not open SQLite connections itself. Reads, writes, filters, relations, upsert and keyset pages work as on PostgreSQL, with `RETURNING`. Full-text search, row locks and the PostgreSQL-only operators are a 400. Bulk writes need a driver with async transactions, such as libSQL.
+
+<Callout type="warn" title="Bulk writes need an async transaction">
+  Mass writes, nested creates and `attach` / `detach` / `sync` run in an interactive transaction
+  with savepoints. libSQL (`@libsql/client`) has one. Cloudflare D1 has none, and synchronous
+  drivers (better-sqlite3, bun:sqlite, sql.js) cannot wait for async work inside theirs. On those,
+  the calls throw a `TransactionException` (500) that names the reason instead of half working.
+  The single-row methods are not affected.
+</Callout>
+
+## How do I connect to SQLite or libSQL?
+
+Install `@libsql/client`, build the Drizzle instance and pass it as `db`:
+
+<InstallTabs pkg="@libsql/client" />
+
+```ts accent=nest title="app.module.ts"
+import { Module } from '@nestjs/common';
+import { createClient } from '@libsql/client';
+import { drizzle } from 'drizzle-orm/libsql';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
+import * as schema from './db/schema';
+
+const client = createClient({
+  url: process.env.DATABASE_URL!, // file:local.db, or libsql://... on Turso
+  authToken: process.env.DATABASE_AUTH_TOKEN,
+});
+
+@Module({
+  imports: [
+    DrizzleCrudModule.forRoot({
+      dialect: 'sqlite',
+      db: drizzle(client, { schema }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+A `db` you pass in is yours to close. `connectionString` is not accepted for `"sqlite"`: it is a startup error that tells you to pass `db`.
+
+## How should I declare the SQLite tables?
+
+Use `sqliteTable` from `drizzle-orm/sqlite-core`. Two details matter to the service:
+
+- **Timestamps and soft delete need date columns.** The service writes a JavaScript `Date` into `created_at`, `updated_at` and `deleted_at`, so declare them as `integer('created_at', { mode: 'timestamp_ms' })` (or `mode: 'timestamp'`). A plain `text` column does not take a `Date`.
+- **Foreign keys must be on.** SQLite only enforces references with `PRAGMA foreign_keys = ON`. libSQL turns it on for its local databases; with another driver, run the pragma when you open the connection. Without it, a missing parent is not an error at all, so there is no 400 or 409 to map.
+
+```ts accent=drizzle title="db/schema.ts"
+import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+
+export const posts = sqliteTable('posts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  title: text('title').notNull(),
+  authorId: integer('author_id').notNull().references(() => authors.id),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }),
+  deletedAt: integer('deleted_at', { mode: 'timestamp_ms' }),
+});
+```
+
+## What works on SQLite, and what is a 400?
+
+| Feature | On SQLite |
+| --- | --- |
+| find, findAll, count, countBy, findByCursor | Yes. Keyset pages follow SQLite's NULL order (first ascending, last descending) |
+| Filters, relation filters, sort, select, relations, counts | Yes |
+| Writes read back with `RETURNING` | Yes, `sql.useReturning` defaults to `true` |
+| `search` in `ilike` mode, `ilike`, `iContains` and friends | `LIKE ... ESCAPE '\'`, so `%`, `_` and `\` in the term match literally |
+| Case-sensitive `like`, `contains`, `startsWith` | SQLite's `LIKE` ignores ASCII case, so these match case-insensitively for ASCII letters, as on MySQL's default collations |
+| `upsert`, `massUpsert` | `ON CONFLICT DO UPDATE`, including the tenant scope guard |
+| Nested creates, bulk writes, attach / detach / sync | Yes on libSQL; `TransactionException` on D1 and synchronous drivers |
+| Optimistic locking, tenant scope, soft delete, events | Yes |
+| `fullTextSearch`, `search.mode: "fullText"` | 400 |
+| `lock`, `forNoKeyUpdate` | 400. SQLite has no row locks |
+| `arrayContains`, `arrayOverlaps`, `jsonContains` | 400 |
+
+Driver errors map to HTTP the same way as on the other dialects: a `UNIQUE` or primary key violation is a 409 `DuplicateEntityException`, a `FOREIGN KEY` violation is a 400 on a write and a 409 on a delete, and `NOT NULL` or `CHECK` is a 400 `ValidationFailedException`. SQLite does not report the duplicate value, so the message names the column only.
+
+## How do I use Cloudflare D1?
+
+Build the instance from the binding with `drizzle-orm/d1` and pass it as `db`, with `dialect: 'sqlite'`. D1 rejects `BEGIN` and `SAVEPOINT`, so everything that needs a transaction throws a `TransactionException` before it sends a statement:
+
+- `massCreate`, `massUpdate`, `massUpsert`, `massSoftDelete`, `massRestore`, `massDelete` and `massForceDelete`
+- a `create` with nested relations
+- `attach`, `detach` and `sync`
+
+The single-row methods (`create`, `update`, `upsert`, `softDelete`, `restore`, `delete`, every read) do not need one. For several writes that must succeed together on D1, call `db.batch([...])` with Drizzle yourself.
+
+<Callout title="What has been tested">
+  The package's own suite runs every SQLite feature above against libSQL in memory. The D1 and
+  synchronous driver refusals are tested against a stand-in object that reports itself the way
+  those drivers do, not against D1 or better-sqlite3 themselves.
+</Callout>
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Does nestjs-drizzle-crud support SQLite?">
+    Yes, since 3.7.0, with `dialect: "sqlite"` and a Drizzle instance you pass as `db`. libSQL (`@libsql/client`) runs every feature that SQLite has. Full-text search, row locks and the array and JSON operators are a 400.
+  </Accordion>
+  <Accordion title="Can I use better-sqlite3?">
+    For the single-row methods and every read, it should: Drizzle makes every better-sqlite3 query awaitable, though the package's suite does not run on it. Mass writes, nested creates and attach / detach / sync throw a `TransactionException`, because a better-sqlite3 transaction cannot wait for async work. Use libSQL with a `file:` URL for a local database that supports them.
+  </Accordion>
+  <Accordion title="Why are bulk writes not available on Cloudflare D1?">
+    They run in one interactive transaction with a savepoint per item, so a failing item can be named and everything rolled back. D1 has no interactive transactions, only `batch()`, so the package refuses those calls with a clear error instead of writing half a batch.
+  </Accordion>
+  <Accordion title="Is LIKE case-sensitive on SQLite?">
+    No, not for ASCII letters. SQLite's `LIKE` ignores ASCII case, so the case-sensitive pattern operators match `Ann` and `ann` alike. Letters outside ASCII are compared as they are.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Settings2 />} title="NestJS Drizzle module forRoot options" href="/docs/for-root" description="Every module option, including the dialect." />
+  <Card icon={<Layers />} title="Bulk operations" href="/docs/bulk-operations" description="What the transactional mass writes do on every dialect." />
+  <Card icon={<Filter />} title="Filtering with Drizzle in NestJS" href="/docs/filtering" description="Every filter operator and how it compiles per dialect." />
+</Cards>

@@ -1,15 +1,14 @@
 ---
 title: Full-text search in PostgreSQL with Drizzle
-description: "Drizzle full text search on Postgres in NestJS: fullTextSearch() matches with tsvector, orders by ts_rank, paginates and skips soft-deleted rows."
+description: "Drizzle full text search on Postgres in NestJS: fullTextSearch() ranks with ts_rank, takes filters and relations, a language and websearch queries."
 icon: TextSearch
 ---
 
-For Drizzle full text search on PostgreSQL in NestJS, call `fullTextSearch(term, columns, pagination)` on any service that extends `SqlBaseCrudService`. It matches `to_tsvector('english', ...)` across the columns you name against `plainto_tsquery('english', term)`, orders the rows by `ts_rank`, and returns the same `{ data, total, page, limit }` envelope as `findAll`. It works on PostgreSQL only and needs no flag to turn on.
+For Drizzle full text search on PostgreSQL in NestJS, call `fullTextSearch(term, columns, pagination, options)` on any service that extends `SqlBaseCrudService`. By default it matches `to_tsvector('english', ...)` across the columns you name against `plainto_tsquery('english', term)`, orders the rows by `ts_rank`, and returns the same `{ data, total, page, limit }` envelope as `findAll`. Since 3.7.0 the options take filters, relations, column selection, another text search configuration and search engine style queries. It works on PostgreSQL only and needs no flag to turn on.
 
 <Callout type="warn" title="PostgreSQL only">
-  Full-text search uses PostgreSQL's `tsvector` and `tsquery` types. On any other dialect the
+  Full-text search uses PostgreSQL's `tsvector` and `tsquery` types. On MySQL and SQLite the
   method throws a 400 `BadRequestException` (`Full-text search only supported in PostgreSQL`).
-  There is no MySQL implementation.
 </Callout>
 
 ## How do I run a full-text search?
@@ -31,10 +30,13 @@ const { data, total, page, limit } = await this.users.fullTextSearch(
 
 <PropsTable
   props={{
-    searchTerm: { type: "string", required: true, description: "The text to match. It goes to plainto_tsquery('english', ...), so it is plain words, not tsquery syntax." },
+    searchTerm: { type: "string", required: true, description: "The text to match. It goes to plainto_tsquery by default (plain words, all required), or to websearch_to_tsquery with queryMode: \"websearch\"." },
     searchColumns: { type: "string[]", required: true, description: "Column keys on the table. An empty list or an unknown name is a 400, and so is a column outside searchableColumns when that allowlist is set." },
     pagination: { type: "PaginationOptions", description: "page and limit. Omitted, page 1 and pagination.defaultLimit (20 by default) apply, and the limit is clamped to pagination.maxLimit." },
-    options: { type: "SqlOperationOptions", description: "transaction to run inside, withDeleted / onlyDeleted for soft-deleted rows, and the tenant scope, as on findAll." },
+    options: { type: "FullTextSearchOptions", description: "Everything findAll takes in its options (transaction, relations, select, counts, withDeleted / onlyDeleted, the tenant context), plus filters, language and queryMode below." },
+    "options.filters": { type: "CrudFilter", description: "The same filters as the first argument of findAll: columns, operators, relation filters, and / or / not. Added in 3.7.0." },
+    "options.language": { type: "string", default: '"english"', description: "The text search configuration, such as \"simple\", \"german\" or \"public.my_config\". It must be a plain identifier, optionally schema qualified; anything else is a 400. Added in 3.7.0." },
+    "options.queryMode": { type: '"plain" | "websearch"', default: '"plain"', description: "plain is plainto_tsquery. websearch is websearch_to_tsquery: quoted phrases, or and a leading - work as on a search engine. Added in 3.7.0." },
   }}
 />
 
@@ -56,9 +58,49 @@ limit 20 offset 0
 What that means for results:
 
 - A `NULL` column contributes nothing to the vector, so a row still matches on its other columns.
-- The text search configuration is always `'english'`. It is not an option.
+- The text search configuration is `'english'` unless you pass `language`. The name is written into the SQL as a literal, not as a bound parameter, so an index on `to_tsvector('german', ...)` still matches. That is why it has to pass the identifier check first.
 - Rows are ordered by `ts_rank` descending, then by the primary key ascending, so rows with the same rank keep a stable order across pages.
-- With soft delete on, soft-deleted rows are left out of both `data` and `total`, as in `findAll` and `count`. A tenant scope applies the same way.
+- With soft delete on, soft-deleted rows are left out of both `data` and `total`, as in `findAll` and `count`. A tenant scope applies the same way, and so do `options.filters`.
+
+## How do I search within filters and load relations?
+
+Pass `filters`, `relations` and `select` in the options. They work exactly as they do on `findAll`: filters narrow the matches before they are ranked and counted, a belongs-to relation is joined, collections are loaded in one batched query, and `select` narrows the columns:
+
+```ts title="posts.service.ts"
+const page = await this.posts.fullTextSearch(
+  "drizzle migrations",
+  ["title", "body"],
+  { page: 1, limit: 20 },
+  {
+    filters: { status: "published", author: { role: "admin" } },
+    relations: ["author", "tags"],
+    select: ["id", "title", "author.name", "tags.name"],
+    counts: ["comments"],
+  },
+);
+```
+
+Before 3.7.0 the options only carried the transaction and the soft delete flags; filters, relations and `select` were ignored.
+
+## How do I search in another language or with search engine syntax?
+
+Set `language` to the text search configuration and `queryMode` to `"websearch"`:
+
+```ts title="articles.service.ts"
+await this.articles.fullTextSearch(
+  '"zero downtime" -kubernetes',
+  ["title", "body"],
+  { limit: 20 },
+  { language: "german", queryMode: "websearch" },
+);
+```
+
+| `queryMode` | Function | `post -1` reads as |
+| --- | --- | --- |
+| `"plain"` (default) | `plainto_tsquery` | every word required; `-1` is just a number |
+| `"websearch"` | `websearch_to_tsquery` | `post` and not `1`; quotes make a phrase, `or` an alternative |
+
+Neither mode raises a syntax error on odd input, so both are safe for a search box. A configuration that does not exist in the database (`language: "klingon"`) passes the identifier check and fails in PostgreSQL, so check the name in your code if it comes from a client.
 
 ## Do I need to enable it or add an index?
 
@@ -68,7 +110,7 @@ An index is your call, and it matters on large tables. Without one, PostgreSQL c
 
 ## How do I add search to a filtered list endpoint?
 
-Use `options.search` with `mode: "fullText"` on `findAll` or `count`. The match then composes with your structured filters, pagination, sorting, relation filters and the `total` count:
+Use `options.search` with `mode: "fullText"` on `findAll` or `count`. The match then composes with your structured filters, pagination, sorting, relation filters and the `total` count. `language` and `queryMode` work there too:
 
 ```ts title="users.service.ts"
 const page = await this.users.findAll(
@@ -79,6 +121,7 @@ const page = await this.users.findAll(
       term: "john doe",
       columns: ["name", "email", "bio"],
       mode: "fullText",
+      queryMode: "websearch",
     },
   },
 );
@@ -89,9 +132,10 @@ The two differ in a few ways:
 | | `fullTextSearch()` | `findAll` with `search.mode: "fullText"` |
 | --- | --- | --- |
 | Order | `ts_rank`, strongest match first | Your `sortBy`, not ranked |
-| Structured filters | No | Yes, plus relation filters |
+| Structured filters | Yes, in `options.filters` (since 3.7.0) | Yes, plus relation filters |
 | Unknown column name | 400 | Skipped |
 | Empty term | Matches no rows | Adds no condition |
+| `language`, `queryMode` | Yes | Yes |
 | Dialect | PostgreSQL only | PostgreSQL only |
 
 Use `fullTextSearch()` when relevance should drive the order. Use `findAll(..., ..., { search })` when search is one more filter on a normal list. [Filtering with Drizzle in NestJS](/docs/filtering#how-do-i-add-a-search-box-to-a-list) lists every `search` option.
@@ -99,9 +143,9 @@ Use `fullTextSearch()` when relevance should drive the order. Use `findAll(..., 
 ## What does it not do?
 
 - **No highlighting.** `ts_headline` is not generated.
-- **One language.** The configuration is fixed to `'english'`, so content in other languages is stemmed as English.
-- **No phrase, boolean or prefix queries.** `plainto_tsquery` treats the term as plain words joined by AND. `phraseto_tsquery`, `websearch_to_tsquery` and `to_tsquery` need a custom method.
-- **No MySQL.** MySQL has `MATCH ... AGAINST`, but the package does not generate it.
+- **One configuration per call.** Rows in different languages need one call per language, or a custom query.
+- **No raw tsquery or prefix queries.** `to_tsquery` (with `:*` prefixes) and `phraseto_tsquery` need a custom method. `websearch` covers phrases, `or` and negation.
+- **No MySQL or SQLite.** MySQL has `MATCH ... AGAINST` and SQLite has FTS5, but the package generates neither.
 
 ## How do I write a custom full-text query?
 
@@ -129,11 +173,14 @@ A custom query skips what the service adds for you: add `isNull(users.deletedAt)
 ## Common questions
 
 <Accordions>
-  <Accordion title="Does fullTextSearch work on MySQL?">
-    No. It is PostgreSQL only and throws an error on any other dialect. Use `options.search` in its default `ilike` mode for a portable substring search.
+  <Accordion title="Does fullTextSearch work on MySQL or SQLite?">
+    No. It is PostgreSQL only and is a 400 on any other dialect. Use `options.search` in its default `ilike` mode for a portable substring search.
   </Accordion>
   <Accordion title="Can I change the text search language?">
-    Not through the method: it always uses the `'english'` configuration. Write a custom Drizzle query for another language.
+    Yes, since 3.7.0. Pass `language: "german"` (or any configuration name, optionally schema qualified) in the options of `fullTextSearch` or in `search` on `findAll`. A name that is not a plain identifier is a 400.
+  </Accordion>
+  <Accordion title="Can fullTextSearch filter and load relations?">
+    Yes, since 3.7.0. `options.filters` takes the same filters as `findAll`, and `relations`, `select` and `counts` shape the rows as they do there.
   </Accordion>
   <Accordion title="Are results ranked?">
     `fullTextSearch()` orders by `ts_rank` descending, then by the primary key. `findAll` with `search.mode: "fullText"` filters on the same match but keeps your own sort.

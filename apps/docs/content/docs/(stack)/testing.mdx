@@ -134,7 +134,7 @@ Two classes, both from `nestjs-drizzle-crud` ([`src/test-utils`](https://github.
 
 <PropsTable
   props={{
-    dialect: { type: '"postgresql" | "mysql"', default: '"postgresql"', description: "The dialect the service compiles for." },
+    dialect: { type: '"postgresql" | "mysql" | "sqlite"', default: '"postgresql"', description: "The dialect the service compiles for." },
     primaryKey: { type: "string", default: '"id"', description: "The key of the primary key column." },
     softDelete: { type: "{ enabled, column }", default: '{ enabled: true, column: "deleted_at" }', description: "Soft delete, on the snake_case key the mock table has." },
     timestamps: { type: "{ createdAt, updatedAt }", default: '{ createdAt: "created_at", updatedAt: "updated_at" }', description: "Timestamp keys. Set undefined to turn them off." },

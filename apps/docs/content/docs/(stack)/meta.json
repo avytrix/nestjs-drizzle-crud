@@ -5,6 +5,7 @@
 		"openapi",
 		"for-root",
 		"for-root-async",
+		"sqlite",
 		"for-feature",
 		"testing",
 		"ai-agents"

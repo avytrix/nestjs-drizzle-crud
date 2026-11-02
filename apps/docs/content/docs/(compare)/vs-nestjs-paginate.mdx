@@ -15,7 +15,7 @@ nestjs-drizzle-crud vs nestjs-paginate is mostly a question of ORM and scope. ne
 | | nestjs-drizzle-crud | nestjs-paginate |
 | --- | --- | --- |
 | ORM | Drizzle ORM (`drizzle-orm` from 0.28.0 up to, not including, 1.0.0) | TypeORM (peer `typeorm ^1.0.0` in `16.0.1`, [npm](https://registry.npmjs.org/nestjs-paginate)) |
-| Databases | PostgreSQL and MySQL | PostgreSQL, CockroachDB, MySQL, MariaDB and SQLite appear in its [JSONB support matrix](https://github.com/ppetzold/nestjs-paginate#jsonb-support) |
+| Databases | PostgreSQL, MySQL and SQLite (since 3.7.0) | PostgreSQL, CockroachDB, MySQL, MariaDB and SQLite appear in its [JSONB support matrix](https://github.com/ppetzold/nestjs-paginate#jsonb-support) |
 | Scope | Reads and writes | Reading paginated lists |
 | Entry point | `SqlBaseCrudService` subclass per table | `paginate(query, repository, config)` and the `@Paginate()` decorator |
 | Offset pagination | Yes, `{ data, total, page, limit }` | Yes, `{ data, meta, links }`, which the README says conforms to JSON:API |
@@ -37,7 +37,7 @@ Several things, each from its own [README](https://github.com/ppetzold/nestjs-pa
 - **Response links.** Each page carries `links.first`, `previous`, `current`, `next` and `last`, plus `meta.totalPages`. `findAll` returns `total`, `page` and `limit` and leaves link building to you.
 - **A text filter language.** `filter=(color=$eq:black OR color=$eq:white) AND NOT name=$eq:Leche` reads like a sentence and has a complexity cap (100 nodes by default).
 - **JSONB paths, virtual columns and polymorphic (`~`) columns** for sorting, searching and filtering.
-- **More databases** through TypeORM, including SQLite.
+- **More databases** through TypeORM, such as MariaDB and CockroachDB.
 - **It works with your existing TypeORM repositories**, so there is nothing to migrate if you are on TypeORM.
 
 ## What does nestjs-drizzle-crud do that nestjs-paginate does not?
@@ -78,13 +78,13 @@ Choose nestjs-paginate when:
 - your project uses TypeORM,
 - you only need paginated, filtered list endpoints and write the other routes yourself,
 - you want strict per-column operator whitelists by default, response links, or the `filter=` expression language, or
-- you need SQLite, JSONB path filters or virtual columns.
+- you need JSONB path filters or virtual columns.
 
 ## When should I choose nestjs-drizzle-crud?
 
 Choose nestjs-drizzle-crud when:
 
-- your schema is in Drizzle ORM on PostgreSQL or MySQL,
+- your schema is in Drizzle ORM on PostgreSQL, MySQL or SQLite,
 - you want reads and writes from one service, not only list pages,
 - you want generated routes, soft delete, upsert, bulk writes or tenant scopes without writing them, or
 - you want cursor pagination over text columns as well as numbers and dates.

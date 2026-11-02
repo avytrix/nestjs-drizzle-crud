@@ -19,9 +19,10 @@ The input to `DrizzleCrudModule.forRoot(config)`, and what the `forRootAsync` fa
 
 <PropsTable
   props={{
-    dialect: { type: '"postgresql" | "mysql"', required: true, description: "The SQL dialect." },
-    db: { type: "any", description: "A Drizzle instance you built. Required for MySQL. The module uses it as is and never closes it." },
-    connectionString: { type: "string", description: "PostgreSQL only. The module opens the connection with postgres and closes it on shutdown." },
+    dialect: { type: '"postgresql" | "mysql" | "sqlite"', required: true, description: "The SQL dialect. sqlite covers SQLite, libSQL and Cloudflare D1." },
+    db: { type: "any", description: "A Drizzle instance you built. Required for sqlite. The module uses it as is and never closes it." },
+    connectionString: { type: "string", description: "PostgreSQL (postgres) and MySQL (mysql2). The module opens the connection and closes it on shutdown." },
+    connection: { type: "DrizzleConnectionOptions", description: "poolSize, idleTimeout (seconds) and ssl for the connection built from connectionString. Ignored with db." },
     schema: { type: "Record<string, unknown>", description: "Optional. Passed to drizzle() when the module builds the connection from connectionString." },
     "defaults.softDelete": { type: "boolean", default: "true", description: "Soft delete on the deleted_at column for every entity." },
     "defaults.timestamps": { type: "boolean", default: "true", description: "Set created_at and updated_at on every entity." },
@@ -29,7 +30,7 @@ The input to `DrizzleCrudModule.forRoot(config)`, and what the `forRootAsync` fa
     "defaults.pagination.maxLimit": { type: "number", default: "100", description: "The largest limit a caller gets. Larger values are clamped." },
     "defaults.sortOrder": { type: '"asc" | "desc"', description: "Opt-in. Entities without a defaultSort sort by their createdAt column in this direction. Unset, there is no fallback sort." },
     "sql.caseSensitive": { type: "boolean", default: "false", description: "Exact string matches and startsWith, endsWith, contains follow this." },
-    "sql.useReturning": { type: "boolean", default: "dialect === \"postgresql\"", description: "Read written rows back with RETURNING. Forced off on MySQL." },
+    "sql.useReturning": { type: "boolean", default: "dialect !== \"mysql\"", description: "Read written rows back with RETURNING. Forced off on MySQL." },
     "sql.jsonSupport": { type: "boolean", description: "Deprecated. Has no effect." },
     "sql.enableFullTextSearch": { type: "boolean", description: "Deprecated. Has no effect: full-text search works on PostgreSQL either way." },
     "hooks.enableGlobalHooks": { type: "boolean", default: "false", description: "Every service raises a before and an after event per write on the CrudEventBus." },
@@ -37,7 +38,27 @@ The input to `DrizzleCrudModule.forRoot(config)`, and what the `forRootAsync` fa
   }}
 />
 
-Provide one of `db` or `connectionString`; with neither, startup fails. A `connectionString` with `dialect: "mysql"` also fails, because only PostgreSQL connections are built for you. See [NestJS Drizzle module forRoot options](/docs/for-root) and [Drizzle forRootAsync with ConfigService](/docs/for-root-async).
+Provide one of `db` or `connectionString`; with neither, startup fails. A `connectionString` with `dialect: "sqlite"` also fails, because only PostgreSQL and MySQL connections are built for you.
+
+```ts title="drizzle-crud-config.interface.ts"
+interface DrizzleConnectionOptions {
+  poolSize?: number;    // postgres-js max, mysql2 connectionLimit
+  idleTimeout?: number; // seconds: postgres-js idle_timeout, mysql2 idleTimeout x 1000
+  ssl?: boolean | "require" | "allow" | "prefer" | "verify-full" | Record<string, unknown>;
+}
+
+interface DrizzleCrudOptionsFactory {
+  createDrizzleCrudOptions(): DrizzleCrudConfig | Promise<DrizzleCrudConfig>;
+}
+
+interface DrizzleCrudAsyncOptions {
+  imports?: any[];
+  inject?: any[];
+  useFactory?: (...args: any[]) => DrizzleCrudConfig | Promise<DrizzleCrudConfig>;
+  useClass?: Type<DrizzleCrudOptionsFactory>;
+  useExisting?: Type<DrizzleCrudOptionsFactory>;
+}
+``` See [NestJS Drizzle module forRoot options](/docs/for-root) and [Drizzle forRootAsync with ConfigService](/docs/for-root-async).
 
 `sql.jsonSupport`, `sql.enableFullTextSearch` and `primaryKeyType` are deprecated and have no effect. They still compile so existing configs keep working, and they will be removed in the next major version. `hooks.enableGlobalHooks` was deprecated as a no-op in 3.3.1 and works again since 3.5.0: it turns on [write events](/docs/events).
 
@@ -60,7 +81,7 @@ The resolved per-entity config. It extends `CrudAllowlists`. In `forFeature` you
 
 <PropsTable
   props={{
-    dialect: { type: '"postgresql" | "mysql"', required: true, description: "Set by the module from forRoot." },
+    dialect: { type: '"postgresql" | "mysql" | "sqlite"', required: true, description: "Set by the module from forRoot." },
     db: { type: "any", required: true, description: "The Drizzle instance. Set by the module." },
     table: { type: "any", required: true, description: "The Drizzle table. Set by forFeature." },
     primaryKey: { type: "string", default: '"id"', description: "The table key of the primary key column. Its type comes from the column." },
@@ -73,7 +94,7 @@ The resolved per-entity config. It extends `CrudAllowlists`. In `forFeature` you
     "pagination.maxLimit": { type: "number", default: "100", description: "Upper bound for limit." },
     defaultSort: { type: "SortColumn[]", description: "ORDER BY when the caller passes no sortBy, applied in order. An unknown column is skipped with a warning." },
     "sql.caseSensitive": { type: "boolean", default: "false", description: "As in DrizzleCrudConfig." },
-    "sql.useReturning": { type: "boolean", default: "true on postgresql", description: "Forced off on MySQL when the service is built." },
+    "sql.useReturning": { type: "boolean", default: "true on postgresql and sqlite", description: "Forced off on MySQL when the service is built." },
     relations: { type: "RelationsConfig", description: "Relations by name: belongs-to, has-many, many-to-many, nested. See RelationConfig below." },
     filterableColumns: { type: "string[]", description: "Columns and \"relation.column\" paths a filter may use. Unset allows all." },
     sortableColumns: { type: "string[]", description: "Columns and \"belongsTo.column\" paths a caller may sort by." },
@@ -173,15 +194,27 @@ interface SelectTree {
 
 ```ts title="sql-crud-config.interface.ts"
 type SqlSearchMode = "ilike" | "fullText";
+type FullTextQueryMode = "plain" | "websearch";
 
-interface SqlSearchOptions {
+interface FullTextOptions {
+  language?: string;             // default "english"
+  queryMode?: FullTextQueryMode; // default "plain"
+}
+
+interface SqlSearchOptions extends FullTextOptions {
   term: string;
   columns: string[];
   mode?: SqlSearchMode; // default "ilike"
 }
+
+// The options of fullTextSearch()
+interface FullTextSearchOptions<FilterDto = any>
+  extends SqlOperationOptions, FullTextOptions {
+  filters?: FilterDto;
+}
 ```
 
-`ilike` matches each column with an escaped contains pattern and joins them with `OR` (plain `LIKE` on MySQL). `fullText` is PostgreSQL only and compiles to `to_tsvector(...) @@ plainto_tsquery(...)`.
+`ilike` matches each column with an escaped contains pattern and joins them with `OR` (plain `LIKE` on MySQL and SQLite). `fullText` is PostgreSQL only and compiles to `to_tsvector(...) @@ plainto_tsquery(...)`, or `websearch_to_tsquery(...)` with `queryMode: "websearch"`. `language` must be a plain identifier, optionally schema qualified; anything else is a 400.
 
 ## `PaginationOptions`
 
@@ -309,7 +342,7 @@ interface BulkOperationResult<T> {
   errors?: Array<{ id?: any; index?: number; error: Error }>;
 }
 
-type SqlDialect = "postgresql" | "mysql";
+type SqlDialect = "postgresql" | "mysql" | "sqlite";
 type PrimaryKeyType = "serial" | "bigserial" | "int" | "bigint" | "uuid"; // deprecated setting
 ```
 
@@ -317,7 +350,7 @@ type PrimaryKeyType = "serial" | "bigserial" | "int" | "bigint" | "uuid"; // dep
 
 <Accordions>
   <Accordion title="Is schema required when I pass a connectionString?">
-    No. `schema` is optional. When you give it, the module passes it to `drizzle()` as it builds the PostgreSQL connection.
+    No. `schema` is optional. When you give it, the module passes it to `drizzle()` as it builds the PostgreSQL or MySQL connection.
   </Accordion>
   <Accordion title="Do allowlist arrays merge across the config layers?">
     No. Only `softDelete`, `timestamps`, `pagination` and `sql` merge one level deep. An array set in `forFeature` replaces the one from `@CrudService`.

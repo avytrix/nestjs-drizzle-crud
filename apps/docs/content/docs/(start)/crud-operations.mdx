@@ -231,7 +231,7 @@ status without any setup. They come from
 | Every method on a scoped entity | `MissingScopeException` | 403 | The scope needs a context value, such as a tenant id, that the call does not have. |
 
 `softDelete`, `restore`, `massSoftDelete` and `massRestore` on an entity with soft delete off,
-and `fullTextSearch` on MySQL (or `search.mode: "fullText"` there), are a 400
+and `fullTextSearch` on MySQL or SQLite (or `search.mode: "fullText"` there), are a 400
 `BadRequestException`. [Errors](/docs/errors) shows the response
 bodies and how to write a custom filter.
 

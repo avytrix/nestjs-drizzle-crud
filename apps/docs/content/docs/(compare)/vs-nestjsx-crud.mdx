@@ -17,7 +17,7 @@ They solve the same problem (stop writing the same list, get, create, update and
 | | nestjs-drizzle-crud | @nestjsx/crud |
 | --- | --- | --- |
 | ORM | Drizzle ORM (`drizzle-orm` from 0.28.0 up to, not including, 1.0.0) | TypeORM, through [`@nestjsx/crud-typeorm`](https://github.com/nestjsx/crud#packages) |
-| Databases | PostgreSQL and MySQL (`dialect: "postgresql" \| "mysql"`) | Through TypeORM; the README lists no databases of its own |
+| Databases | PostgreSQL, MySQL and SQLite (`dialect: "postgresql" \| "mysql" \| "sqlite"`) | Through TypeORM; the README lists no databases of its own |
 | Entry point | `SqlBaseCrudService` subclass per table | `@Crud()` decorator on a controller |
 | Generated routes | Optional, with `createCrudController` | Always, from `@Crud()` |
 | Query string | `age[gte]=18&sortBy=-name&with=region` | `filter=age\|\|$gte\|\|18&sort=name,DESC&join=region` ([wiki](https://github.com/nestjsx/crud/wiki/Requests)) |
@@ -100,7 +100,7 @@ Choose nestjs-drizzle-crud when:
 - you need cursor pagination, upsert, tenant scopes or optimistic locking without writing them, or
 - you want a library with recent releases (see the [changelog](/docs/changelog)).
 
-It is not the right pick on TypeORM or Prisma, or on a database other than PostgreSQL or MySQL.
+It is not the right pick on TypeORM or Prisma, or on a database other than PostgreSQL, MySQL or SQLite.
 
 ## Common questions
 

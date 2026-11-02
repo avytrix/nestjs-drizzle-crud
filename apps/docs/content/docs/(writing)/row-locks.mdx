@@ -1,10 +1,10 @@
 ---
 title: Row locks with SELECT FOR UPDATE
-description: Drizzle SELECT FOR UPDATE in NestJS. Pass lock or forNoKeyUpdate to find, findOne or findAll inside a transaction to lock rows on PostgreSQL.
+description: Drizzle SELECT FOR UPDATE in NestJS. Pass lock or forNoKeyUpdate to find, findOne or findAll inside a transaction to lock rows on PostgreSQL or MySQL.
 icon: Lock
 ---
 
-For a Drizzle `SELECT ... FOR UPDATE` in NestJS, pass `lock: 'update'` (or `'share'`, or `forNoKeyUpdate: true`) to `find`, `findOne`, `findAll` or `findByCursor`, together with a transaction. The package adds Drizzle's `.for(...)` clause to the query, naming only the service's own table, and the rows stay locked until the transaction commits or rolls back. Row locks are PostgreSQL only; on MySQL the options are ignored.
+For a Drizzle `SELECT ... FOR UPDATE` in NestJS, pass `lock: 'update'` (or `'share'`, or `forNoKeyUpdate: true`) to `find`, `findOne`, `findAll` or `findByCursor`, together with a transaction. The package adds Drizzle's `.for(...)` clause to the query, naming only the service's own table, and the rows stay locked until the transaction commits or rolls back. Row locks work on PostgreSQL and MySQL; on SQLite asking for one is a 400.
 
 <Callout type="warn" title="A lock without a transaction does nothing useful">
   Pass `{ transaction: tx }` with the lock. Without it the `SELECT` runs in its own implicit transaction, and the lock is released the moment the statement ends, before your write.
@@ -31,7 +31,7 @@ A second transaction that runs the same `find` waits until the first one ends, s
 
 ## What lock options are there?
 
-Two fields on `SqlOperationOptions`, both PostgreSQL only:
+Two fields on `SqlOperationOptions`. The SQL below is PostgreSQL's; MySQL differs as described further down:
 
 <PropsTable
   props={{
@@ -83,9 +83,11 @@ const post = await this.find(id, { lock: 'update', relations: ['author'], transa
 
 Before 3.3.1 the lock covered every table in the query, and PostgreSQL refused it with `FOR UPDATE cannot be applied to the nullable side of an outer join`.
 
-## Do row locks work on MySQL?
+## Do row locks work on MySQL and SQLite?
 
-No. On MySQL the `lock` and `forNoKeyUpdate` options are accepted and ignored, and no `FOR UPDATE` clause is generated. If you need a lock there, write the query with Drizzle directly on the transaction handle, for example `tx.select().from(accounts).where(eq(accounts.id, id)).for('update')`.
+On MySQL, yes, since 3.7.0. `lock: 'update'` adds `FOR UPDATE` and `lock: 'share'` adds `FOR SHARE`. MySQL has no `FOR NO KEY UPDATE`, so `forNoKeyUpdate: true` becomes `FOR UPDATE`, the stronger lock. MySQL has no `OF <table>` form in Drizzle, so with an eager belongs-to the joined parent row is locked too. Before 3.7.0 the options were accepted and ignored on MySQL.
+
+On SQLite, no. SQLite locks the whole database for a write and has no row locks, so `lock` (other than `"none"`) or `forNoKeyUpdate` is a 400 rather than a lock that is silently not there.
 
 ## Can I use SKIP LOCKED or NOWAIT?
 
@@ -98,7 +100,7 @@ Not through the package options: `lock` and `forNoKeyUpdate` only choose the loc
     The clause is added, but the lock ends with the statement because there is no surrounding transaction. Always pass `{ transaction: tx }` with a lock.
   </Accordion>
   <Accordion title="Which tables does the lock cover?">
-    Only the service's own table. The package always adds `OF <table>`, so joined belongs-to relations are not locked.
+    On PostgreSQL, only the service's own table: the package adds `OF <table>`, so joined belongs-to relations are not locked. On MySQL the joined rows are locked too.
   </Accordion>
   <Accordion title="What happens if I set both lock and forNoKeyUpdate?">
     `forNoKeyUpdate` wins and the query uses `FOR NO KEY UPDATE`.

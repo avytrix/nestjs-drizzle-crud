@@ -137,9 +137,9 @@ export class DatabaseConnectionException extends InternalServerErrorException {
 }
 
 /**
- * @deprecated Nothing in the package throws this. A failed transaction rejects
- * with the error that caused it. Kept for existing imports; removed in the next
- * major version.
+ * The database driver cannot run the transaction a call needs: Cloudflare D1
+ * (no interactive transactions) or a synchronous SQLite driver. A transaction
+ * that fails while it runs still rejects with the error that caused it.
  */
 export class TransactionException extends InternalServerErrorException {
 	constructor(message: string = "Transaction failed") {

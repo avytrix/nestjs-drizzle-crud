@@ -1,4 +1,4 @@
-import { Box, Database, Droplets, Server } from "lucide-react";
+import { Box, Database, Droplets, Feather, Server } from "lucide-react";
 import type { ComponentType } from "react";
 
 const CHIPS: { icon: ComponentType<{ className?: string }>; label: string }[] =
@@ -7,6 +7,7 @@ const CHIPS: { icon: ComponentType<{ className?: string }>; label: string }[] =
 		{ icon: Droplets, label: "Drizzle 0.28+" },
 		{ icon: Database, label: "PostgreSQL" },
 		{ icon: Server, label: "MySQL" },
+		{ icon: Feather, label: "SQLite" },
 	];
 
 export function HeroTagChips() {

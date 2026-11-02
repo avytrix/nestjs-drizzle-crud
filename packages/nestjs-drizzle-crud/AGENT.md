@@ -60,11 +60,16 @@ pnpm add @avytrix/nestjs-drizzle-crud
 pnpm add @nestjs/common @nestjs/core drizzle-orm reflect-metadata   # peers, always
 pnpm add postgres                                                   # PostgreSQL
 pnpm add mysql2                                                     # MySQL
+pnpm add @libsql/client                                             # SQLite / libSQL
 ```
 
-`postgres` is an optional peer. You only need it when you let the module build
-the connection from a `connectionString` on PostgreSQL. If you pass your own
-`db`, no driver peer is required.
+`postgres` and `mysql2` are optional peers. You only need them when you let the
+module build the connection from a `connectionString` (PostgreSQL or MySQL;
+`connection: { poolSize, idleTimeout, ssl }` tunes it). If you pass your own
+`db`, no driver peer is required. SQLite (`dialect: 'sqlite'`, also libSQL and
+Cloudflare D1) always takes your own `db`. On D1 and synchronous SQLite drivers
+the mass writes, nested creates and attach / detach / sync throw a
+`TransactionException`; use libSQL when you need them.
 
 Requires Node >= 20 and `emitDecoratorMetadata` / `experimentalDecorators` in
 `tsconfig.json`, which the Nest CLI already sets.
@@ -87,7 +92,8 @@ DrizzleCrudModule.forRootAsync({
 ```
 
 Use `forRoot` for a static config and `forRootAsync` when the value comes from
-`ConfigService` or the environment. Provide exactly one of `connectionString`
+`ConfigService` or the environment (`useFactory`, or `useClass` / `useExisting`
+with a class that implements `DrizzleCrudOptionsFactory`). Provide exactly one of `connectionString`
 or `db`. The module is global, so feature modules do not import it again for
 the connection.
 
@@ -138,7 +144,7 @@ Those are legacy manual patterns and they break registration.
 | OpenAPI | `@ApiCrudList(source)`, `@ApiCrudQuery(source)` (needs `@nestjs/swagger`) |
 | Bulk | `massCreate`, `massUpdate`, `massUpsert`, `massSoftDelete`, `massRestore`, `massDelete`, `massForceDelete` |
 | Query string | `parseQuery(query, options)`, or the standalone `parseCrudQuery(query, table, options)` |
-| Search | `fullTextSearch(term, columns, pagination)`, PostgreSQL only |
+| Search | `fullTextSearch(term, columns, pagination, { filters, relations, select, language, queryMode })`, PostgreSQL only |
 | Transaction | `executeSqlTransaction(cb)` |
 
 `findAll` returns `{ data, total, page, limit }`, not a bare array; with
@@ -427,7 +433,8 @@ Driver error codes are translated at the service boundary, so bad client input
 never reaches the caller as a 500: a unique violation is a 409, a value that is
 too long, fails a check, has the wrong type or is not a valid date is a 400 (on
 reads too), a foreign key pointing at a row that does not exist is a 400, and a
-delete blocked by dependent rows is a 409.
+delete blocked by dependent rows is a 409. The same holds on MySQL (strict mode
+errors included) and SQLite (constraint errors).
 
 ---
 
@@ -452,9 +459,10 @@ To insert or update by a unique key, use
 than a find followed by a create.
 
 Take a row lock with `options.lock: 'update' | 'share'` only inside a
-transaction, and prefer `forNoKeyUpdate` when the key is not changing. The lock
-covers the service's own table only (`FOR UPDATE OF <table>`), so it works with
-an eager belongs-to.
+transaction, and prefer `forNoKeyUpdate` when the key is not changing. On
+PostgreSQL the lock covers the service's own table only (`FOR UPDATE OF
+<table>`), so it works with an eager belongs-to. MySQL gets `FOR UPDATE` or
+`FOR SHARE`; on SQLite a lock is a 400.
 
 ---
 

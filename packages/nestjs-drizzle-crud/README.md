@@ -5,7 +5,7 @@
 [![license](https://img.shields.io/npm/l/@avytrix/nestjs-drizzle-crud)](./LICENSE)
 [![Sponsor @avytrix](https://img.shields.io/badge/Sponsor-%40avytrix-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/avytrix)
 
-**nestjs-drizzle-crud is a NestJS + Drizzle ORM CRUD library: extend one base class and every table gets type-safe find, create, update, delete, filtering, pagination, relations and soft delete, on PostgreSQL or MySQL.**
+**nestjs-drizzle-crud is a NestJS + Drizzle ORM CRUD library: extend one base class and every table gets type-safe find, create, update, delete, filtering, pagination, relations and soft delete, on PostgreSQL, MySQL or SQLite.**
 
 ```bash
 pnpm add @avytrix/nestjs-drizzle-crud drizzle-orm
@@ -94,7 +94,7 @@ sponsors are what make keeping it free sustainable.
 - 🚀 **CRUD**: `find`, `findOne`, `findAll`, `create`, `update`, `delete`, and more
 - 🧩 **Configure once**: `forRoot()` owns the connection; services only declare a table
 - ⚡ **Type-safe**: generics over your entity, create/update DTOs and filter types
-- 🗃️ **PostgreSQL & MySQL**: dialect-aware (`RETURNING` vs `insertId`)
+- 🗃️ **PostgreSQL, MySQL & SQLite**: dialect-aware (`RETURNING` vs `insertId`), libSQL and Cloudflare D1 included
 - 🔄 **Soft delete**: opt-in, with `restore`, a trash view (`onlyDeleted`) and `forceDelete`
 - 📦 **Bulk operations**: one statement per mass create/update/delete, inside a transaction, plus `upsert`
 - 🔍 **Filtering**: comparison, `in`/`notIn`, `between`, escaped `contains`/`startsWith`, array and JSON operators, `or`/`not` groups
@@ -136,8 +136,11 @@ pnpm add @nestjs/common @nestjs/core drizzle-orm reflect-metadata
 # PostgreSQL (also required if you use `connectionString` with dialect 'postgresql')
 pnpm add postgres
 
-# MySQL
+# MySQL (also required if you use `connectionString` with dialect 'mysql')
 pnpm add mysql2
+
+# SQLite / libSQL (you build the Drizzle instance and pass it as `db`)
+pnpm add @libsql/client
 
 # Only for ApiCrudQuery / ApiCrudList (OpenAPI docs)
 pnpm add @nestjs/swagger
@@ -145,14 +148,11 @@ pnpm add @nestjs/swagger
 
 > Using npm or yarn? Swap `pnpm add` for `npm install` / `yarn add`.
 
-> **pnpm note:** `postgres` is an optional peer dependency and `mysql2` is not a peer
-> at all. pnpm enforces peer deps strictly, so if you build the connection from a
-> `connectionString` make sure `postgres` is installed in your app; for MySQL you
-> install `mysql2` yourself and pass the `db` you build with it.
-
-> `postgres` is an **optional** peer dependency. It's only needed when you let the
-> module build the connection from a `connectionString` for the `postgresql` dialect.
-> If you pass a pre-built `db` instead, you don't need it.
+> **pnpm note:** `postgres` and `mysql2` are optional peer dependencies. pnpm
+> enforces peer deps strictly, so if you build the connection from a
+> `connectionString` make sure the driver for your dialect is installed in your app.
+> If you pass a pre-built `db` instead, you don't need either. SQLite always takes a
+> `db` you build.
 
 ---
 
@@ -285,15 +285,16 @@ export class UsersController {
 
 | Field | Type | Description |
 |---|---|---|
-| `dialect` | `'postgresql' \| 'mysql'` | **Required.** Database dialect. |
-| `connectionString` | `string` | Connection string. The module builds the connection (PostgreSQL only). |
+| `dialect` | `'postgresql' \| 'mysql' \| 'sqlite'` | **Required.** Database dialect. `'sqlite'` covers SQLite, libSQL and Cloudflare D1. |
+| `connectionString` | `string` | Connection string. The module builds the connection (PostgreSQL with `postgres`, MySQL with `mysql2`). |
+| `connection` | `{ poolSize?, idleTimeout?, ssl? }` | Pool size, idle timeout (seconds) and TLS for the connection built from `connectionString`. |
 | `db` | `Drizzle instance` | Alternatively, pass a Drizzle instance you built yourself (any dialect). |
 | `schema` | `Record<string, unknown>` | Drizzle schema, used when building from `connectionString`. |
 | `defaults.softDelete` | `boolean` | Enable soft delete for all entities (default `true`). |
 | `defaults.timestamps` | `boolean` | Auto-manage `created_at`/`updated_at` for all entities (default `true`). |
 | `defaults.pagination` | `{ defaultLimit?, maxLimit? }` | Pagination defaults (default `{ 20, 100 }`). Either key alone keeps the other's default. |
 | `defaults.sortOrder` | `'asc' \| 'desc'` | Opt-in default sort: entities **without** an explicit `defaultSort` fall back to ordering by their `created_at` column in this direction. Omit it and `findAll` orders by the primary key only. |
-| `sql` | `{ caseSensitive?, useReturning? }` | Dialect tuning. `useReturning` defaults to `true` for PostgreSQL, `false` for MySQL. `jsonSupport` and `enableFullTextSearch` are deprecated and do nothing. |
+| `sql` | `{ caseSensitive?, useReturning? }` | Dialect tuning. `useReturning` defaults to `true` for PostgreSQL and SQLite, `false` for MySQL. `jsonSupport` and `enableFullTextSearch` are deprecated and do nothing. |
 | `hooks` | `{ enableGlobalHooks?, subscribers? }` | Module-level write events on the `CrudEventBus`. See [Events](#events-and-global-hooks). |
 
 > **Provide exactly one of `connectionString` or `db`.** If your tables have no
@@ -306,7 +307,7 @@ export class UsersController {
 > table does not have stops the app at startup, and the message names the key
 > to use.
 
-**Build the connection yourself (any dialect, recommended for MySQL):**
+**Build the connection yourself (any dialect, required for SQLite):**
 
 ```typescript
 import { drizzle } from 'drizzle-orm/postgres-js';
@@ -331,6 +332,27 @@ DrizzleCrudModule.forRootAsync({
   }),
 });
 ```
+
+`forRootAsync` also takes `useClass` or `useExisting` with a class that
+implements `DrizzleCrudOptionsFactory`:
+
+```typescript
+@Injectable()
+class CrudConfig implements DrizzleCrudOptionsFactory {
+  constructor(private readonly cfg: ConfigService) {}
+  createDrizzleCrudOptions(): DrizzleCrudConfig {
+    return { dialect: 'mysql', connectionString: this.cfg.get('DATABASE_URL') };
+  }
+}
+
+DrizzleCrudModule.forRootAsync({ useClass: CrudConfig });
+```
+
+On SQLite (`dialect: 'sqlite'`), mass writes, nested creates and attach / detach
+/ sync need an async transaction: they work on libSQL and throw a
+`TransactionException` on Cloudflare D1 and synchronous drivers such as
+better-sqlite3. Full-text search, row locks and the array and JSON operators
+are a 400 there.
 
 ### `DrizzleCrudModule.forFeature(entities)`
 
@@ -1111,7 +1133,19 @@ const { data, total } = await service.fullTextSearch(
 ```
 
 Builds `to_tsvector(...) @@ plainto_tsquery(...)` across the given columns and
-orders by `ts_rank`. Throws if the dialect is not `postgresql`.
+orders by `ts_rank`. Throws a 400 if the dialect is not `postgresql`. The options
+take `filters`, `relations`, `select` and `counts` as on `findAll`, plus
+`language` (default `'english'`) and `queryMode: 'websearch'` for
+`websearch_to_tsquery`:
+
+```typescript
+await service.fullTextSearch('"zero downtime" -kubernetes', ['title', 'body'], {}, {
+  filters: { status: 'published' },
+  relations: ['author'],
+  language: 'english',
+  queryMode: 'websearch',
+});
+```
 
 For paginated list endpoints, prefer `findAll(..., ..., { search })` so search is
 combined with filters and the count query. Use `fullTextSearch` directly when
@@ -1211,7 +1245,7 @@ read-only and never touches your database. Full setup:
 
 Use these facts instead of guessing.
 
-**Package:** `nestjs-drizzle-crud` · **Peers:** `@nestjs/common`, `@nestjs/core`, `drizzle-orm`, `reflect-metadata`; optional `postgres` (PG) / `@nestjs/swagger` (for `ApiCrudList`); `mysql2` is installed by you for MySQL, not a peer.
+**Package:** `nestjs-drizzle-crud` · **Peers:** `@nestjs/common`, `@nestjs/core`, `drizzle-orm`, `reflect-metadata`; optional `postgres` (PG `connectionString`) / `mysql2` (MySQL `connectionString`) / `@nestjs/swagger` (for `ApiCrudList`). SQLite drivers are yours, passed as `db`.
 
 **Setup is two steps and no per-service connection wiring:**
 1. `DrizzleCrudModule.forRoot({ dialect, connectionString | db, schema, defaults })` once in `AppModule`.
@@ -1242,15 +1276,17 @@ export class XService extends SqlBaseCrudService<X, CreateXDto, UpdateXDto, XFil
 - Relations: declare in forFeature `config.relations` and eager-load via `options.relations: ['relName']`, where a dotted path nests (`['states', 'states.cities']`, `['state.country']`; the parent path is pulled in automatically). Belongs-to is `{ table, localKey, references? }`, LEFT JOINed into the main query, resolving to an object or `null`. Has-many is `{ table, type: 'hasMany', foreignKey, parentKey?, orderBy? }`. Many-to-many is `{ table, type: 'manyToMany', through, throughLocalKey, throughForeignKey, references?, parentKey?, orderBy? }`. Nested relations live in a `relations` map on the relation. Every collection and every nested level costs exactly one extra query for the whole result set, never one per row. Filter via `findAll({ relName: { col: value } })` with the same operators; collection filters compile to `parentKey IN (SELECT ... WHERE ...)`, so `total` stays correct. Filters go through relation paths at any depth (`{ state: { country: { code: 'IN' } } }`), and collections take `some` / `none` / `every` (`{ posts: { none: { status: 'draft' } } }`), compiled to subqueries.
 - `options.select` narrows the projection and takes dotted relation paths at any depth: `['id', 'name', 'region.code', 'states.cities.name']`. Unknown names are ignored; an all-dotted list leaves the base row complete; the parent key, the child foreign key and any nested key are re-added automatically.
 - Primary keys: `primaryKey` (default `'id'`) per entity in forFeature config (`primaryKeyType` is deprecated and does nothing). UUID works on Postgres via RETURNING; with uuid keys, route params are strings, so don't use `ParseIntPipe`.
-- Full-text search is PostgreSQL-only.
+- Full-text search is PostgreSQL-only; it takes `filters`, `relations`, `select`, `language` and `queryMode` in its options.
+- SQLite (`dialect: 'sqlite'`): pass `db`. Bulk writes need libSQL; D1 and sync drivers throw `TransactionException`. Locks, full-text and array/JSON operators are a 400.
+- Exports (3.7): `DrizzleConnectionOptions`, `DrizzleCrudAsyncOptions`, `DrizzleCrudOptionsFactory`, `FullTextOptions`, `FullTextQueryMode`, `FullTextSearchOptions`.
 - Exports (3.5): `createCrudController`, `CrudContext`, `CrudEventBus`, `ApiCrudQuery`, `ApiCrudList`, `MissingScopeException`, `StaleVersionException`, and the types `CrudControllerOptions`, `CrudEvent`, `CrudSubscriber`, `CrudScope`, `CollectionFilter`, `CountByRow`, `CrudPage`, `UncountedCrudPage`, `RelationCounts`.
-- Exports: `SqlBaseCrudService`, `DrizzleCrudModule`, `DRIZZLE_DB`, `DRIZZLE_CRUD_CONFIG`, `TestCrudFactory`, exceptions (`EntityNotFoundException`, `DuplicateEntityException`, `ForeignKeyViolationException`, `EntityInUseException`, `ValidationFailedException`, `BulkOperationException`, plus the deprecated `DatabaseConnectionException` and `TransactionException`), and types (`SqlCrudConfig`, `SqlOperationOptions`, `DrizzleCrudConfig`, `CrudFeature`, `CrudFeatureConfig`, `PaginationOptions`, `OperationOptions`, `SqlSearchOptions`, `SqlSearchMode`, `BulkOperationResult`, `BulkOperationItemError`, `SqlDialect`, `PrimaryKeyType`, `CrudFilter`, `FilterOperators`, `SortInput`, `CursorPaginationOptions`, `CursorPage`, `CrudAllowlists`, `UpsertOptions`, `BulkMode`, `ParsedCrudQuery`), and `parseCrudQuery`.
+- Exports: `SqlBaseCrudService`, `DrizzleCrudModule`, `DRIZZLE_DB`, `DRIZZLE_CRUD_CONFIG`, `TestCrudFactory`, exceptions (`EntityNotFoundException`, `DuplicateEntityException`, `ForeignKeyViolationException`, `EntityInUseException`, `ValidationFailedException`, `BulkOperationException`, `TransactionException`, plus the deprecated `DatabaseConnectionException`), and types (`SqlCrudConfig`, `SqlOperationOptions`, `DrizzleCrudConfig`, `CrudFeature`, `CrudFeatureConfig`, `PaginationOptions`, `OperationOptions`, `SqlSearchOptions`, `SqlSearchMode`, `BulkOperationResult`, `BulkOperationItemError`, `SqlDialect`, `PrimaryKeyType`, `CrudFilter`, `FilterOperators`, `SortInput`, `CursorPaginationOptions`, `CursorPage`, `CrudAllowlists`, `UpsertOptions`, `BulkMode`, `ParsedCrudQuery`), and `parseCrudQuery`.
 
 ### `SqlCrudConfig`
 
 ```typescript
 interface SqlCrudConfig {
-  dialect: 'postgresql' | 'mysql';
+  dialect: 'postgresql' | 'mysql' | 'sqlite';
   db: any;                         // Drizzle instance (injected by forFeature)
   table: any;                      // Drizzle table (set by forFeature)
   primaryKey: string;              // default 'id'

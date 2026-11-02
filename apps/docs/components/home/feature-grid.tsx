@@ -24,7 +24,11 @@ const FEATURES: {
 	{ icon: Box, title: "Complete CRUD", href: "/docs/defining-services" },
 	{ icon: Settings2, title: "Configure once", href: "/docs/for-root" },
 	{ icon: ShieldCheck, title: "Type-safe generics", href: "/docs/api" },
-	{ icon: Database, title: "PostgreSQL & MySQL", href: "/docs/for-root" },
+	{
+		icon: Database,
+		title: "PostgreSQL, MySQL & SQLite",
+		href: "/docs/for-root",
+	},
 	{
 		icon: RotateCcw,
 		title: "Soft delete & restore",

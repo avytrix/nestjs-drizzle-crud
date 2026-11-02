@@ -113,6 +113,10 @@ When the statement fails, the failing items are named in a [`BulkOperationExcept
 
 Two rows of the same batch with the same conflict key are a 400 on PostgreSQL ("the same key appears more than once in one upsert"), because one statement cannot update a row twice. Remove duplicates before you call it.
 
+## Does upsert work on SQLite?
+
+Yes. SQLite has the same `INSERT ... ON CONFLICT (...) DO UPDATE ... WHERE` as PostgreSQL, and `RETURNING`, so `upsert` and `massUpsert` behave as described above, the tenant scope guard included. `massUpsert` needs a driver with async transactions, such as libSQL; see [SQLite, libSQL and Cloudflare D1](/docs/sqlite).
+
 ## How does upsert differ on MySQL?
 
 MySQL uses `ON DUPLICATE KEY UPDATE`, and three things change:
@@ -134,7 +138,7 @@ MySQL uses `ON DUPLICATE KEY UPDATE`, and three things change:
     Yes. Pass `update: []` and the existing row comes back unchanged, which works as a get-or-create.
   </Accordion>
   <Accordion title="Does upsert work on a multi-tenant entity?">
-    On PostgreSQL, yes: the scope is written onto new rows and a conflict with another tenant's row is a 404. On MySQL an upsert on a scoped entity is a 400.
+    On PostgreSQL and SQLite, yes: the scope is written onto new rows and a conflict with another tenant's row is a 404. On MySQL an upsert on a scoped entity is a 400.
   </Accordion>
 </Accordions>
 

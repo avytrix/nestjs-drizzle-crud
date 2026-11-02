@@ -120,6 +120,10 @@ It depends on what you pass:
 
 For most requests, one top-level transaction with `tx` passed everywhere is the right shape.
 
+## Which SQLite drivers can run a transaction?
+
+`executeSqlTransaction` needs an interactive transaction that can wait for async work. On SQLite, libSQL (`@libsql/client`) has one. Cloudflare D1 has no interactive transactions, and synchronous drivers (better-sqlite3, bun:sqlite, sql.js) cannot wait inside theirs, so on those `executeSqlTransaction` throws a `TransactionException` before it opens anything. That also covers every bulk write, nested create and `attach` / `detach` / `sync`. See [SQLite, libSQL and Cloudflare D1](/docs/sqlite).
+
 ## What happens when something fails?
 
 The transaction rolls back and the error reaches your caller:

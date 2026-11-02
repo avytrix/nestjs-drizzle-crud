@@ -1,4 +1,4 @@
-import { Box, Cpu, Database, Hexagon, Server } from "lucide-react";
+import { Box, Cpu, Database, Feather, Hexagon, Server } from "lucide-react";
 import type { ComponentType } from "react";
 
 const COMPATIBLE: {
@@ -7,6 +7,7 @@ const COMPATIBLE: {
 }[] = [
 	{ icon: Database, label: "PostgreSQL" },
 	{ icon: Server, label: "MySQL" },
+	{ icon: Feather, label: "SQLite" },
 	{ icon: Hexagon, label: "Node.js" },
 	{ icon: Box, label: "Bun" },
 	{ icon: Cpu, label: "Deno" },
@@ -14,7 +15,7 @@ const COMPATIBLE: {
 
 export function CompatibleWith() {
 	return (
-		<div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+		<div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
 			{COMPATIBLE.map((item) => (
 				<div
 					key={item.label}
