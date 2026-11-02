@@ -4,6 +4,7 @@ import type {
 	DrizzleCrudConfig,
 } from "../core/interfaces/drizzle-crud-config.interface";
 import type { SqlCrudConfig } from "../core/interfaces/sql-crud-config.interface";
+import { CrudEventBus } from "../core/events/crud-event-bus";
 import { mergeCrudConfig } from "../core/utils/merge-config";
 import {
 	DRIZZLE_CONNECTION,
@@ -37,8 +38,7 @@ function normalizeConfig(config: DrizzleCrudConfig) {
 			...config.sql,
 		},
 		hooks: {
-			enableGlobalHooks: false,
-			...config.hooks,
+			enableGlobalHooks: config.hooks?.enableGlobalHooks === true,
 		},
 	};
 }
@@ -51,6 +51,7 @@ function buildEntityConfig(
 	entityConfig: CrudFeature["config"],
 	db: any,
 	globalConfig: any,
+	events?: CrudEventBus,
 ): SqlCrudConfig {
 	const decoratorConfig = Reflect.getMetadata?.("crud:config", service) || {};
 	// Each layer merges one level deep for softDelete, timestamps, pagination and
@@ -78,6 +79,10 @@ function buildEntityConfig(
 				: { createdAt: "created_at", updatedAt: "updated_at" },
 	};
 	if (gd.pagination) projectConfig.pagination = gd.pagination;
+	// Global hooks: every service raises its write events on the shared bus.
+	if (globalConfig?.hooks?.enableGlobalHooks && events) {
+		projectConfig.events = events;
+	}
 	if (globalConfig?.sql) projectConfig.sql = globalConfig.sql;
 
 	// Per-entity overrides win over project defaults.
@@ -125,10 +130,31 @@ function connectionProviders(rawConfigProvider: Provider): Provider[] {
 			inject: [DRIZZLE_CONNECTION],
 			useFactory: (connection: DrizzleConnection) => connection.db,
 		},
+		{
+			provide: CrudEventBus,
+			inject: [DRIZZLE_RAW_CONFIG],
+			useFactory: (raw: DrizzleCrudConfig) => {
+				const bus = new CrudEventBus();
+				for (const subscriber of raw.hooks?.subscribers ?? []) {
+					bus.subscribe(subscriber);
+				}
+				if (bus.size > 0 && !raw.hooks?.enableGlobalHooks) {
+					console.warn(
+						"[nestjs-drizzle-crud] hooks.subscribers is set but hooks.enableGlobalHooks is not, so no events will fire.",
+					);
+				}
+				return bus;
+			},
+		},
 	];
 }
 
-const EXPORTED_TOKENS = [DRIZZLE_CRUD_CONFIG, DRIZZLE_DB, DRIZZLE_CONNECTION];
+const EXPORTED_TOKENS = [
+	DRIZZLE_CRUD_CONFIG,
+	DRIZZLE_DB,
+	DRIZZLE_CONNECTION,
+	CrudEventBus,
+];
 
 @Module({})
 export class DrizzleCrudModule {
@@ -167,8 +193,14 @@ export class DrizzleCrudModule {
 	static forFeature(entities: CrudFeature[]): DynamicModule {
 		const providers: Provider[] = entities.map((entity) => ({
 			provide: entity.service,
-			inject: [DRIZZLE_DB, DRIZZLE_CRUD_CONFIG],
-			useFactory: (db: any, globalConfig: any) =>
+			// The bus is optional so a test module that provides DRIZZLE_DB and
+			// DRIZZLE_CRUD_CONFIG by hand keeps working.
+			inject: [
+				DRIZZLE_DB,
+				DRIZZLE_CRUD_CONFIG,
+				{ token: CrudEventBus, optional: true },
+			],
+			useFactory: (db: any, globalConfig: any, events?: CrudEventBus) =>
 				new entity.service(
 					buildEntityConfig(
 						entity.service,
@@ -176,6 +208,7 @@ export class DrizzleCrudModule {
 						entity.config,
 						db,
 						globalConfig,
+						events,
 					),
 				),
 		}));
