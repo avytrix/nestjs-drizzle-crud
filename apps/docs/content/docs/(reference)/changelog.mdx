@@ -5,6 +5,38 @@ description: Release-by-release behavior changes for nestjs-drizzle-crud. Mirror
 
 This page mirrors the [`CHANGELOG.md`](https://www.npmjs.com/package/nestjs-drizzle-crud?activeTab=code) shipped in the npm tarball. Feature pages describe **current** behavior; this page is the historical record. If something here disagrees with a feature page, the feature page wins (and the changelog is the bug).
 
+## [3.4.0] - 2026-11-02
+
+The P1 features from the November 2026 audit. Every one is covered by specs that run real SQL against PGlite (`test/pglite.integration.spec.ts`) and by e2e specs over real HTTP in the example app.
+
+### Added
+
+- **A query string parser.** `service.parseQuery(query)` and the standalone `parseCrudQuery(query, table, options)` turn `?age[gte]=18&status=active&region[name]=Asia&or[0][code]=IN&sortBy=-name&page=2&limit=20&fields=id,name&with=region&search=jo` into `{ filters, pagination, options, isCursor }`. Values are coerced by Drizzle column type: integers and other numbers to `number`, `bigint` to `bigint`, booleans, dates to `Date` (an invalid one is a 400), `numeric` checked and kept as an exact string, and text, uuid and enum left as strings. An unknown column, relation, operator, sort column, `fields` entry or `with` path is a 400. It reads both Express 5's flat `age[gte]` keys and `qs` nested objects.
+- **Per-entity allowlists.** `filterableColumns`, `sortableColumns`, `selectableColumns`, `searchableColumns` and `loadableRelations` limit what a caller may filter, sort, select, search and eager-load; `writableColumns` limits what create, update and upsert may write. Anything outside a set list is a 400, in the service and in the parser. Unset lists allow everything. `skipAllowlists: true` skips them for a trusted call, and `findOne` where keys are not checked.
+- **Trash view and purge.** `withDeleted: true` and `onlyDeleted: true` work on every read (`find`, `findOne`, `findAll`, `findByCursor`, `count`, `exists`, `fullTextSearch`). `forceDelete(id)` and `massForceDelete(ids)` hard-delete rows whether they are soft-deleted or not.
+- **Upsert.** `upsert(dto, { conflictTarget, update })` and `massUpsert(rows, ...)` insert or update in one statement: `ON CONFLICT DO UPDATE` on Postgres, `ON DUPLICATE KEY UPDATE` on MySQL. A clash on another unique key is a 409, bad input a 400, and the same key twice in one `massUpsert` (`21000`) a 400.
+- **`and`, `or` and `not` filter groups.** `{ or: [{ status: 'a' }, { author: { name: 'Bob' } }], not: { tags: { name: 'x' } } }`. Groups nest, hold column, relation and collection filters, work inside a relation filter, and apply to `count`.
+- **New filter operators.** `notIn`, `between`, `startsWith`, `endsWith` and `contains` (escaped, case-insensitive unless `sql.caseSensitive` is on), `iStartsWith`, `iEndsWith` and `iContains` (always case-insensitive), and on PostgreSQL `arrayContains`, `arrayOverlaps` and `jsonContains`. A pattern operator on a non-text column, an array operator on a non-array column, or a PostgreSQL only operator on MySQL is a 400.
+- **Keyset pagination.** `findByCursor(filters, { cursor, limit, sortBy, count }, options)` returns `{ data, limit, nextCursor, total? }`. The cursor is base64url JSON of the last row's sort values plus the primary key, so pages stay stable under inserts and deep pages cost the same as the first. It works with every sort, filter, relation and `select`, keeps timestamp microseconds and follows the database's NULL ordering. The count only runs with `count: true`. A cursor that is not valid, or was made for another sort, is a 400.
+- **Multi-column and relation sorts from the caller.** `sortBy` takes a list: `['region.name', '-name']` or `[{ column, order }]`, and a comma separated string means the same. A dotted entry sorts by a top-level belongs-to column, joined for the data query only. A collection column is a 400.
+- **`bulkMode: 'perItem'`** keeps the 3.3 behaviour of one single-row call per item, in its own savepoint.
+- **New exports:** `parseCrudQuery`, and the types `CrudFilter`, `FilterGroup`, `FilterOperators`, `FilterOperator`, `FilterScalar`, `ColumnFilter`, `SortInput`, `CursorPaginationOptions`, `CursorPage`, `CrudAllowlists`, `UpsertOptions`, `BulkMode`, `ParseCrudQueryOptions` and `ParsedCrudQuery`. The Drizzle helpers `between`, `not` and `notInArray` are re-exported.
+
+### Changed
+
+These change behaviour that existing code may rely on. Check each one before upgrading.
+
+- **Mass writes are set-based.** `massUpdate`, `massSoftDelete`, `massRestore` and `massDelete` cost one `SELECT` that checks every id plus one `UPDATE` or `DELETE ... WHERE id IN (...)`, and `massCreate` one multi-row `INSERT`, instead of one or two queries per id. The `BulkOperationException` body is unchanged: when the statement fails, the batch is replayed item by item inside a savepoint that is rolled back, only to name the failing items. Hooks still run once per item, but the `after*` hooks now run once the whole set is written instead of after each item. Duplicate ids are written once. Pass `bulkMode: 'perItem'` for the old behaviour.
+- **Create and update ignore the columns the package manages.** Without `writableColumns`, the soft delete column is dropped from a create or update body, and the primary key and the `createdAt` column from an update body. An update whose only key was one of these is now a 400 ("there are no columns to update"). To write them on purpose, list them in `writableColumns`.
+- **`PaginationOptions.sortBy` is `SortInput`** (`string | Array<string | SortColumn>`). Code that passes a string is unaffected; code that reads `sortBy` back as a `string` needs a narrowing check.
+- **`between` is an operator now.** `{ col: { between: [a, b] } }` used to be a 400 ("Unknown filter operator").
+- `buildOrderBy` takes a `SortInput`, and `buildFilterConditions` and `buildCollectionFilter` take an optional `options` argument, for subclasses that call them.
+
+### Fixed
+
+- **Mass operations cost a fixed number of queries** (BUG-16). `massUpdate` over 10 ids was 20 queries; it is now 2.
+- **The soft delete guide's trash and purge recipes work** (BUG-17). They used raw Drizzle because `findAll({ deleted_at: { isNotNull: true } })` always returned nothing; the guide now uses `onlyDeleted` and `forceDelete`.
+
 ## [3.3.1] - 2026-11-02
 
 Fixes from the November 2026 audit. Every fix below is proven by a spec that runs real SQL against PGlite (`test/pglite.integration.spec.ts`) and failed before the change.
