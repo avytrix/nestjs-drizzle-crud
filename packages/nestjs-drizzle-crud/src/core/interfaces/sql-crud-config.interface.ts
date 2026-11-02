@@ -78,7 +78,12 @@ export interface SqlCrudConfig {
 
 	// Primary key configuration
 	primaryKey: string;
-	primaryKeyType: PrimaryKeyType;
+	/**
+	 * @deprecated Has no effect: the key type comes from the Drizzle column.
+	 * Still accepted so existing configs compile; it will be removed in the next
+	 * major version.
+	 */
+	primaryKeyType?: PrimaryKeyType;
 
 	// Soft delete
 	softDelete?: {
@@ -106,7 +111,9 @@ export interface SqlCrudConfig {
 	sql?: {
 		caseSensitive: boolean;
 		useReturning: boolean;
+		/** @deprecated Has no effect. Nothing reads it; it will be removed in the next major version. */
 		jsonSupport: boolean;
+		/** @deprecated Has no effect. Full-text search works on PostgreSQL whatever this is set to; it will be removed in the next major version. */
 		enableFullTextSearch: boolean;
 	};
 
