@@ -4,6 +4,12 @@ import { ArrowRight } from "lucide-react";
 // Newest first; the top banner announces RELEASES[0].
 export const RELEASES = [
 	{
+		version: "3.7.0",
+		date: "Nov 2, 2026",
+		title: "SQLite, MySQL connections, full-text options",
+		body: 'dialect: "sqlite" runs on SQLite, libSQL and Cloudflare D1. connectionString builds a mysql2 pool on MySQL, with pool size, SSL and idle timeout options on both drivers, and forRootAsync takes useClass and useExisting. fullTextSearch takes filters, relations and select like findAll, plus a language and websearch queries. MySQL row locks now lock.',
+	},
+	{
 		version: "3.6.0",
 		date: "Nov 2, 2026",
 		title: "Relations follow the tenant scope",

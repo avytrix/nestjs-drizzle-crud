@@ -8,12 +8,12 @@ export const siteConfig = {
 	mcpBin: "nestjs-drizzle-crud-mcp",
 	displayName: "Nestjs Drizzle", // what readers see: header, tab titles, site name
 	logo: "/avytrix-icon.png", // Avytrix Technologies mark
-	version: "3.6.0",
+	version: "3.7.0",
 	tagline: "Type-safe CRUD for Drizzle ORM in NestJS",
 	/** The home page <title>: the primary query first, the display name last, at most 60 characters. */
 	homeTitle: "NestJS + Drizzle ORM CRUD library | Nestjs Drizzle",
 	description:
-		"NestJS + Drizzle ORM CRUD: type-safe services with filtering, pagination, relations, soft delete, upsert and multi-tenancy for PostgreSQL and MySQL.",
+		"NestJS + Drizzle ORM CRUD: type-safe services with filtering, pagination, relations, soft delete, upsert and multi-tenancy for PostgreSQL, MySQL and SQLite.",
 	url: (process.env.NEXT_PUBLIC_SITE_URL ?? "https://crud.avytrix.dev").replace(
 		/\/+$/,
 		"",
@@ -68,6 +68,7 @@ export const siteConfig = {
 		"rest api",
 		"postgresql",
 		"mysql",
+		"sqlite",
 		"soft delete",
 		"pagination",
 		"full-text search",

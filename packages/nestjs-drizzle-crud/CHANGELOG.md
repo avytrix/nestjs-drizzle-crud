@@ -11,6 +11,49 @@ restore, `ER_DUP_ENTRY` mapping, dialect locking) are tracked separately and unc
 3.3.1, 3.4.0, 3.5.0 and 3.5.2 were tagged but never published to npm. Their changes reached npm
 in 3.5.1 (3.3.1 to 3.5.0) and 3.6.0 (3.5.2). The unscoped `nestjs-drizzle-crud` stops at 3.3.0.
 
+## [3.7.0] - 2026-11-02
+
+SQLite support, MySQL connections built for you, and full-text search that works like `findAll`.
+
+### Added
+
+- `dialect: "sqlite"` for SQLite, libSQL (Turso) and Cloudflare D1. Pass the Drizzle instance as
+  `db`. Writes use `RETURNING`, `upsert` uses `ON CONFLICT DO UPDATE` with the tenant guard, and
+  keyset pages follow SQLite's NULL order. `LIKE` gets `ESCAPE '\'`, so `%`, `_` and `\` in a
+  search term match literally. Constraint errors map like the other dialects: `UNIQUE` 409,
+  `FOREIGN KEY` 400 on a write and 409 on a delete, `NOT NULL` and `CHECK` 400. Full-text search,
+  row locks and the array and JSON operators are a 400.
+- On Cloudflare D1 and synchronous SQLite drivers (better-sqlite3, bun:sqlite, sql.js), the calls
+  that need an interactive transaction (mass writes, nested creates, `attach`, `detach`, `sync`)
+  throw a `TransactionException` that says why, before any statement runs. `TransactionException`
+  is no longer deprecated.
+- `connectionString` works with `dialect: "mysql"`: the module builds a `mysql2` pool, wraps it
+  with `drizzle-orm/mysql2` and ends it on shutdown. `mysql2` is a new optional peer, loaded only
+  on that path.
+- `connection: { poolSize, idleTimeout, ssl }` for the connection the module builds from
+  `connectionString`, on PostgreSQL (postgres-js) and MySQL (mysql2).
+- `forRootAsync` takes `useClass` and `useExisting`, with a class that implements
+  `DrizzleCrudOptionsFactory` (`createDrizzleCrudOptions()`), next to `useFactory`.
+- `fullTextSearch()` takes `options.filters`, and honours `options.relations`, `options.select`
+  and `options.counts`, the same as `findAll`. Before, they were ignored.
+- `language` (the text search configuration, default `"english"`) and `queryMode` (`"plain"`, the
+  default, or `"websearch"` for `websearch_to_tsquery`) on `fullTextSearch()` options and on
+  `search` with `mode: "fullText"`. A language that is not a plain identifier is a 400.
+- New types: `DrizzleConnectionOptions`, `DrizzleCrudAsyncOptions`, `DrizzleCrudOptionsFactory`,
+  `FullTextOptions`, `FullTextQueryMode` and `FullTextSearchOptions`.
+
+### Fixed
+
+- MySQL: `lock` and `forNoKeyUpdate` add `FOR UPDATE` or `FOR SHARE` (`forNoKeyUpdate` becomes
+  `FOR UPDATE`). They used to be accepted and silently ignored.
+- MySQL strict mode data errors (a missing required value, a value too long, out of range, of
+  the wrong type, a bad date, a failed check) are a 400 that names the column, instead of a 500.
+
+### Changed
+
+- The default `sql.useReturning` is `true` for every dialect except MySQL, so SQLite gets it.
+  PostgreSQL and MySQL keep the values they had.
+
 ## [3.6.0] - 2026-11-02
 
 Fixes from the second audit. The first one is a security fix: upgrade if you use `scope`.
