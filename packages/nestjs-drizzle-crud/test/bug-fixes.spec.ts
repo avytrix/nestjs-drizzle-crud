@@ -20,6 +20,7 @@ import {
 	mysqlTable,
 	varchar as myVarchar,
 } from "drizzle-orm/mysql-core";
+import { drizzle as mysqlDrizzle } from "drizzle-orm/mysql2";
 import { PgDialect, pgTable, serial, varchar } from "drizzle-orm/pg-core";
 import { SqlBaseCrudService } from "../src/core/abstract/sql-base-crud.service";
 import {
@@ -580,5 +581,47 @@ describe("BUG-15: MySQL gets LIKE, never ILIKE", () => {
 		const sqlText = render(conditions[0]);
 		expect(sqlText).toContain(" like ");
 		expect(sqlText).not.toContain("ilike");
+	});
+});
+
+describe("3.7.0: MySQL row locks and data errors", () => {
+	const table = mysqlTable("t", {
+		id: int("id").primaryKey(),
+		name: myVarchar("name", { length: 50 }),
+	});
+	const db = mysqlDrizzle.mock();
+	const svc: any = TestCrudFactory.createTestService(Svc, db, table, {
+		dialect: "mysql",
+		softDelete: { enabled: false, column: "deleted_at" },
+		timestamps: undefined,
+	});
+	const locked = (options: any) =>
+		svc.applyLock(db.select().from(table), options).toSQL().sql.toLowerCase();
+
+	it("adds FOR UPDATE and FOR SHARE instead of ignoring the lock", () => {
+		expect(locked({ lock: "update" })).toMatch(/ for update$/);
+		expect(locked({ lock: "share" })).toMatch(/ for share$/);
+		// MySQL has no FOR NO KEY UPDATE; FOR UPDATE is the safe stand-in.
+		expect(locked({ forNoKeyUpdate: true })).toMatch(/ for update$/);
+		expect(locked({ lock: "none" })).not.toContain(" for ");
+	});
+
+	it("maps strict mode data errors to a 400 naming the column", () => {
+		const mysqlError = (errno: number, message: string) => ({
+			message: "Failed query",
+			cause: Object.assign(new Error(message), { errno }),
+		});
+		const tooLong = svc.toClientError(
+			mysqlError(1406, "Data too long for column 'name' at row 1"),
+		);
+		expect(tooLong).toBeInstanceOf(ValidationFailedException);
+		expect(tooLong.message).toContain("too long for its column: name");
+		const missing = svc.toClientError(
+			mysqlError(1048, "Column 'name' cannot be null"),
+		);
+		expect(missing.message).toContain("a required value is missing: name");
+		// An errno that is not a data error stays a server error.
+		const other = mysqlError(1205, "Lock wait timeout exceeded");
+		expect(svc.toClientError(other)).toBe(other);
 	});
 });

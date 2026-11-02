@@ -223,3 +223,38 @@ test.describe("countries: filtering by a related collection", () => {
 		expect(body.total).toBe(1);
 	});
 });
+
+test.describe("countries: full-text search", () => {
+	// Countries 1-47 are named "Country n", in region ((n - 1) % 5) + 1, so
+	// Asia holds Country 1, 6, ..., 46 plus India and Nepal.
+	test("parses the term with websearch_to_tsquery", async ({ request }) => {
+		const res = await request.get(
+			"/countries/full-text?q=country%20-1&mode=websearch&limit=100",
+		);
+		expect(res.status()).toBe(200);
+		const body = await res.json();
+		expect(body.total).toBe(46);
+		expect(body.data.map((c: any) => c.name)).not.toContain("Country 1");
+	});
+
+	test("applies filters, relations and fields to the matches", async ({
+		request,
+	}) => {
+		const res = await request.get(
+			"/countries/full-text?q=country%20-1&mode=websearch&region[name]=Asia&with=region&fields=id,name,region.name&limit=100",
+		);
+		expect(res.status()).toBe(200);
+		const body = await res.json();
+		expect(body.total).toBe(9);
+		for (const country of body.data) {
+			expect(Object.keys(country).sort()).toEqual(["id", "name", "region"]);
+			expect(country.region).toEqual({ name: "Asia" });
+		}
+	});
+
+	test("keeps plainto_tsquery as the default", async ({ request }) => {
+		const res = await request.get("/countries/full-text?q=country%2012");
+		const body = await res.json();
+		expect(body.data.map((c: any) => c.name)).toEqual(["Country 12"]);
+	});
+});

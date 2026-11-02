@@ -1,4 +1,4 @@
-export type SqlDialect = "postgresql" | "mysql";
+export type SqlDialect = "postgresql" | "mysql" | "sqlite";
 export type PrimaryKeyType = "serial" | "bigserial" | "int" | "bigint" | "uuid";
 
 export type SortOrder = "asc" | "desc";

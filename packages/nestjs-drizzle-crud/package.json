@@ -1,7 +1,7 @@
 {
 	"name": "@avytrix/nestjs-drizzle-crud",
-	"version": "3.6.0",
-	"description": "NestJS + Drizzle ORM CRUD: type-safe services with filtering, pagination, cursor pagination, relations, soft delete, upsert, multi-tenancy and OpenAPI for PostgreSQL and MySQL.",
+	"version": "3.7.0",
+	"description": "NestJS + Drizzle ORM CRUD: type-safe services with filtering, pagination, cursor pagination, relations, soft delete, upsert, multi-tenancy and OpenAPI for PostgreSQL, MySQL and SQLite.",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"bin": {
@@ -47,6 +47,8 @@
 		"swagger",
 		"postgresql",
 		"mysql",
+		"sqlite",
+		"libsql",
 		"typescript",
 		"mcp",
 		"rest",
@@ -77,11 +79,15 @@
 		"@nestjs/core": ">=10.0.0",
 		"@nestjs/swagger": ">=7.0.0",
 		"drizzle-orm": ">=0.28.0 <1.0.0",
+		"mysql2": ">=3.0.0",
 		"postgres": ">=3.0.0",
 		"reflect-metadata": "^0.1.13 || ^0.2.0"
 	},
 	"peerDependenciesMeta": {
 		"@nestjs/swagger": {
+			"optional": true
+		},
+		"mysql2": {
 			"optional": true
 		},
 		"postgres": {
@@ -91,6 +97,7 @@
 	"devDependencies": {
 		"@electric-sql/pglite": "^0.5.4",
 		"@jest/globals": "^30.0.0",
+		"@libsql/client": "^0.18.0",
 		"@nestjs/common": "^11.1.28",
 		"@nestjs/core": "^11.1.28",
 		"@nestjs/swagger": "^11.4.7",
@@ -101,6 +108,7 @@
 		"@types/node": "^26.0.0",
 		"drizzle-orm": "^0.45.2",
 		"jest": "^30.4.2",
+		"mysql2": "^3.24.6",
 		"postgres": "^3.4.9",
 		"reflect-metadata": "^0.2.0",
 		"typescript": "^7.0.0"

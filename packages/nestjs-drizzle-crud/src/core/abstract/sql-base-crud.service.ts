@@ -7,6 +7,7 @@ import {
 	asc,
 	between,
 	desc,
+	entityKind,
 	eq,
 	exists,
 	getTableColumns,
@@ -40,6 +41,7 @@ import {
 	ForeignKeyViolationException,
 	MissingScopeException,
 	StaleVersionException,
+	TransactionException,
 	ValidationFailedException,
 } from "../../exceptions/crud.exceptions";
 import { CrudContext } from "../context/crud-context";
@@ -63,6 +65,8 @@ import type {
 } from "../interfaces/query.interface";
 import type { CrudScopeValues } from "../interfaces/scope.interface";
 import type {
+	FullTextOptions,
+	FullTextSearchOptions,
 	RelationConfig,
 	RelationNode,
 	RelationsConfig,
@@ -164,7 +168,8 @@ export abstract class SqlBaseCrudService<
 	}
 
 	// Normalizes the various driver result shapes (postgres-js, node-postgres,
-	// mysql2) into a simple "did this mutation affect any rows" boolean.
+	// mysql2, libSQL, better-sqlite3, D1) into a simple "did this mutation
+	// affect any rows" boolean.
 	protected wasAffected(result: any): boolean {
 		if (result == null) return false;
 		if (Array.isArray(result)) {
@@ -179,6 +184,9 @@ export abstract class SqlBaseCrudService<
 		if (typeof result.rowCount === "number") return result.rowCount > 0; // node-postgres
 		if (typeof result.rowsAffected === "number") return result.rowsAffected > 0;
 		if (typeof result.affectedRows === "number") return result.affectedRows > 0;
+		if (typeof result.changes === "number") return result.changes > 0; // better-sqlite3
+		if (typeof result.meta?.changes === "number")
+			return result.meta.changes > 0; // D1
 		return false;
 	}
 
@@ -1255,11 +1263,38 @@ export abstract class SqlBaseCrudService<
 
 	// Detect a unique-constraint violation across driver shapes: postgres-js
 	// sets `.code` on the error, Drizzle wraps it under `.cause`, and mysql2
-	// reports ER_DUP_ENTRY (errno 1062).
+	// reports ER_DUP_ENTRY (errno 1062). SQLite reports a UNIQUE or PRIMARY KEY
+	// constraint.
 	protected isUniqueViolation(error: any): boolean {
 		const code = error?.code ?? error?.cause?.code;
 		const errno = error?.errno ?? error?.cause?.errno;
-		return code === "23505" || code === "ER_DUP_ENTRY" || errno === 1062;
+		const sqlite = this.sqliteConstraint(error);
+		return (
+			code === "23505" ||
+			code === "ER_DUP_ENTRY" ||
+			errno === 1062 ||
+			sqlite === "UNIQUE" ||
+			sqlite === "PRIMARYKEY"
+		);
+	}
+
+	// The kind of SQLite constraint an error reports ("UNIQUE", "PRIMARYKEY",
+	// "FOREIGNKEY", "NOTNULL", "CHECK"), or undefined. libSQL and
+	// better-sqlite3 carry an extended code such as SQLITE_CONSTRAINT_UNIQUE;
+	// D1 only has the message ("UNIQUE constraint failed: posts.slug").
+	protected sqliteConstraint(error: any): string | undefined {
+		if (this.config.dialect !== "sqlite") return undefined;
+		for (const e of [error, error?.cause]) {
+			const code = e?.extendedCode ?? e?.code;
+			if (typeof code === "string" && code.startsWith("SQLITE_CONSTRAINT_")) {
+				return code.slice("SQLITE_CONSTRAINT_".length);
+			}
+		}
+		const message = `${error?.cause?.message ?? ""} ${error?.message ?? ""}`;
+		const m = message.match(
+			/(UNIQUE|PRIMARY KEY|FOREIGN KEY|NOT NULL|CHECK) constraint failed/,
+		);
+		return m?.[1]?.replace(" ", "");
 	}
 
 	// Turn a Postgres unique violation into a typed 409 exception, parsing the
@@ -1269,11 +1304,15 @@ export abstract class SqlBaseCrudService<
 		const detail: string = error?.detail ?? error?.cause?.detail ?? "";
 		const message: string = error?.cause?.message ?? error?.message ?? "";
 		// Postgres: "Key (code)=(EU) already exists."; MySQL: "Duplicate entry
-		// 'EU' for key 'countries.code'".
+		// 'EU' for key 'countries.code'"; SQLite: "UNIQUE constraint failed:
+		// countries.code", which names the column but not the value.
 		const m =
 			detail.match(/Key \((?<field>.+?)\)=\((?<value>.+?)\)/) ??
 			message.match(
 				/Duplicate entry '(?<value>.*)' for key '(?:[^']*\.)?(?<field>[^']+)'/,
+			) ??
+			message.match(
+				/UNIQUE constraint failed: (?:[^.,\s]+\.)?(?<field>[^,\s]+)/,
 			);
 		return new DuplicateEntityException(
 			this.getEntityName(),
@@ -1302,21 +1341,63 @@ export abstract class SqlBaseCrudService<
 		"21000": "the same key appears more than once in one upsert",
 	};
 
-	protected isDataException(error: any): boolean {
+	// The same client errors on MySQL (by errno, strict mode) and SQLite (by
+	// constraint kind).
+	private static readonly MYSQL_DATA_ERRORS: Record<number, string> = {
+		1048: "a required value is missing", // ER_BAD_NULL_ERROR
+		1364: "a required value is missing", // ER_NO_DEFAULT_FOR_FIELD
+		1406: "a value is too long for its column", // ER_DATA_TOO_LONG
+		3819: "a value violates a column check constraint",
+		1264: "a numeric value is out of range", // ER_WARN_DATA_OUT_OF_RANGE
+		1265: "a value does not match its column type", // WARN_DATA_TRUNCATED
+		1366: "a value does not match its column type", // ER_TRUNCATED_WRONG_VALUE_FOR_FIELD
+		1292: "a date or time value has an invalid format", // ER_TRUNCATED_WRONG_VALUE
+	};
+
+	private static readonly SQLITE_DATA_ERRORS: Record<string, string> = {
+		NOTNULL: "a required value is missing",
+		CHECK: "a value violates a column check constraint",
+	};
+
+	// The 400 message for a data error, or undefined when it is not one.
+	private dataErrorMessage(error: any): string | undefined {
 		const code = error?.code ?? error?.cause?.code;
-		return Object.hasOwn(SqlBaseCrudService.DATA_ERRORS, code ?? "");
+		if (Object.hasOwn(SqlBaseCrudService.DATA_ERRORS, code ?? "")) {
+			return SqlBaseCrudService.DATA_ERRORS[code];
+		}
+		if (this.config.dialect === "mysql") {
+			const errno = error?.errno ?? error?.cause?.errno;
+			return Object.hasOwn(SqlBaseCrudService.MYSQL_DATA_ERRORS, errno ?? "")
+				? SqlBaseCrudService.MYSQL_DATA_ERRORS[errno]
+				: undefined;
+		}
+		const sqlite = this.sqliteConstraint(error) ?? "";
+		return Object.hasOwn(SqlBaseCrudService.SQLITE_DATA_ERRORS, sqlite)
+			? SqlBaseCrudService.SQLITE_DATA_ERRORS[sqlite]
+			: undefined;
+	}
+
+	protected isDataException(error: any): boolean {
+		return this.dataErrorMessage(error) !== undefined;
 	}
 
 	protected toDataException(error: any): ValidationFailedException {
-		const code = error?.code ?? error?.cause?.code;
-		const message = SqlBaseCrudService.DATA_ERRORS[code] ?? "invalid value";
+		const message = this.dataErrorMessage(error) ?? "invalid value";
 		// node-postgres and PGlite name it `column`, postgres-js `column_name`.
+		// MySQL and SQLite only name it in the message.
 		const cause = error?.cause ?? error;
+		const text = String(cause?.message ?? "");
 		const column =
 			error?.column ??
 			cause?.column ??
 			error?.column_name ??
-			cause?.column_name;
+			cause?.column_name ??
+			(this.config.dialect === "mysql"
+				? text.match(/column '([^']+)'/i)?.[1]
+				: undefined) ??
+			(this.config.dialect === "sqlite"
+				? text.match(/NOT NULL constraint failed: (?:[^.\s]+\.)?(\S+)/)?.[1]
+				: undefined);
 		return new ValidationFailedException(
 			column ? `${message}: ${column}` : message,
 		);
@@ -1353,11 +1434,16 @@ export abstract class SqlBaseCrudService<
 	// on create/update the caller referenced a parent row that does not exist
 	// (400), on delete other rows still reference this one (409).
 	// MySQL: ER_NO_REFERENCED_ROW_2 (1452) on a write, ER_ROW_IS_REFERENCED_2
-	// (1451) on a delete.
+	// (1451) on a delete. SQLite: a FOREIGN KEY constraint, either way round.
 	protected isForeignKeyViolation(error: any): boolean {
 		const code = error?.code ?? error?.cause?.code;
 		const errno = error?.errno ?? error?.cause?.errno;
-		return code === "23503" || errno === 1451 || errno === 1452;
+		return (
+			code === "23503" ||
+			errno === 1451 ||
+			errno === 1452 ||
+			this.sqliteConstraint(error) === "FOREIGNKEY"
+		);
 	}
 
 	protected toForeignKeyException(error: any): ForeignKeyViolationException {
@@ -1369,16 +1455,75 @@ export abstract class SqlBaseCrudService<
 		);
 	}
 
-	// Apply a row-level lock to a SELECT builder (Postgres only; no-op elsewhere).
+	// Apply a row-level lock to a SELECT builder. Postgres takes every strength.
+	// MySQL has FOR UPDATE and FOR SHARE only, so forNoKeyUpdate becomes FOR
+	// UPDATE there. SQLite has no row locks at all, so asking for one is a 400
+	// rather than a lock that silently is not there.
 	protected applyLock(query: any, options?: SqlOperationOptions): any {
-		if (this.config.dialect !== "postgresql") return query;
-		// `OF <table>` locks the base rows only. Without it Postgres tries to lock
-		// every joined table too, and refuses on the nullable side of a LEFT JOIN.
-		const of = { of: this.config.table };
-		if (options?.forNoKeyUpdate) return query.for("no key update", of);
-		if (options?.lock && options.lock !== "none")
-			return query.for(options.lock, of);
-		return query;
+		const strength = options?.forNoKeyUpdate
+			? "no key update"
+			: options?.lock && options.lock !== "none"
+				? options.lock
+				: undefined;
+		if (!strength) return query;
+		if (this.config.dialect === "postgresql") {
+			// `OF <table>` locks the base rows only. Without it Postgres tries to
+			// lock every joined table too, and refuses on the nullable side of a
+			// LEFT JOIN.
+			return query.for(strength, { of: this.config.table });
+		}
+		if (this.config.dialect === "mysql") {
+			return query.for(strength === "share" ? "share" : "update");
+		}
+		throw new BadRequestException(
+			`Row locks (lock, forNoKeyUpdate) are not supported on ${this.config.dialect}`,
+		);
+	}
+
+	// The text search configuration as SQL. The default renders as before
+	// ('english'). Any other name must be a plain identifier, optionally
+	// schema qualified, so it can be written as a literal: a bound parameter
+	// would stop Postgres from matching an index on to_tsvector('german', ...).
+	protected textSearchConfig(language: unknown = "english"): any {
+		if (
+			typeof language !== "string" ||
+			!/^[A-Za-z_][A-Za-z0-9_]{0,62}(\.[A-Za-z_][A-Za-z0-9_]{0,62})?$/.test(
+				language,
+			)
+		) {
+			throw new BadRequestException(
+				`Invalid full-text search language: ${String(language)}`,
+			);
+		}
+		return sql.raw(`'${language}'`);
+	}
+
+	// The tsvector of `columns` and the tsquery of `term`, for the match and
+	// for ts_rank. "plain" (the default) is plainto_tsquery, "websearch" is
+	// websearch_to_tsquery.
+	protected fullTextParts(
+		columns: any[],
+		term: string,
+		options: FullTextOptions = {},
+	): { vector: any; query: any } {
+		const config = this.textSearchConfig(options.language);
+		const mode = options.queryMode ?? "plain";
+		if (mode !== "plain" && mode !== "websearch") {
+			throw new BadRequestException(
+				`Invalid full-text query mode: ${String(mode)} (expected 'plain' or 'websearch')`,
+			);
+		}
+		const parse = sql.raw(
+			mode === "websearch" ? "websearch_to_tsquery" : "plainto_tsquery",
+		);
+		// sql.join keeps the column references as bound SQL chunks instead of
+		// stringifying them (which Array#join + sql.raw did, producing invalid
+		// SQL and an injection vector).
+		const vector = sql.join(
+			columns.map((column) => sql`to_tsvector(${config}, ${column})`),
+			sql` || `,
+		);
+		return { vector, query: sql`${parse}(${config}, ${term})` };
 	}
 
 	protected buildSearchCondition(search?: SqlOperationOptions["search"]): any {
@@ -1398,12 +1543,8 @@ export abstract class SqlBaseCrudService<
 					"Full-text search only supported in PostgreSQL",
 				);
 			}
-			const tsVector = sql.join(
-				columns.map((column) => sql`to_tsvector('english', ${column})`),
-				sql` || `,
-			);
-			const tsQuery = sql`plainto_tsquery('english', ${term})`;
-			return sql`${tsVector} @@ ${tsQuery}`;
+			const { vector, query } = this.fullTextParts(columns, term, search);
+			return sql`${vector} @@ ${query}`;
 		}
 
 		const pattern = `%${term.replace(/[\\%_]/g, "\\$&")}%`;
@@ -1414,11 +1555,20 @@ export abstract class SqlBaseCrudService<
 	}
 
 	// ILIKE on Postgres. MySQL has no ILIKE, and its default collations already
-	// compare case-insensitively, so LIKE gives the same result there.
+	// compare case-insensitively, so LIKE gives the same result there. So does
+	// SQLite for ASCII letters.
 	protected caseInsensitiveLike(column: any, pattern: string): any {
-		return this.config.dialect === "mysql"
-			? like(column, pattern)
-			: ilike(column, pattern);
+		if (this.config.dialect === "postgresql") return ilike(column, pattern);
+		return this.likePattern(column, pattern);
+	}
+
+	// LIKE with `\` as the escape character. Postgres and MySQL use it by
+	// default; SQLite has no default escape, so `\%` would match a backslash
+	// followed by anything unless ESCAPE says otherwise.
+	protected likePattern(column: any, pattern: string): any {
+		return this.config.dialect === "sqlite"
+			? sql`${column} like ${pattern} escape '\\'`
+			: like(column, pattern);
 	}
 
 	// Parse an HTTP query (`@Query()`) into filters, pagination and options for
@@ -1915,7 +2065,7 @@ export abstract class SqlBaseCrudService<
 	// "Comes after the cursor row" for a list of sort columns: the first column
 	// is past the cursor value, or it ties and the next one is past, and so on.
 	// NULLs sort last ascending and first descending on Postgres, the other
-	// way round on MySQL, and the comparison follows the same rule.
+	// way round on MySQL and SQLite, and the comparison follows the same rule.
 	protected keysetCondition(specs: SortSpec[], values: unknown[]): any {
 		const branches: any[] = [];
 		specs.forEach((spec, i) => {
@@ -1934,7 +2084,7 @@ export abstract class SqlBaseCrudService<
 	}
 
 	private afterCursor(spec: SortSpec, value: unknown): any | undefined {
-		const postgres = this.config.dialect !== "mysql";
+		const postgres = this.config.dialect === "postgresql";
 		const nullsFirst = postgres ? spec.order === "desc" : spec.order === "asc";
 		if (value === null) {
 			return nullsFirst ? isNotNull(spec.column) : undefined;
@@ -4520,7 +4670,7 @@ export abstract class SqlBaseCrudService<
 					: `%${escaped}%`;
 		return insensitive || this.config.sql?.caseSensitive === false
 			? this.caseInsensitiveLike(column, pattern)
-			: like(column, pattern);
+			: this.likePattern(column, pattern);
 	}
 
 	protected applyComplexFilter(
@@ -4566,7 +4716,7 @@ export abstract class SqlBaseCrudService<
 					break;
 				case "like":
 					// Caller supplies the pattern (e.g. 'John%'); do not re-wrap.
-					conditions.push(like(column, raw as string));
+					conditions.push(this.likePattern(column, raw as string));
 					break;
 				case "ilike":
 					conditions.push(this.caseInsensitiveLike(column, raw as string));
@@ -4644,8 +4794,28 @@ export abstract class SqlBaseCrudService<
 		operation: (tx: any) => Promise<R>,
 		existingTransaction?: any,
 	): Promise<R> {
+		this.assertTransactions(existingTransaction ?? this.config.db);
 		if (existingTransaction) return operation(existingTransaction);
 		return this.config.db.transaction(operation);
+	}
+
+	// Bulk writes, nested writes and link changes need an interactive async
+	// transaction with savepoints. Two SQLite setups cannot give one, and
+	// would otherwise half work (a sync driver commits before the first await
+	// resolves; D1 rejects BEGIN), so they fail here with the reason instead.
+	protected assertTransactions(db: any): void {
+		if (this.config.dialect !== "sqlite") return;
+		const kind = db?.constructor?.[entityKind];
+		if (kind === "D1Database" || kind === "D1Transaction") {
+			throw new TransactionException(
+				"Cloudflare D1 has no interactive transactions, so mass writes, nested writes and attach/detach/sync are not available on it. Use the single-row methods, or db.batch() yourself.",
+			);
+		}
+		if (db?.resultKind === "sync") {
+			throw new TransactionException(
+				"This SQLite driver is synchronous (better-sqlite3, bun:sqlite, sql.js), and its transactions cannot wait for async work, so mass writes, nested writes and attach/detach/sync are not available on it. Use an async driver such as libSQL (@libsql/client).",
+			);
+		}
 	}
 
 	protected getEntityName(): string {
@@ -4660,11 +4830,18 @@ export abstract class SqlBaseCrudService<
 	}
 
 	// SQL-Specific Enhancements
+
+	// Postgres full-text search over `searchColumns`, best match first (ties on
+	// the primary key). The rest works as in findAll: `options.filters`, the
+	// tenant scope and soft delete narrow the rows, `options.relations`,
+	// `options.select` and `options.counts` shape them, and `total` counts
+	// every match. `options.language` and `options.queryMode` pick the text
+	// search configuration and how the term is parsed.
 	async fullTextSearch(
 		searchTerm: string,
 		searchColumns: string[],
 		pagination?: PaginationOptions,
-		options?: SqlOperationOptions,
+		options?: FullTextSearchOptions<FilterDto>,
 	): Promise<{ data: T[]; total: number; page: number; limit: number }> {
 		if (this.config.dialect !== "postgresql") {
 			throw new BadRequestException(
@@ -4686,49 +4863,67 @@ export abstract class SqlBaseCrudService<
 			return column;
 		});
 
-		const { transaction } = options || {};
-		const db = transaction || this.config.db;
-		// Combine the per-column tsvectors into a single SQL expression. Using
-		// sql.join keeps the column references as bound SQL chunks instead of
-		// stringifying them (which Array#join + sql.raw did, producing invalid
-		// SQL and an injection vector).
-		const tsVector = sql.join(
-			columns.map((column) => sql`to_tsvector('english', ${column})`),
-			sql` || `,
-		);
-		const tsQuery = sql`plainto_tsquery('english', ${searchTerm})`;
-
-		// Like find/findAll/count, exclude soft-deleted rows from search results.
-		const matchExpr = sql`${tsVector} @@ ${tsQuery}`;
-		const whereExpr = and(matchExpr, ...this.rowScope(options));
-
+		const { filters, language, queryMode, ...readOptions } = options ?? {};
+		const { vector, query } = this.fullTextParts(columns, searchTerm, {
+			language,
+			queryMode,
+		});
 		// The page and limit always apply, with or without `pagination`, so the
-		// envelope matches what came back. Ties on rank fall back to the primary
-		// key, as in findAll.
+		// envelope matches what came back.
 		const { page, limit, offset } = this.resolvePagination(
 			pagination?.page,
 			pagination?.limit,
 		);
+		const plan = this.planList(filters, undefined, "asc", readOptions);
+		const conditions = [sql`${vector} @@ ${query}`, ...plan.conditions];
+		const joins = Array.from(
+			new Set([
+				...plan.joined.map((node) => node.name),
+				...plan.filterRelations,
+			]),
+		);
 		const pk = this.columnOf(this.config.table, this.config.primaryKey);
-		const orderBy = [sql`ts_rank(${tsVector}, ${tsQuery}) DESC`];
+		const orderBy = [sql`ts_rank(${vector}, ${query}) DESC`];
 		if (pk) orderBy.push(asc(pk));
 
-		const dataQuery = db
-			.select()
-			.from(this.config.table)
-			.where(whereExpr)
+		let dataQuery = this.startSelect(
+			plan.db,
+			plan.baseSelect,
+			plan.joined,
+			joins.length > 0,
+			plan.selection,
+		);
+		dataQuery = this.applyJoins(dataQuery, joins, readOptions)
+			.where(and(...conditions))
 			.orderBy(...orderBy)
 			.limit(limit)
 			.offset(offset);
-		const countQuery = db
-			.select({ count: sql<number>`count(*)` })
-			.from(this.config.table)
-			.where(whereExpr);
-		const [data, totalResult] = await this.runRead(
+		const countQuery = this.buildCountQuery(
+			plan.db,
+			conditions,
+			plan.filterRelations,
+			readOptions,
+		);
+		const [fetched, totalResult] = await this.runRead(
 			Promise.all([dataQuery, countQuery]),
 		);
 		const total = parseInt(totalResult[0]?.count?.toString() || "0", 10);
 
-		return { data, total, page, limit };
+		const rows = this.normalizeRelations(
+			fetched,
+			plan.joined.map((node) => node.name),
+		);
+		await Promise.all([
+			this.loadRelations(
+				plan.db,
+				rows,
+				plan.nodes,
+				plan.selection,
+				undefined,
+				readOptions,
+			),
+			this.loadCounts(plan.db, rows, readOptions.counts, readOptions),
+		]);
+		return { data: rows, total, page, limit };
 	}
 }

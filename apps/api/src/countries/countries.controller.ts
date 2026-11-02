@@ -40,6 +40,27 @@ export class CountriesController {
 			: this.countries.findAll(q.filters, q.pagination, q.options);
 	}
 
+	// Postgres full-text search on the name, best match first. The rest of the
+	// query string is parsed as for GET /countries, so filters, `with` and
+	// `fields` apply to the matches:
+	//   /countries/full-text?q=country -1&mode=websearch&region[name]=Asia
+	@Get("full-text")
+	fullText(
+		@Query()
+		{
+			q,
+			mode,
+			...query
+		}: { q?: string; mode?: "plain" | "websearch" } & Record<string, unknown>,
+	) {
+		const parsed = this.countries.parseQuery(query);
+		return this.countries.fullTextSearch(q ?? "", ["name"], parsed.pagination, {
+			...parsed.options,
+			filters: parsed.filters,
+			queryMode: mode,
+		});
+	}
+
 	@Get(":id")
 	async find(
 		@Param("id", ParseIntPipe) id: number,

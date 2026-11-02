@@ -9,9 +9,13 @@ export interface DrizzleCrudConfig {
 	// Connection: provide ONE of:
 	//  - `db`: an already-constructed Drizzle instance, or
 	//  - `connectionString`: the module builds the connection itself
-	//    (postgresql via `postgres` + drizzle-orm/postgres-js).
+	//    (postgresql via `postgres` + drizzle-orm/postgres-js, mysql via
+	//    `mysql2` + drizzle-orm/mysql2).
 	db?: any;
 	connectionString?: string;
+	// Pool size, TLS and idle timeout for the connection the module builds
+	// from `connectionString`. Ignored when you pass `db`.
+	connection?: DrizzleConnectionOptions;
 	// Optional Drizzle schema object, passed to drizzle() when the module
 	// builds the connection from `connectionString`.
 	schema?: Record<string, unknown>;
@@ -50,6 +54,51 @@ export interface DrizzleCrudConfig {
 		enableGlobalHooks?: boolean;
 		subscribers?: CrudSubscriber[];
 	};
+}
+
+// Options for the connection the module builds from `connectionString`. Each
+// one is passed to the driver; one left out keeps the driver's default.
+export interface DrizzleConnectionOptions {
+	// Most connections in the pool: postgres-js `max`, mysql2 `connectionLimit`.
+	poolSize?: number;
+	// Seconds an unused connection stays open before it is closed: postgres-js
+	// `idle_timeout`, mysql2 `idleTimeout` (converted to milliseconds).
+	idleTimeout?: number;
+	// TLS. `true` turns it on with certificate checks; an object is handed to
+	// the driver as is (Node `tls` options such as `ca` or
+	// `rejectUnauthorized`). postgres-js also takes "require", "allow",
+	// "prefer" and "verify-full".
+	ssl?:
+		| boolean
+		| "require"
+		| "allow"
+		| "prefer"
+		| "verify-full"
+		| Record<string, unknown>;
+}
+
+// A class that builds the module config, for forRootAsync({ useClass }) or
+// forRootAsync({ useExisting }).
+export interface DrizzleCrudOptionsFactory {
+	createDrizzleCrudOptions(): Promise<DrizzleCrudConfig> | DrizzleCrudConfig;
+}
+
+// forRootAsync options. Give exactly one of useFactory, useClass or
+// useExisting.
+export interface DrizzleCrudAsyncOptions {
+	imports?: any[];
+	useFactory?: (
+		...args: any[]
+	) => Promise<DrizzleCrudConfig> | DrizzleCrudConfig;
+	inject?: any[];
+	// Instantiated by the module, then asked for the config.
+	useClass?: new (
+		...args: any[]
+	) => DrizzleCrudOptionsFactory;
+	// An already registered provider (from `imports`) asked for the config.
+	useExisting?: new (
+		...args: any[]
+	) => DrizzleCrudOptionsFactory;
 }
 
 // Per-entity overrides for forFeature. Every key is optional, and the object
