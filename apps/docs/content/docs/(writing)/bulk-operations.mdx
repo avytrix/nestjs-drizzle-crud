@@ -52,6 +52,8 @@ So `massUpdate` over 100 ids is two queries, not two hundred.
 
 Two exceptions on MySQL, which has no `RETURNING`: one more `SELECT` reads the written rows back, and `massCreate` of rows with auto-increment keys inserts row by row, because MySQL only reports the first id of a multi-row insert. If every row carries its own primary key, `massCreate` stays one `INSERT` plus one `SELECT`.
 
+On SQLite the statements are the same as on PostgreSQL, but only with a driver that has async transactions, such as libSQL. On Cloudflare D1 and on synchronous drivers (better-sqlite3, bun:sqlite, sql.js) every bulk method throws a `TransactionException` that says why; [SQLite, libSQL and Cloudflare D1](/docs/sqlite) has the details.
+
 ## What does a bulk call options object take?
 
 Every bulk method takes the same `SqlOperationOptions` as its single-row counterpart. These are the ones that matter most for bulk writes:

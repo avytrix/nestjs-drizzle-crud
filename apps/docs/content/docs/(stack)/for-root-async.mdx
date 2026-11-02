@@ -1,30 +1,40 @@
 ---
 title: Drizzle forRootAsync with ConfigService
-description: NestJS Drizzle forRootAsync with ConfigService builds the database config at startup from env, secrets or any provider you inject into useFactory.
+description: NestJS Drizzle forRootAsync with ConfigService builds the database config at startup, from useFactory, useClass or useExisting and any provider you inject.
 icon: Workflow
 ---
 
-`DrizzleCrudModule.forRootAsync({ imports, inject, useFactory })` is the async form of `forRoot` for NestJS Drizzle apps that read their config from `ConfigService`. Nest calls your `useFactory` at startup with the providers listed in `inject`, and the object it returns (or resolves to) is the same `DrizzleCrudConfig` that [`forRoot`](/docs/for-root) takes, with the same defaults filled in.
+`DrizzleCrudModule.forRootAsync({ imports, inject, useFactory })` is the async form of `forRoot` for NestJS Drizzle apps that read their config from `ConfigService`. Nest calls your `useFactory` at startup with the providers listed in `inject`, and the object it returns (or resolves to) is the same `DrizzleCrudConfig` that [`forRoot`](/docs/for-root) takes, with the same defaults filled in. Since 3.7.0 it also takes `useClass` or `useExisting`, the usual Nest way to build options from a class.
 
-<Callout title="Only useFactory">
-  `forRootAsync` takes `imports`, `inject` and `useFactory`. It does not accept `useClass` or
-  `useExisting`; wrap a config class in a factory instead, as shown further down.
+<Callout title="Give exactly one of useFactory, useClass or useExisting">
+  With none of them, `forRootAsync` throws when the module is declared. When `useFactory` is set,
+  it wins over the other two.
 </Callout>
 
 ## What does forRootAsync take?
 
 ```ts accent=nest
-DrizzleCrudModule.forRootAsync(options: {
+DrizzleCrudModule.forRootAsync(options: DrizzleCrudAsyncOptions): DynamicModule
+
+interface DrizzleCrudAsyncOptions {
   imports?: any[];
   inject?: any[];
-  useFactory: (...deps: any[]) => DrizzleCrudConfig | Promise<DrizzleCrudConfig>;
-}): DynamicModule
+  useFactory?: (...deps: any[]) => DrizzleCrudConfig | Promise<DrizzleCrudConfig>;
+  useClass?: Type<DrizzleCrudOptionsFactory>;
+  useExisting?: Type<DrizzleCrudOptionsFactory>;
+}
+
+interface DrizzleCrudOptionsFactory {
+  createDrizzleCrudOptions(): DrizzleCrudConfig | Promise<DrizzleCrudConfig>;
+}
 ```
 
 <PropsTable
   props={{
-    useFactory: { type: "(...deps) => config", required: true, description: "Returns a DrizzleCrudConfig, or a promise of one. Receives the providers in inject, in the same order." },
-    inject: { type: "any[]", default: "[]", description: "Providers to pass to useFactory, such as ConfigService." },
+    useFactory: { type: "(...deps) => config", description: "Returns a DrizzleCrudConfig, or a promise of one. Receives the providers in inject, in the same order." },
+    useClass: { type: "Type<DrizzleCrudOptionsFactory>", description: "A class the module registers and instantiates, then asks for the config with createDrizzleCrudOptions(). Its constructor can inject any provider in scope." },
+    useExisting: { type: "Type<DrizzleCrudOptionsFactory>", description: "A provider that already exists, usually exported by a module in imports. The module calls its createDrizzleCrudOptions() and does not create a second instance." },
+    inject: { type: "any[]", default: "[]", description: "Providers to pass to useFactory, such as ConfigService. Not used with useClass or useExisting." },
     imports: { type: "any[]", default: "[]", description: "Modules that export the injected providers. Not needed for a global module such as ConfigModule with isGlobal: true." },
   }}
 />
@@ -81,7 +91,7 @@ export class AppModule {}
 
 ## How do I build my own Drizzle instance in the factory?
 
-Return `db` instead of `connectionString`. Use this on MySQL, or when the pool size or SSL settings come from config:
+Return `db` instead of `connectionString`. Use this on SQLite, libSQL and D1, or for a driver option that `connection` (pool size, SSL, idle timeout) does not cover:
 
 ```ts accent=nest title="app.module.ts"
 import { Module } from '@nestjs/common';
@@ -129,38 +139,51 @@ DrizzleCrudModule.forRootAsync({
 
 `SecretsModule` and `SecretsService` stand for your own module. Nest waits for the promise before it builds any service, so a rejected promise stops startup.
 
-## How do I use a config class?
+## How do I use a config class with useClass?
 
-Provide the class from a module, import that module, and call it from the factory:
+Implement `DrizzleCrudOptionsFactory` and pass the class as `useClass`. The module registers it, injects its constructor and calls `createDrizzleCrudOptions()`:
 
-```ts accent=nest title="crud-config.module.ts"
-import { Injectable, Module } from '@nestjs/common';
+```ts accent=nest title="crud-config.service.ts"
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { DrizzleCrudConfig } from '@avytrix/nestjs-drizzle-crud';
+import type {
+  DrizzleCrudConfig,
+  DrizzleCrudOptionsFactory,
+} from '@avytrix/nestjs-drizzle-crud';
 import * as schema from './db/schema';
 
 @Injectable()
-export class CrudConfigService {
+export class CrudConfigService implements DrizzleCrudOptionsFactory {
   constructor(private readonly config: ConfigService) {}
 
-  create(): DrizzleCrudConfig {
+  createDrizzleCrudOptions(): DrizzleCrudConfig {
     return {
       dialect: 'postgresql',
       connectionString: this.config.getOrThrow<string>('DATABASE_URL'),
+      connection: { poolSize: this.config.get<number>('DB_POOL_SIZE', 10) },
       schema,
     };
   }
 }
-
-@Module({ providers: [CrudConfigService], exports: [CrudConfigService] })
-export class CrudConfigModule {}
 ```
 
 ```ts accent=nest title="app.module.ts"
+DrizzleCrudModule.forRootAsync({ useClass: CrudConfigService })
+```
+
+`ConfigService` resolves here because `ConfigModule` is global. For a provider from a module that is not global, add that module to `imports`.
+
+## How do I reuse a provider with useExisting?
+
+When the config class is already a provider in another module, export it from there and pass `useExisting`. The module asks that instance for the config instead of creating its own:
+
+```ts accent=nest title="app.module.ts"
+@Module({ providers: [CrudConfigService], exports: [CrudConfigService] })
+export class CrudConfigModule {}
+
 DrizzleCrudModule.forRootAsync({
   imports: [CrudConfigModule],
-  inject: [CrudConfigService],
-  useFactory: (crudConfig: CrudConfigService) => crudConfig.create(),
+  useExisting: CrudConfigService,
 })
 ```
 
@@ -176,7 +199,7 @@ Use [`forRoot`](/docs/for-root) when the config is a plain object you can build 
 
 <Accordions>
   <Accordion title="Does forRootAsync support useClass or useExisting?">
-    No. It accepts `useFactory` with `inject` and `imports`. Provide your config class from a module and call it from the factory.
+    Yes, since 3.7.0. The class implements `DrizzleCrudOptionsFactory` and returns the config from `createDrizzleCrudOptions()`. `useClass` creates the instance, `useExisting` reuses one exported by a module in `imports`.
   </Accordion>
   <Accordion title="Do I need imports: [ConfigModule] when ConfigModule is global?">
     No. With `isGlobal: true`, `ConfigService` resolves without it. Listing it does no harm.

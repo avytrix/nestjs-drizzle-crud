@@ -8,8 +8,8 @@ icon: Settings2
 
 <Callout type="warn" title="Pass exactly one of connectionString or db">
   With neither, startup fails. When both are set, `db` wins and `connectionString` is ignored.
-  `connectionString` works for PostgreSQL only; on MySQL, build the Drizzle instance yourself and
-  pass it as `db`.
+  `connectionString` works for PostgreSQL and MySQL. On SQLite, libSQL and Cloudflare D1, build
+  the Drizzle instance yourself and pass it as `db`.
 </Callout>
 
 ## What does forRoot take?
@@ -22,8 +22,11 @@ Every option, with the default `normalizeConfig` fills in ([`drizzle-crud.module
 
 <PropsTable
   props={{
-    dialect: { type: '"postgresql" | "mysql"', required: true, description: "The database dialect." },
-    connectionString: { type: "string", description: "The module builds the connection with the postgres driver and closes it on shutdown. PostgreSQL only." },
+    dialect: { type: '"postgresql" | "mysql" | "sqlite"', required: true, description: "The database dialect. sqlite covers SQLite, libSQL (Turso) and Cloudflare D1." },
+    connectionString: { type: "string", description: "The module builds the connection (postgres on PostgreSQL, a mysql2 pool on MySQL) and closes it on shutdown. Not for sqlite." },
+    "connection.poolSize": { type: "number", description: "Most connections in the pool the module builds: postgres-js max, mysql2 connectionLimit. Unset, the driver default applies." },
+    "connection.idleTimeout": { type: "number", description: "Seconds an unused connection stays open: postgres-js idle_timeout, mysql2 idleTimeout (the module converts it to milliseconds)." },
+    "connection.ssl": { type: 'boolean | "require" | "allow" | "prefer" | "verify-full" | object', description: "TLS. true turns it on with certificate checks, an object is handed to the driver as Node tls options. The string modes are postgres-js only; on MySQL they are a startup error." },
     db: { type: "Drizzle instance", description: "A Drizzle instance you built yourself, any dialect. You own its lifecycle." },
     schema: { type: "Record<string, unknown>", description: "Your Drizzle schema, passed to drizzle() when the module builds the connection from connectionString." },
     "defaults.softDelete": { type: "boolean", default: "true", description: "Soft delete for every entity, on a deleted_at column. Turn it on or off per entity in forFeature." },
@@ -32,7 +35,7 @@ Every option, with the default `normalizeConfig` fills in ([`drizzle-crud.module
     "defaults.pagination.maxLimit": { type: "number", default: "100", description: "The highest limit a caller may ask for. Set one pagination key and the other keeps its default." },
     "defaults.sortOrder": { type: '"asc" | "desc"', description: "Opt in. Entities without a defaultSort order findAll by their createdAt column in this direction. Unset, findAll orders by the primary key." },
     "sql.caseSensitive": { type: "boolean", default: "false", description: "false compares a bare string filter on a text column with lower() on both sides." },
-    "sql.useReturning": { type: "boolean", default: "true on PostgreSQL, false on MySQL", description: "Read the written row back with RETURNING. MySQL has no RETURNING, so the service turns it off there and warns." },
+    "sql.useReturning": { type: "boolean", default: "true on PostgreSQL and SQLite, false on MySQL", description: "Read the written row back with RETURNING. MySQL has no RETURNING, so the service turns it off there and warns." },
     "sql.jsonSupport": { type: "boolean", default: "true", description: "Deprecated, no effect. Removed in the next major version." },
     "sql.enableFullTextSearch": { type: "boolean", default: "false", description: "Deprecated, no effect. Full-text search works on PostgreSQL whatever this is set to." },
     "hooks.enableGlobalHooks": { type: "boolean", default: "false", description: "Every service raises a before and an after event for each write on the module's CrudEventBus." },
@@ -71,9 +74,51 @@ export class AppModule {}
 
 The module opens the client with `prepare: false`, which keeps it working behind a transaction pooler such as PgBouncer. Shutdown runs in `onModuleDestroy`, so call `app.enableShutdownHooks()` in `main.ts` if you want the connection closed when the process gets a signal such as `SIGTERM`.
 
+## How do I connect to MySQL with a connection string?
+
+Since 3.7.0, pass `dialect: 'mysql'` and a `mysql://` URL. The module loads `mysql2` when it starts, builds a pool, wraps it with `drizzle-orm/mysql2` and ends the pool on shutdown. `mysql2` is an optional peer, so install it yourself:
+
+<InstallTabs pkg="mysql2" />
+
+```ts accent=nest title="app.module.ts"
+DrizzleCrudModule.forRoot({
+  dialect: 'mysql',
+  connectionString: process.env.DATABASE_URL!, // mysql://user:pass@host:3306/app
+  schema,
+});
+```
+
+With `schema` set, the module passes `mode: 'default'` to Drizzle, which is right for MySQL itself. For PlanetScale, build the instance yourself and pass it as `db`.
+
+## How do I set the pool size, SSL or idle timeout?
+
+Add `connection` next to `connectionString`. Each key goes to the driver under its own name, and a key you leave out keeps the driver's default:
+
+```ts accent=nest title="app.module.ts"
+DrizzleCrudModule.forRoot({
+  dialect: 'postgresql',
+  connectionString: process.env.DATABASE_URL!,
+  connection: {
+    poolSize: 20,     // postgres-js max, mysql2 connectionLimit
+    idleTimeout: 30,  // seconds; mysql2 gets 30000 ms
+    ssl: true,        // TLS with certificate checks
+  },
+});
+```
+
+| Option | postgres-js | mysql2 |
+| --- | --- | --- |
+| `poolSize` | `max` | `connectionLimit` |
+| `idleTimeout` (seconds) | `idle_timeout` | `idleTimeout`, in milliseconds |
+| `ssl: true` | `ssl: true` | `ssl: {}`, which mysql2 verifies by default |
+| `ssl: { ... }` | passed as is | passed as is |
+| `ssl: "require"` and the other modes | passed as is | startup error |
+
+`connection` only applies to a connection the module builds. With `db`, configure the driver yourself. Anything else the driver takes, such as a statement timeout, also means building it yourself.
+
 ## How do I pass my own Drizzle instance?
 
-Build it yourself and pass it as `db`. Use this for MySQL, and on PostgreSQL when you want control over the pool, SSL or other driver options.
+Build it yourself and pass it as `db`. Use this for SQLite, libSQL and Cloudflare D1, and on PostgreSQL or MySQL when you want a driver option `connection` does not cover. [SQLite, libSQL and Cloudflare D1](/docs/sqlite) shows the SQLite setups.
 
 <Tabs items={["PostgreSQL", "MySQL"]}>
 <Tab value="PostgreSQL">
@@ -146,7 +191,10 @@ When the config depends on another provider, typically `ConfigService` after env
 
 <Accordions>
   <Accordion title="Can forRoot build a MySQL connection from a connection string?">
-    No. `connectionString` is PostgreSQL only. On MySQL, build the Drizzle instance with `mysql2` and pass it as `db`.
+    Yes, since 3.7.0. With `dialect: "mysql"` the module builds a `mysql2` pool from the URL and ends it on shutdown. Install `mysql2` in your app.
+  </Accordion>
+  <Accordion title="Can forRoot open a SQLite or libSQL database from a URL?">
+    No. On `dialect: "sqlite"` a `connectionString` is a startup error. Build the Drizzle instance with your driver and pass it as `db`.
   </Accordion>
   <Accordion title="Does the module close the database connection on shutdown?">
     Only when it built the connection from `connectionString`. A `db` you pass in is yours to close. Call `app.enableShutdownHooks()` so a signal triggers the shutdown.

@@ -75,7 +75,7 @@ Community help stays free. If you want the package integrated, a migration done,
     No. `forFeature` builds the service and hands it the config, Drizzle instance included. Adding `@Injectable()` or an `@Inject(DRIZZLE_DB)` constructor breaks that registration.
   </Accordion>
   <Accordion title="Does it work with MySQL?">
-    Yes. You pass your own Drizzle MySQL instance as `db`, and the package reads written rows back because MySQL has no `RETURNING`. Full-text search, the array and JSON operators and row locks are PostgreSQL only.
+    Yes. Pass a `mysql://` connection string or your own Drizzle MySQL instance as `db`, and the package reads written rows back because MySQL has no `RETURNING`. Full-text search and the array and JSON operators are PostgreSQL only.
   </Accordion>
 </Accordions>
 

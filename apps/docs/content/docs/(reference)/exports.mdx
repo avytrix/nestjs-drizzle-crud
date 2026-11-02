@@ -56,7 +56,7 @@ Every exception extends a Nest `HttpException` subclass, so the default exceptio
 | `ValidationFailedException` | 400 | Bad input: a value the column cannot take, an update with nothing to set, a column outside `writableColumns`. Throw it from your validation hooks too. |
 | `BulkOperationException` | 400 | A bulk method rolled back. The body lists each failed item as `{ index \| id, status, message }`; the `errors` property keeps the original errors. |
 | `DatabaseConnectionException` | 500 | **Deprecated.** Nothing throws it. Removed in the next major version. |
-| `TransactionException` | 500 | **Deprecated.** Nothing throws it; a failed transaction rejects with its own error. Removed in the next major version. |
+| `TransactionException` | 500 | The driver cannot run the transaction a call needs (Cloudflare D1, synchronous SQLite drivers). Thrown since 3.7.0; it was deprecated before. A failed transaction still rejects with its own error. |
 
 ## Test utilities
 
@@ -74,11 +74,16 @@ All type-only exports. Import them with `import type`.
 | Export | Description |
 | --- | --- |
 | `DrizzleCrudConfig` | The input to `forRoot` and `forRootAsync`. |
+| `DrizzleConnectionOptions` | `connection` in `DrizzleCrudConfig`: `{ poolSize?, idleTimeout?, ssl? }` for the connection the module builds. Since 3.7.0. |
+| `DrizzleCrudAsyncOptions` | The argument of `forRootAsync`: `useFactory`, `useClass` or `useExisting`, with `imports` and `inject`. Since 3.7.0. |
+| `DrizzleCrudOptionsFactory` | The class shape `useClass` and `useExisting` expect: `createDrizzleCrudOptions()`. Since 3.7.0. |
 | `SqlCrudConfig` | The merged per-entity config. |
 | `CrudFeature` | One entry of `forFeature`: `{ service, table, config? }`. |
 | `CrudFeatureConfig` | The per-entity `config` of `forFeature`. Since 3.3.1. |
 | `SqlOperationOptions` | The options argument of every method. |
-| `SqlSearchOptions`, `SqlSearchMode` | `options.search`: `{ term, columns, mode? }`, and `"ilike" \| "fullText"`. Since 3.3.1. |
+| `SqlSearchOptions`, `SqlSearchMode` | `options.search`: `{ term, columns, mode?, language?, queryMode? }`, and `"ilike" \| "fullText"`. Since 3.3.1. |
+| `FullTextOptions`, `FullTextQueryMode` | `{ language?, queryMode? }` and `"plain" \| "websearch"`. Since 3.7.0. |
+| `FullTextSearchOptions` | The options argument of `fullTextSearch`: `SqlOperationOptions` plus `filters`, `language` and `queryMode`. Since 3.7.0. |
 | `PaginationOptions` | The pagination argument of `findAll` and `fullTextSearch`: `{ page, limit, sortBy, sortOrder, withCount }`. Since 3.3.1. |
 | `ICrudService` | The interface `SqlBaseCrudService` implements. |
 | `OperationOptions` | The options type of `ICrudService`. Since 3.3.1. |
@@ -86,7 +91,7 @@ All type-only exports. Import them with `import type`.
 | `BulkOperationItemError` | One entry of a `BulkOperationException` body: `{ index?, id?, status, message }`. Since 3.3.1. |
 | `RelationConfig`, `RelationsConfig`, `RelationType` | One relation, a record of them, and `"belongsTo" \| "hasMany" \| "manyToMany"`. |
 | `RelationNode`, `SelectTree` | The resolved eager-loading plan and the parsed `options.select`. |
-| `SqlDialect` | `"postgresql" \| "mysql"`. |
+| `SqlDialect` | `"postgresql" \| "mysql" \| "sqlite"`. `"sqlite"` since 3.7.0. |
 | `PrimaryKeyType` | `"serial" \| "bigserial" \| "int" \| "bigint" \| "uuid"`. The setting that uses it is deprecated. |
 | `SortColumn`, `SortOrder` | `{ column, order? }` and `"asc" \| "desc"`. |
 | `SortInput` | `string \| Array<string \| SortColumn>`, the caller `sortBy`. Since 3.4.0. |

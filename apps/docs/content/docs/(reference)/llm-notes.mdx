@@ -19,9 +19,9 @@ nestjs-drizzle-crud facts for AI agents fit on one page: register `DrizzleCrudMo
 | Name | `@avytrix/nestjs-drizzle-crud` on npm (renamed from `nestjs-drizzle-crud` in 3.5.1), version <Version />, MIT |
 | Runtime dependencies | None |
 | Peers | `@nestjs/common` and `@nestjs/core` `>=10.0.0`, `drizzle-orm` `>=0.28.0 <1.0.0`, `reflect-metadata` `^0.1.13 \|\| ^0.2.0` |
-| Optional peers | `postgres` `>=3.0.0` (only for `connectionString`), `@nestjs/swagger` `>=7.0.0` (only for `ApiCrudQuery`, `ApiCrudList` and `openapi`) |
+| Optional peers | `postgres` `>=3.0.0` and `mysql2` `>=3.0.0` (only for `connectionString`), `@nestjs/swagger` `>=7.0.0` (only for `ApiCrudQuery`, `ApiCrudList` and `openapi`) |
 | Node | `>=20.0.0` |
-| Dialects | `"postgresql"` and `"mysql"`. For MySQL, build the Drizzle instance yourself (with `mysql2`) and pass it as `db` |
+| Dialects | `"postgresql"`, `"mysql"` and `"sqlite"` (SQLite, libSQL, Cloudflare D1). `connectionString` works on PostgreSQL and MySQL; on SQLite, build the Drizzle instance yourself and pass it as `db` |
 | Binary | `nestjs-drizzle-crud-mcp`, an MCP server over stdio with `list_docs`, `get_doc` and `search_docs` over `AGENT.md`, `README.md` and `CHANGELOG.md` |
 | Agent rule templates | `AGENTS.template.md` and `CLAUDE.template.md`, shipped in the package |
 
@@ -54,7 +54,7 @@ export class UsersService extends SqlBaseCrudService<
 
 ### Config
 
-- Defaults: `softDelete: true` on `deleted_at`, `timestamps: true` on `created_at` and `updated_at`, `pagination: { defaultLimit: 20, maxLimit: 100 }`, `primaryKey: "id"`, `sql.caseSensitive: false`, `sql.useReturning` true on PostgreSQL and forced off on MySQL.
+- Defaults: `softDelete: true` on `deleted_at`, `timestamps: true` on `created_at` and `updated_at`, `pagination: { defaultLimit: 20, maxLimit: 100 }`, `primaryKey: "id"`, `sql.caseSensitive: false`, `sql.useReturning` true on PostgreSQL and SQLite and forced off on MySQL. `connection: { poolSize, idleTimeout, ssl }` tunes a connection built from `connectionString`. `forRootAsync` takes `useFactory`, `useClass` or `useExisting` (a class with `createDrizzleCrudOptions()`).
 - Tables without those columns need `defaults: { softDelete: false, timestamps: false }`. `softDelete.column`, `timestamps.createdAt` / `updatedAt` and `versionColumn` name the key in the Drizzle table object (`deletedAt` for `deletedAt: timestamp("deleted_at")`); a key the table lacks throws at startup with the key to use.
 - `softDelete`, `timestamps`, `pagination` and `sql` merge one level deep across `forRoot`, `@CrudService` and `forFeature`: `pagination: { defaultLimit: 5 }` keeps `maxLimit`. Arrays (allowlists) replace.
 - `connectionString` is PostgreSQL only and `schema` is optional. `primaryKeyType`, `sql.jsonSupport` and `sql.enableFullTextSearch` are deprecated no-ops.
@@ -102,23 +102,24 @@ export class UsersService extends SqlBaseCrudService<
 - Writes take `options.relations` and `options.counts` and return the rows with them loaded.
 - Nested create needs `writableRelations: ["posts"]` and `RETURNING`: an array for has-many, an object for belongs-to, ids or objects for many-to-many, all in one transaction.
 - Use `attach(id, "tags", ids)`, `detach(id, "tags", ids?)` and `sync(id, "tags", ids)` for many-to-many links, never raw inserts into the join table.
-- `upsert(dto, { conflictTarget?, update? }, options?)` and `massUpsert(rows, ...)`: `ON CONFLICT DO UPDATE` on PostgreSQL, `ON DUPLICATE KEY UPDATE` on MySQL. A clash on another unique key is a 409.
-- Bulk methods (`massCreate`, `massUpdate`, `massSoftDelete`, `massRestore`, `massDelete`, `massForceDelete`, `massUpsert`) run in one transaction: one `SELECT` that checks the ids, plus one statement for the set. Any failure rolls back everything and throws `BulkOperationException`, a 400 with `errors: [{ index | id, status, message }]`. `bulkMode: "perItem"` runs the single-row method per item.
+- `upsert(dto, { conflictTarget?, update? }, options?)` and `massUpsert(rows, ...)`: `ON CONFLICT DO UPDATE` on PostgreSQL and SQLite, `ON DUPLICATE KEY UPDATE` on MySQL. A clash on another unique key is a 409.
+- Bulk methods (`massCreate`, `massUpdate`, `massSoftDelete`, `massRestore`, `massDelete`, `massForceDelete`, `massUpsert`) run in one transaction: one `SELECT` that checks the ids, plus one statement for the set. Any failure rolls back everything and throws `BulkOperationException`, a 400 with `errors: [{ index | id, status, message }]`. `bulkMode: "perItem"` runs the single-row method per item. On Cloudflare D1 and synchronous SQLite drivers, bulk writes, nested creates and attach / detach / sync throw `TransactionException`; use libSQL for them.
 
 ### Errors
 
 - Every exception extends a Nest `HttpException` subclass, so no custom filter is needed: `EntityNotFoundException` 404, `DuplicateEntityException` 409, `StaleVersionException` 409, `EntityInUseException` 409, `MissingScopeException` 403, `ForeignKeyViolationException` 400, `ValidationFailedException` 400, `BulkOperationException` 400.
-- Postgres data errors (`22001`, `23514`, `22003`, `22P02`, `22007`, `22008`, `21000`) become 400 on reads and writes. `DatabaseConnectionException` and `TransactionException` are deprecated; nothing throws them.
+- Postgres data errors (`22001`, `23514`, `22003`, `22P02`, `22007`, `22008`, `21000`), MySQL strict mode errors (1048, 1364, 1406, 1264, 1265, 1366, 1292, 3819) and SQLite `NOT NULL` / `CHECK` become 400 on reads and writes. SQLite `UNIQUE` is a 409 and `FOREIGN KEY` a 400 or 409, as on the other dialects. `TransactionException` (500) means the driver cannot run a needed transaction. `DatabaseConnectionException` is deprecated; nothing throws it.
+- Full-text search: `fullTextSearch(term, columns, pagination, { filters, relations, select, language, queryMode })`, PostgreSQL only. `language` defaults to `"english"`, `queryMode: "websearch"` uses `websearch_to_tsquery`. A 400 on MySQL and SQLite.
 
 ### Controllers, tenancy, events, locking
 
 - **Controllers:** prefer `class UsersController extends createCrudController(UsersService, { dto: { create, update } })` under `@Controller("users")`. Bulk routes are off until enabled in `routes`. The `:id` is parsed from the primary key column (`ParseIntPipe` for an integer, `ParseUUIDPipe` for a uuid) unless `idType` is set; do not add your own pipe. To change a route, turn it off in `routes` and add your own handler. `deleteMode` defaults to `"hard"`.
 - **Hand-written list routes:** `const q = this.usersService.parseQuery(query)`, then `q.isCursor ? findByCursor(q.filters, q.pagination, q.options) : findAll(q.filters, q.pagination, q.options)`. `withDeleted` and `onlyDeleted` need `allowTrash: true`. `parseCrudQuery(query, table, options)` is the standalone form.
 - **OpenAPI:** `@ApiCrudList({ table, ...entityConfig })` on a list route, or `openapi` in the controller options. Needs `@nestjs/swagger`.
-- **Tenancy:** set `scope: (ctx) => ({ tenant_id: ctx.tenantId })` and provide the context with `CrudContext.middleware((req) => ({ tenantId }))`, `CrudContext.run(ctx, fn)` or `options.context`. Never add a manual tenant filter or set the column in the body. Another tenant's id is a 404; a missing context value is a 403. `skipScope: true` only for trusted jobs. A scoped upsert is PostgreSQL only.
+- **Tenancy:** set `scope: (ctx) => ({ tenant_id: ctx.tenantId })` and provide the context with `CrudContext.middleware((req) => ({ tenantId }))`, `CrudContext.run(ctx, fn)` or `options.context`. Never add a manual tenant filter or set the column in the body. Another tenant's id is a 404; a missing context value is a 403. `skipScope: true` only for trusted jobs. A scoped upsert works on PostgreSQL and SQLite and is a 400 on MySQL.
 - **Events:** `hooks: { enableGlobalHooks: true }` in `forRoot`, then inject `CrudEventBus` and `subscribe({ afterWrite(e) { ... } })`. One event per mass call (`bulk: true`). Use `e.transaction` for atomic audit rows. `skipEvents: true` skips events; `hooks.skipBefore` / `skipAfter` do not.
 - **Optimistic locking:** `versionColumn: "version"` (integer, starts at 1). Clients send the version they read in the update body or as `expectedVersion`; a stale one is a 409. Never write the version yourself. Mass writes take `expectedVersions: { [String(id)]: version }`.
-- **Row locks:** `lock: "update" | "share"` or `forNoKeyUpdate: true` on a read, as `FOR ... OF <base table>`, so they work with an eager belongs-to. PostgreSQL only; ignored on MySQL.
+- **Row locks:** `lock: "update" | "share"` or `forNoKeyUpdate: true` on a read, as `FOR ... OF <base table>` on PostgreSQL, so they work with an eager belongs-to. On MySQL, `FOR UPDATE` or `FOR SHARE` (`forNoKeyUpdate` becomes `FOR UPDATE`). A 400 on SQLite.
 - **Primary keys:** the type comes from the Drizzle column. With uuid keys, route params are strings: never `ParseIntPipe`. On MySQL, supply uuid keys yourself on insert.
 
 ## Quick reference
@@ -228,7 +229,7 @@ this.usersService.findAll({ tenant_id: req.user.tenantId });
     No. All four, `T`, `CreateDto`, `UpdateDto` and `FilterDto`, are required. `SqlBaseCrudService<User>` alone does not compile.
   </Accordion>
   <Accordion title="Is mysql2 a peer dependency?">
-    No. The package has no MySQL driver peer. For MySQL you build the Drizzle instance with your own driver and pass it as `db`; `connectionString` only works for PostgreSQL.
+    An optional one, since 3.7.0. Install it when you pass `connectionString` with `dialect: "mysql"`; the module loads it only then. If you build the Drizzle instance yourself and pass it as `db`, the module never touches it.
   </Accordion>
   <Accordion title="Should a service have a constructor or @Injectable()?">
     No. `forFeature` constructs the service with a factory and passes the merged config to the base constructor. A decorator or an extra constructor parameter breaks registration.

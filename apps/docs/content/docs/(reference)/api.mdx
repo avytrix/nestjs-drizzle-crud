@@ -127,7 +127,7 @@ Each one is a single statement for the whole set, plus one `SELECT` that checks 
 
 | Method | Returns | Notes |
 | --- | --- | --- |
-| `fullTextSearch(term, columns, pagination?, options?)` | `Promise<{ data: T[]; total: number; page: number; limit: number }>` | PostgreSQL only. `to_tsvector('english', ...) @@ plainto_tsquery('english', ...)`, ordered by `ts_rank`, then the primary key. Page and limit always apply. An empty column list or an unknown column is a 400. Respects soft delete and scope. |
+| `fullTextSearch(term, columns, pagination?, options?)` | `Promise<{ data: T[]; total: number; page: number; limit: number }>` | PostgreSQL only. `to_tsvector('english', ...) @@ plainto_tsquery('english', ...)` by default, ordered by `ts_rank`, then the primary key. `options` is `FullTextSearchOptions`: `filters`, `relations`, `select` and `counts` work as on `findAll`, `language` picks the configuration and `queryMode: "websearch"` uses `websearch_to_tsquery`. Page and limit always apply. An empty column list or an unknown column is a 400. Respects soft delete and scope. |
 
 For a search inside a normal list, pass `options.search` to `findAll` or `count` instead. See [Full-text search](/docs/full-text-search).
 
@@ -204,10 +204,12 @@ The last argument of every method. Every key is optional.
     "search.term": { type: "string", description: "The search term for findAll and count." },
     "search.columns": { type: "string[]", description: "Table columns to search." },
     "search.mode": { type: '"ilike" | "fullText"', default: '"ilike"', description: "ilike ORs a contains match per column. fullText is PostgreSQL only." },
+    "search.language": { type: "string", default: '"english"', description: "fullText only: the text search configuration, a plain identifier." },
+    "search.queryMode": { type: '"plain" | "websearch"', default: '"plain"', description: "fullText only: plainto_tsquery or websearch_to_tsquery." },
     "hooks.skipBefore": { type: "boolean", default: "false", description: "Skip the before hooks for this call." },
     "hooks.skipAfter": { type: "boolean", default: "false", description: "Skip the after hooks for this call." },
-    lock: { type: '"update" | "share" | "none"', description: "Row lock on a read, as FOR UPDATE OF or FOR SHARE OF the base table. PostgreSQL only; ignored on MySQL." },
-    forNoKeyUpdate: { type: "boolean", description: "Lock with FOR NO KEY UPDATE. PostgreSQL only." },
+    lock: { type: '"update" | "share" | "none"', description: "Row lock on a read: FOR UPDATE OF or FOR SHARE OF the base table on PostgreSQL, FOR UPDATE or FOR SHARE on MySQL. A 400 on SQLite." },
+    forNoKeyUpdate: { type: "boolean", description: "Lock with FOR NO KEY UPDATE on PostgreSQL, FOR UPDATE on MySQL. A 400 on SQLite." },
     withDeleted: { type: "boolean", description: "Also return soft-deleted rows." },
     onlyDeleted: { type: "boolean", description: "Return only soft-deleted rows (the trash). A 400 when soft delete is off." },
     skipAllowlists: { type: "boolean", description: "Skip the entity's allowlists for a trusted, server-side call." },

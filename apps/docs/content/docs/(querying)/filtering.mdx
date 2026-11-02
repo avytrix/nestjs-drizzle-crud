@@ -79,23 +79,23 @@ All 22 operators, as the service and the query parser handle them:
 
 | Operator | SQL | Notes |
 | --- | --- | --- |
-| `eq` | `=` | A plain `=`, with no `lower()`. Case-sensitive on PostgreSQL even on text columns; MySQL's default collations ignore case. |
+| `eq` | `=` | A plain `=`, with no `lower()`. Case-sensitive on PostgreSQL and SQLite even on text columns; MySQL's default collations ignore case. |
 | `neq` | `<>` | Not equal. |
 | `gt` / `gte` / `lt` / `lte` | `>` `>=` `<` `<=` | Numeric and date columns. Date strings are parsed. `NaN` or `Infinity` is a 400. |
-| `like` | `LIKE` | You supply the `%` wildcards. The value is passed as is. |
-| `ilike` | `ILIKE` (PostgreSQL), `LIKE` (MySQL) | Case-insensitive, you supply the `%`. MySQL has no `ILIKE`; its default collations already ignore case. |
+| `like` | `LIKE` | You supply the `%` wildcards. The value is passed as is. On SQLite the package adds `ESCAPE '\'`, so a backslash escapes as it does on the other dialects. |
+| `ilike` | `ILIKE` (PostgreSQL), `LIKE` (MySQL, SQLite) | Case-insensitive, you supply the `%`. MySQL and SQLite have no `ILIKE`; MySQL's default collations ignore case, and SQLite's `LIKE` ignores ASCII case. |
 | `in` | `IN (...)` | The value must be an array, otherwise 400. |
 | `notIn` | `NOT IN (...)` | The value must be an array, otherwise 400. |
 | `between` | `BETWEEN a AND b` | `[from, to]`, both inclusive. Anything other than two values is a 400. Date strings are parsed. |
 | `isNull` | `IS NULL` / `IS NOT NULL` | `true` or `"true"` gives `IS NULL`, `false` or `"false"` gives `IS NOT NULL`. Anything else is a 400. |
 | `isNotNull` | `IS NOT NULL` / `IS NULL` | The mirror of `isNull`. |
 | `startsWith` / `endsWith` / `contains` | `LIKE 'x%'`, `'%x'`, `'%x%'` | Text columns and string values only. The value is escaped. Case-insensitive (`ILIKE` on PostgreSQL) unless `sql.caseSensitive` is `true`. |
-| `iStartsWith` / `iEndsWith` / `iContains` | `ILIKE` (PostgreSQL), `LIKE` (MySQL) | Always case-insensitive, whatever `sql.caseSensitive` says. Escaped like the plain forms. |
+| `iStartsWith` / `iEndsWith` / `iContains` | `ILIKE` (PostgreSQL), `LIKE` (MySQL, SQLite) | Always case-insensitive, whatever `sql.caseSensitive` says. Escaped like the plain forms. |
 | `arrayContains` | `@>` | PostgreSQL array columns: the column holds every value. `{ tags: { arrayContains: ["a", "b"] } }`. |
 | `arrayOverlaps` | `&&` | PostgreSQL array columns: the column holds at least one of the values. |
 | `jsonContains` | `@> '...'::jsonb` | PostgreSQL `jsonb` columns only (not `json`): `{ meta: { jsonContains: { plan: "pro" } } }`. |
 
-A pattern operator on a column that is not text, an array operator on a column that is not an array, a `jsonContains` on a column that is not `jsonb`, or any of the three PostgreSQL operators on MySQL is a 400 that says so.
+A pattern operator on a column that is not text, an array operator on a column that is not an array, a `jsonContains` on a column that is not `jsonb`, or any of the three PostgreSQL operators on MySQL or SQLite is a 400 that says so. On MySQL and SQLite the case-sensitive pattern forms still ignore case for the letters the database folds, because their `LIKE` does.
 
 ## How do I combine filters?
 
@@ -190,11 +190,13 @@ const total = await this.users.count(
   props={{
     "search.term": { type: "string", required: true, description: "The text to look for. It is trimmed; an empty term adds no condition." },
     "search.columns": { type: "string[]", required: true, description: "Column keys to search. Names that are not columns are skipped. With searchableColumns set, a column outside it is a 400." },
-    "search.mode": { type: '"ilike" | "fullText"', default: '"ilike"', description: "ilike: ILIKE '%term%' on each column (LIKE on MySQL), joined by OR, with %, _ and \\ in the term escaped. fullText: PostgreSQL to_tsvector @@ plainto_tsquery, unranked." },
+    "search.mode": { type: '"ilike" | "fullText"', default: '"ilike"', description: "ilike: ILIKE '%term%' on each column (LIKE on MySQL and SQLite), joined by OR, with %, _ and \\ in the term escaped. fullText: PostgreSQL to_tsvector @@ plainto_tsquery (or websearch_to_tsquery), unranked." },
+    "search.language": { type: "string", default: '"english"', description: "fullText only: the text search configuration. A plain identifier, optionally schema qualified; anything else is a 400." },
+    "search.queryMode": { type: '"plain" | "websearch"', default: '"plain"', description: "fullText only: plainto_tsquery or websearch_to_tsquery." },
   }}
 />
 
-`mode: "fullText"` on MySQL is a 400. For results ordered by relevance, call `fullTextSearch()` instead; [full-text search in PostgreSQL](/docs/full-text-search) compares the two.
+`mode: "fullText"` on MySQL or SQLite is a 400. For results ordered by relevance, call `fullTextSearch()` instead; [full-text search in PostgreSQL](/docs/full-text-search) compares the two.
 
 ```ts title="users.service.ts"
 await this.users.findAll(
@@ -248,8 +250,8 @@ await this.users.findAll(
   <Accordion title="Can I OR two conditions?">
     Yes. Put each condition in an `or` array, as in `{ or: [{ role: "admin" }, { age: { gte: 30 } }] }`. `and` and `not` work the same way, and groups nest.
   </Accordion>
-  <Accordion title="Do array and JSON operators work on MySQL?">
-    No. `arrayContains`, `arrayOverlaps` and `jsonContains` are PostgreSQL only, and on MySQL they are a 400 that says so.
+  <Accordion title="Do array and JSON operators work on MySQL or SQLite?">
+    No. `arrayContains`, `arrayOverlaps` and `jsonContains` are PostgreSQL only, and on MySQL or SQLite they are a 400 that says so.
   </Accordion>
 </Accordions>
 

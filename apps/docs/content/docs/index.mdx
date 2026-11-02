@@ -7,14 +7,14 @@ icon: House
 `nestjs-drizzle-crud` is a NestJS Drizzle library: you extend one base class per table and get a
 typed CRUD service on top of Drizzle ORM. You configure the connection once, bind each service to
 its Drizzle table, and every service can find, list, filter, paginate, create, update, soft delete
-and bulk write rows on PostgreSQL or MySQL. It does not hide Drizzle: your schema stays yours.
+and bulk write rows on PostgreSQL, MySQL or SQLite. It does not hide Drizzle: your schema stays yours.
 
 <Callout title="Who this is for, and what you need">
   NestJS developers who use Drizzle ORM, or want to, and are tired of writing the same `findAll`,
   `create` and `update` code in every service. You need Node 20 or later, `@nestjs/common` and
   `@nestjs/core` 10 or later, `drizzle-orm` from 0.28.0 up to (not including) 1.0.0, and
-  `reflect-metadata` 0.1.13 or 0.2. Add `postgres` 3 if you want the module to open the
-  PostgreSQL connection for you.
+  `reflect-metadata` 0.1.13 or 0.2. Add `postgres` 3 or `mysql2` 3 if you want the module to
+  open the PostgreSQL or MySQL connection for you.
 </Callout>
 
 ## What does it do?
@@ -150,7 +150,7 @@ What changed in each release, where to ask for help, and how to support the proj
 
 <InstallTabs pkg="@avytrix/nestjs-drizzle-crud @nestjs/common @nestjs/core drizzle-orm reflect-metadata" />
 
-Then add a driver: `postgres` for PostgreSQL, or a Drizzle instance you build yourself for MySQL.
+Then add a driver: `postgres` for PostgreSQL, `mysql2` for MySQL, or a Drizzle instance you build yourself, as on SQLite.
 [Install NestJS with Drizzle ORM](/docs/installation) covers which one you need and why.
 
 ## What does a service look like?
@@ -196,10 +196,10 @@ export class UsersModule {}
 
 | Fact | Value |
 | --- | --- |
-| Databases | PostgreSQL and MySQL (`dialect: "postgresql"` or `"mysql"`) |
+| Databases | PostgreSQL, MySQL and SQLite, libSQL and Cloudflare D1 (`dialect: "postgresql"`, `"mysql"` or `"sqlite"`) |
 | Documented version | <Version /> |
 | License | MIT |
-| Runtime dependencies | None. Peer dependencies only, two of them optional (`postgres`, `@nestjs/swagger`) |
+| Runtime dependencies | None. Peer dependencies only, three of them optional (`postgres`, `mysql2`, `@nestjs/swagger`) |
 | Node | 20 or later |
 | Source | <Ext to="github">GitHub</Ext>, published on <Ext to="npm">npm</Ext> |
 
@@ -209,8 +209,8 @@ export class UsersModule {}
   as plain Drizzle. You can still add those as extra methods on the same service.
 - **Your writes are workflows.** Multi-step domain operations belong in your own service code.
   Use the package for the plain entities around them.
-- **You need SQLite or another dialect.** The `dialect` setting accepts `"postgresql"` and
-  `"mysql"` only.
+- **You need another dialect.** The `dialect` setting accepts `"postgresql"`, `"mysql"` and
+  `"sqlite"` only, so SQL Server, Oracle and MongoDB are out.
 
 ## Common questions
 
@@ -219,7 +219,7 @@ export class UsersModule {}
     No. It builds Drizzle queries from your own Drizzle tables. You keep your schema and migrations, and you can inject `DRIZZLE_DB` to run any Drizzle query yourself.
   </Accordion>
   <Accordion title="Which databases does it support?">
-    PostgreSQL and MySQL. Full-text search and building the connection from a `connectionString` are PostgreSQL only; on MySQL you pass a Drizzle instance you built yourself.
+    PostgreSQL, MySQL and SQLite (including libSQL and Cloudflare D1). Full-text search is PostgreSQL only. The module builds the connection from a `connectionString` on PostgreSQL and MySQL; on SQLite you pass a Drizzle instance you built yourself. On D1, bulk writes are not available.
   </Accordion>
   <Accordion title="Do I have to write controllers?">
     No. `createCrudController` generates the list, get, create, update, delete and bulk routes for a service. You can also write a normal NestJS controller and call the service methods yourself.

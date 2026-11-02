@@ -2763,3 +2763,173 @@ describe("re-audit R-06: batches past the parameter limit are a 400", () => {
 		}
 	});
 });
+
+describe("3.7.0: full-text search options", () => {
+	it("keeps plainto_tsquery and 'english' as the default", async () => {
+		const { db, statements } = await countingDb();
+		const svc = postsService(db);
+		const res = await svc.fullTextSearch("post 1", ["title"]);
+		// plainto_tsquery: every word must match.
+		expect(res.data.map((p: any) => p.id)).toEqual([1]);
+		// It reads "-1" as a number, not as "without 1".
+		expect((await svc.fullTextSearch("post -1", ["title"])).total).toBe(0);
+		const select = statements().find((q) => q.includes("ts_rank")) ?? "";
+		expect(select).toContain(`to_tsvector('english', "posts"."title")`);
+		expect(select).toContain("plainto_tsquery('english', $1)");
+	});
+
+	it("parses the term with websearch_to_tsquery on request", async () => {
+		const svc = postsService(await sharedDb());
+		const res = await svc.fullTextSearch(
+			"post -1",
+			["title"],
+			{ limit: 100 },
+			{ queryMode: "websearch" },
+		);
+		expect(res.total).toBe(29);
+		expect(res.data.map((p: any) => p.id)).not.toContain(1);
+		const listed = await svc.findAll(
+			undefined,
+			{ limit: 100 },
+			{
+				search: {
+					term: '"post 1"',
+					columns: ["title"],
+					mode: "fullText",
+					queryMode: "websearch",
+				},
+			},
+		);
+		expect(listed.data.map((p: any) => p.id)).toEqual([1]);
+	});
+
+	it("uses another text search configuration", async () => {
+		const svc = postsService(await sharedDb());
+		// The english configuration stems "posts" to "post"; simple does not.
+		expect((await svc.fullTextSearch("posts", ["title"])).total).toBe(30);
+		const simple = await svc.fullTextSearch(
+			"posts",
+			["title"],
+			{},
+			{ language: "simple" },
+		);
+		expect(simple.total).toBe(0);
+		const qualified = await svc.fullTextSearch(
+			"posts",
+			["title"],
+			{},
+			{ language: "pg_catalog.english" },
+		);
+		expect(qualified.total).toBe(30);
+		const viaFindAll = await svc.findAll(
+			undefined,
+			{},
+			{
+				search: {
+					term: "posts",
+					columns: ["title"],
+					mode: "fullText",
+					language: "simple",
+				},
+			},
+		);
+		expect(viaFindAll.total).toBe(0);
+	});
+
+	it("answers a bad language or query mode with a 400", async () => {
+		const svc = postsService(await sharedDb());
+		const injection = "english'); select 1; --";
+		for (const language of [injection, "a b", "", 1]) {
+			await expect400(
+				svc.fullTextSearch("post", ["title"], {}, { language } as any),
+			);
+		}
+		await expect400(
+			svc.fullTextSearch("post", ["title"], {}, { queryMode: "raw" } as any),
+		);
+		await expect400(
+			svc.findAll(
+				undefined,
+				{},
+				{
+					search: {
+						term: "post",
+						columns: ["title"],
+						mode: "fullText",
+						language: "x'y",
+					},
+				},
+			),
+		);
+	});
+
+	it("honours filters, relations, select and counts like findAll", async () => {
+		const svc = postsService(await sharedDb(), {
+			relations: {
+				author: { table: authors, localKey: "author_id" },
+				tags: {
+					type: "manyToMany",
+					table: tags,
+					through: postTags,
+					throughLocalKey: "post_id",
+					throughForeignKey: "tag_id",
+				},
+			},
+		});
+		const res = await svc.fullTextSearch(
+			"post",
+			["title"],
+			{ limit: 100 },
+			{
+				filters: { author_id: 1 },
+				relations: ["author"],
+				select: ["id", "title", "author.name"],
+			},
+		);
+		expect(res.total).toBe(10);
+		expect(res.data).toHaveLength(10);
+		for (const row of res.data as any[]) {
+			expect(Object.keys(row).sort()).toEqual(["author", "id", "title"]);
+			expect(row.author).toEqual({ name: "Ann" });
+		}
+
+		const byRelation = await svc.fullTextSearch(
+			"post",
+			["title"],
+			{ limit: 100 },
+			{ filters: { author: { name: "Bob" } } },
+		);
+		expect(byRelation.total).toBe(10);
+		expect(byRelation.data.every((p: any) => p.author_id === 2)).toBe(true);
+
+		const withTags = await svc.fullTextSearch(
+			"post",
+			["title"],
+			{ limit: 100 },
+			{ filters: { tags: { some: { name: "news" } } }, counts: ["tags"] },
+		);
+		expect(withTags.data.map((p: any) => p.id).sort()).toEqual([1, 2]);
+		expect(withTags.data.find((p: any) => p.id === 1)?._count).toEqual({
+			tags: 2,
+		});
+	});
+
+	it("keeps the soft delete scope with filters", async () => {
+		const svc = postsService(await freshDb());
+		await svc.softDelete(1);
+		const res = await svc.fullTextSearch(
+			"post",
+			["title"],
+			{ limit: 100 },
+			{ filters: { author_id: 1 } },
+		);
+		expect(res.total).toBe(9);
+		const trash = await svc.fullTextSearch(
+			"post",
+			["title"],
+			{ limit: 100 },
+			{ filters: { author_id: 1 }, onlyDeleted: true },
+		);
+		expect(trash.data.map((p: any) => p.id)).toEqual([1]);
+	});
+});

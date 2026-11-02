@@ -71,7 +71,20 @@ export type RelationsConfig = Record<string, RelationConfig>;
 
 export type SqlSearchMode = "ilike" | "fullText";
 
-export interface SqlSearchOptions {
+// How a full-text search term becomes a tsquery. "plain" (the default) is
+// plainto_tsquery: every word must match. "websearch" is websearch_to_tsquery:
+// quoted phrases, `or` and a leading `-` work as on a search engine.
+export type FullTextQueryMode = "plain" | "websearch";
+
+// Postgres full-text settings. `language` is the text search configuration
+// ("english" by default). It must be a plain identifier, optionally schema
+// qualified ("public.my_config"); anything else is a 400.
+export interface FullTextOptions {
+	language?: string;
+	queryMode?: FullTextQueryMode;
+}
+
+export interface SqlSearchOptions extends FullTextOptions {
 	term: string;
 	columns: string[];
 	mode?: SqlSearchMode;
@@ -188,4 +201,12 @@ export interface SqlOperationOptions {
 	// Optimistic locking for mass writes: the version per id, keyed by the id
 	// as a string. Any id at another version is a 409 for that id.
 	expectedVersions?: Record<string, number>;
+}
+
+// Options of fullTextSearch(): the usual read options, the filters findAll
+// takes, and the full-text settings.
+export interface FullTextSearchOptions<FilterDto = any>
+	extends SqlOperationOptions,
+		FullTextOptions {
+	filters?: FilterDto;
 }

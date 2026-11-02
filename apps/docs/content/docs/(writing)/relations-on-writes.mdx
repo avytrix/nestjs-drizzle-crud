@@ -118,6 +118,7 @@ A few rules apply to every shape:
 - A relation key set to `null` is skipped.
 - A wrong shape (an object for has-many, an array for belongs-to) is a 400.
 - On MySQL, which has no `RETURNING`, a nested create is a 400.
+- On SQLite it works with a driver that has async transactions, such as libSQL. On Cloudflare D1 and synchronous drivers it throws a `TransactionException`.
 
 ## What if writableRelations is not set?
 

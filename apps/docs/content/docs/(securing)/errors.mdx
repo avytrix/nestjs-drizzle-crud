@@ -27,7 +27,7 @@ Each class extends the Nest exception that carries its status, and the construct
 
 The entity name is the table name Drizzle reports. Each class also sets `name` to its own class name, so `exception.name` is `"EntityNotFoundException"` and so on. Every class is exported from the package root; see [Exports](/docs/exports).
 
-`DatabaseConnectionException` and `TransactionException` (both 500, `InternalServerErrorException`) are still exported but deprecated: nothing in the package throws them, and they go in the next major version. A failed transaction rejects with the error that caused it.
+`TransactionException` (500, `InternalServerErrorException`) means the driver cannot run the transaction a call needs. Since 3.7.0 it is thrown on Cloudflare D1 and on synchronous SQLite drivers by the bulk writes, nested creates and `attach` / `detach` / `sync`; see [SQLite, libSQL and Cloudflare D1](/docs/sqlite). A transaction that fails while it runs still rejects with the error that caused it. `DatabaseConnectionException` (500) is still exported but deprecated: nothing throws it, and it goes in the next major version.
 
 ## What does the response body look like?
 
@@ -74,7 +74,20 @@ The service catches Postgres errors by SQLSTATE code (on the error or its Drizzl
 | `21000` | the same key twice in one `massUpsert` | `ValidationFailedException` (400) |
 | `23502` | a required column got no value | `ValidationFailedException` (400), with the column name |
 
-On MySQL, `ER_DUP_ENTRY` (1062) is a 409 `DuplicateEntityException`, `ER_NO_REFERENCED_ROW_2` (1452) a 400 `ForeignKeyViolationException`, and `ER_ROW_IS_REFERENCED_2` (1451) on a delete a 409 `EntityInUseException`. Any other error passes through unchanged.
+On MySQL, `ER_DUP_ENTRY` (1062) is a 409 `DuplicateEntityException`, `ER_NO_REFERENCED_ROW_2` (1452) a 400 `ForeignKeyViolationException`, and `ER_ROW_IS_REFERENCED_2` (1451) on a delete a 409 `EntityInUseException`. Since 3.7.0 the strict mode data errors are a 400 `ValidationFailedException` too, with the column name from the message:
+
+| MySQL errno | Meaning |
+| --- | --- |
+| 1048, 1364 | a required column got no value |
+| 1406 | value too long for its column |
+| 1264 | numeric value out of range |
+| 1265, 1366 | value does not match the column type |
+| 1292 | date or time with an invalid format |
+| 3819 | check constraint failed |
+
+On SQLite the constraint kind decides: `UNIQUE` or `PRIMARY KEY` is a 409 `DuplicateEntityException` (SQLite names the column but not the value), `FOREIGN KEY` is a 400 on create or update and a 409 on delete, and `NOT NULL` or `CHECK` is a 400 `ValidationFailedException`. libSQL and better-sqlite3 report the kind as an extended code such as `SQLITE_CONSTRAINT_UNIQUE`; D1 only in the message, which is read instead.
+
+Any other error passes through unchanged.
 
 ## Which other 400s does the service throw?
 
@@ -184,8 +197,11 @@ Register it with `app.useGlobalFilters(new CrudExceptionFilter())` or `@UseFilte
   <Accordion title="How do I get the field name out of DuplicateEntityException?">
     The class has no `field` property; the field only appears in its message, as in `users with email 'a@b.co' already exists`. If you need it structured, catch the driver error yourself in an override.
   </Accordion>
+  <Accordion title="Are SQLite constraint errors mapped to HTTP status codes?">
+    Yes, since 3.7.0. A `UNIQUE` or primary key violation is a 409, a `FOREIGN KEY` violation a 400 on a write and a 409 on a delete, and `NOT NULL` or `CHECK` a 400.
+  </Accordion>
   <Accordion title="Are MySQL errors mapped to HTTP status codes?">
-    Duplicate keys and foreign keys are: `ER_DUP_ENTRY` is a 409, a missing parent row a 400, and a delete blocked by other rows a 409. Other MySQL errors reach Nest unchanged.
+    Yes. `ER_DUP_ENTRY` is a 409, a missing parent row a 400, a delete blocked by other rows a 409, and since 3.7.0 the strict mode data errors (a value too long, a missing required value, a wrong type) are a 400. Other MySQL errors reach Nest unchanged.
   </Accordion>
 </Accordions>
 

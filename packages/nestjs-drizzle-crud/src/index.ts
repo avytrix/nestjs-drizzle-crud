@@ -48,7 +48,10 @@ export type {
 export type {
 	CrudFeature,
 	CrudFeatureConfig,
+	DrizzleConnectionOptions,
+	DrizzleCrudAsyncOptions,
 	DrizzleCrudConfig,
+	DrizzleCrudOptionsFactory,
 } from "./core/interfaces/drizzle-crud-config.interface";
 export type {
 	CrudEvent,
@@ -86,6 +89,9 @@ export type {
 } from "./core/interfaces/scope.interface";
 // Configuration interfaces
 export type {
+	FullTextOptions,
+	FullTextQueryMode,
+	FullTextSearchOptions,
 	RelationConfig,
 	RelationNode,
 	RelationsConfig,

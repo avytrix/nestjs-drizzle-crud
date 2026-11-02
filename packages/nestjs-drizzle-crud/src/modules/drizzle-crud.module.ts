@@ -1,7 +1,9 @@
 import { type DynamicModule, Module, type Provider } from "@nestjs/common";
 import type {
 	CrudFeature,
+	DrizzleCrudAsyncOptions,
 	DrizzleCrudConfig,
+	DrizzleCrudOptionsFactory,
 } from "../core/interfaces/drizzle-crud-config.interface";
 import type { SqlCrudConfig } from "../core/interfaces/sql-crud-config.interface";
 import { CrudEventBus } from "../core/events/crud-event-bus";
@@ -32,7 +34,8 @@ function normalizeConfig(config: DrizzleCrudConfig) {
 		},
 		sql: {
 			caseSensitive: false,
-			useReturning: config.dialect === "postgresql",
+			// Postgres and SQLite have RETURNING; MySQL does not.
+			useReturning: config.dialect !== "mysql",
 			jsonSupport: true,
 			enableFullTextSearch: false,
 			...config.sql,
@@ -149,6 +152,37 @@ function connectionProviders(rawConfigProvider: Provider): Provider[] {
 	];
 }
 
+// The provider that produces the raw config for forRootAsync: the factory
+// itself, or the create method of a useClass / useExisting class.
+function asyncConfigProvider(options: DrizzleCrudAsyncOptions): Provider {
+	if (options.useFactory) {
+		return {
+			provide: DRIZZLE_RAW_CONFIG,
+			useFactory: options.useFactory,
+			inject: options.inject || [],
+		};
+	}
+	const factory = options.useClass ?? options.useExisting;
+	if (!factory) {
+		throw new Error(
+			"DrizzleCrudModule.forRootAsync: provide useFactory, useClass or useExisting.",
+		);
+	}
+	return {
+		provide: DRIZZLE_RAW_CONFIG,
+		useFactory: (instance: DrizzleCrudOptionsFactory) =>
+			instance.createDrizzleCrudOptions(),
+		inject: [factory],
+	};
+}
+
+// useClass registers the class itself; useExisting points at a provider that
+// is already there, so it adds nothing.
+function asyncFactoryProviders(options: DrizzleCrudAsyncOptions): Provider[] {
+	if (options.useFactory || !options.useClass) return [];
+	return [{ provide: options.useClass, useClass: options.useClass }];
+}
+
 const EXPORTED_TOKENS = [
 	DRIZZLE_CRUD_CONFIG,
 	DRIZZLE_DB,
@@ -170,21 +204,14 @@ export class DrizzleCrudModule {
 		};
 	}
 
-	static forRootAsync(options: {
-		imports?: any[];
-		useFactory: (
-			...args: any[]
-		) => Promise<DrizzleCrudConfig> | DrizzleCrudConfig;
-		inject?: any[];
-	}): DynamicModule {
+	static forRootAsync(options: DrizzleCrudAsyncOptions): DynamicModule {
 		return {
 			module: DrizzleCrudModule,
 			imports: options.imports || [],
-			providers: connectionProviders({
-				provide: DRIZZLE_RAW_CONFIG,
-				useFactory: options.useFactory,
-				inject: options.inject || [],
-			}),
+			providers: [
+				...asyncFactoryProviders(options),
+				...connectionProviders(asyncConfigProvider(options)),
+			],
 			exports: EXPORTED_TOKENS,
 			global: true,
 		};

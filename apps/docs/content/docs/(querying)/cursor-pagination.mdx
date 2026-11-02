@@ -74,7 +74,7 @@ How each part keeps pages correct:
 | --- | --- |
 | Primary key as the last sort column | It makes every position unique, so no row is repeated or skipped. |
 | `LIMIT limit + 1` | The extra row says whether there is a next page. It is dropped from `data`. |
-| NULL handling | NULLs follow the database's own order: last ascending and first descending on Postgres, the other way round on MySQL. The comparison follows the same rule. |
+| NULL handling | NULLs follow the database's own order: last ascending and first descending on Postgres, the other way round on MySQL and SQLite. The comparison follows the same rule. |
 | Timestamps read as text | A JavaScript `Date` keeps milliseconds and Postgres keeps microseconds. Reading the value as text keeps the microseconds, so a row is never shown twice. |
 | `bigint` values | JSON cannot hold a `bigint`, so it travels as `{ "$b": "123" }` and comes back as a `bigint`. |
 
