@@ -4,6 +4,12 @@ import { ArrowRight } from "lucide-react";
 // Newest first; the top banner announces RELEASES[0].
 export const RELEASES = [
 	{
+		version: "3.5.1",
+		date: "Nov 2, 2026",
+		title: "Published as @avytrix/nestjs-drizzle-crud",
+		body: "The package moves to the @avytrix scope with the same code as 3.5.0. Swap the dependency and the imports for @avytrix/nestjs-drizzle-crud; the MCP server runs with npx -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp. The unscoped name is deprecated.",
+	},
+	{
 		version: "3.5.0",
 		date: "Nov 2, 2026",
 		title: "Controller factory, tenancy, events, locking",
