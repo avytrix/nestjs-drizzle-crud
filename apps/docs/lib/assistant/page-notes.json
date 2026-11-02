@@ -130,16 +130,16 @@
 		"summary": "The nestjs-drizzle-crud changelog, every release since 3.0.0 with what was added, changed, fixed and deprecated, newest first, mirroring CHANGELOG.md.",
 		"topics": [
 			{
-				"heading": "[3.5.0] - 2026-11-02",
-				"anchor": "350---2026-11-02"
-			},
-			{
-				"heading": "Added",
-				"anchor": "added"
+				"heading": "[3.5.1] - 2026-11-02",
+				"anchor": "351---2026-11-02"
 			},
 			{
 				"heading": "Changed",
 				"anchor": "changed"
+			},
+			{
+				"heading": "[3.5.0] - 2026-11-02",
+				"anchor": "350---2026-11-02"
 			}
 		]
 	},
