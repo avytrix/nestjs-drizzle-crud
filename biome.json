@@ -3,7 +3,14 @@
 	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
 	"files": {
 		"ignoreUnknown": true,
-		"includes": ["**", "!**/dist", "!**/.next", "!**/.source", "!**/coverage"]
+		"includes": [
+			"**",
+			"!**/dist",
+			"!**/.next",
+			"!**/.source",
+			"!**/coverage",
+			"!apps/docs/public/search-index.json"
+		]
 	},
 	"formatter": {
 		"enabled": true,

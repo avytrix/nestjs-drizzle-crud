@@ -11,7 +11,7 @@ export function SponsorCard() {
 			href={siteConfig.sponsor}
 			target="_blank"
 			rel="noreferrer noopener"
-			className="group flex flex-col gap-1 rounded-[2px] border border-[var(--fd-border-muted)] bg-[var(--fd-surface-muted)] p-3 transition-colors hover:border-[var(--fd-border-hover)] hover:bg-fd-accent/40"
+			className="group flex flex-col gap-1 rounded-lg border border-[var(--fd-border-muted)] bg-[var(--fd-surface-muted)] p-3 transition-colors hover:border-[var(--fd-border-hover)] hover:bg-fd-accent/40"
 		>
 			<span className="flex items-center gap-1.5 text-sm font-semibold text-fd-foreground">
 				<Heart className="size-3.5 text-[var(--color-fd-primary)]" />

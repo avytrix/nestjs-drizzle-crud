@@ -1,5 +1,6 @@
 ---
 title: Introduction
+icon: House
 description: "A complete, type-safe CRUD abstraction for Drizzle ORM in NestJS: configure the connection once, extend one base class per entity, and inherit full CRUD."
 ---
 
@@ -15,14 +16,21 @@ The whole library is built on two steps:
 
 <Steps>
 
+<Step>
+
 ### Configure the database connection once
 
 In your `AppModule`, call `DrizzleCrudModule.forRoot(...)` with the dialect, connection (either a connection string or a pre-built Drizzle instance), and the schema. The module creates and owns the connection, exposes it globally, and closes it on shutdown.
+
+</Step>
+
+<Step>
 
 ### Per entity: extend the base, bind the table
 
 For each entity, create an empty service class that extends `SqlBaseCrudService<Entity>`, then register it in a feature module with `DrizzleCrudModule.forFeature([{ service, table }])`. The service gets every CRUD method automatically, fully typed against your entity.
 
+</Step>
 </Steps>
 
 That is the entire library surface. Everything else, including soft delete, bulk ops, full-text search, hooks, transactions and relations, is enabled through configuration rather than new APIs to learn.

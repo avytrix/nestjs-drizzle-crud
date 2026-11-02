@@ -27,11 +27,11 @@ export function TopBanner() {
 					href="/docs/changelog"
 					className="flex-1 truncate text-center text-fd-muted-foreground transition-colors hover:text-fd-foreground"
 				>
-					<span className="font-semibold text-fd-foreground">v{latest.version} released</span>
-					<span className="mx-2 hidden sm:inline">·</span>
-					<span className="hidden sm:inline">
-						{latest.title} →
+					<span className="font-semibold text-fd-foreground">
+						v{latest.version} released
 					</span>
+					<span className="mx-2 hidden sm:inline">·</span>
+					<span className="hidden sm:inline">{latest.title} →</span>
 					<span className="sm:hidden">· Changelog →</span>
 				</Link>
 				<button
@@ -41,7 +41,7 @@ export function TopBanner() {
 						setVisible(false);
 					}}
 					aria-label="Dismiss banner"
-					className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[2px] text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
+					className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
 				>
 					<X className="size-3.5" />
 				</button>

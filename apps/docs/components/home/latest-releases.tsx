@@ -48,13 +48,13 @@ export function LatestReleases() {
 				<Link
 					key={r.version}
 					href="/docs/changelog"
-					className="block rounded-[8px] border border-[var(--fd-border-muted)] bg-[var(--fd-surface-muted)] p-5 text-fd-foreground transition-colors hover:border-[var(--fd-border-hover)] hover:bg-fd-accent/40"
+					className="block rounded-lg border border-[var(--fd-border-muted)] bg-[var(--fd-surface-muted)] p-5 text-fd-foreground transition-colors hover:border-[var(--fd-border-hover)] hover:bg-fd-accent/40"
 				>
 					<div className="mb-1.5 flex items-baseline gap-2">
 						<span className="text-base font-semibold tracking-[-0.198px] text-fd-foreground">
 							{r.title}
 						</span>
-						<span className="ml-auto rounded-[2px] border border-[var(--fd-border-muted)] bg-fd-background px-1.5 py-0.5 text-xs font-medium text-[var(--color-fd-primary)]">
+						<span className="ml-auto rounded-lg border border-[var(--fd-border-muted)] bg-fd-background px-1.5 py-0.5 text-xs font-medium text-[var(--color-fd-primary)]">
 							v{r.version}
 						</span>
 					</div>

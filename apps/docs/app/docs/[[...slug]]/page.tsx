@@ -1,16 +1,21 @@
-import { source } from "@/lib/source";
 import {
 	DocsBody,
 	DocsDescription,
 	DocsPage,
 	DocsTitle,
-} from "fumadocs-ui/layouts/docs/page";
-import { notFound } from "next/navigation";
-import { getMDXComponents } from "@/components/mdx";
+	MarkdownCopyButton,
+	ViewOptionsPopover,
+} from "fumadocs-ui/layouts/notebook/page";
 import { createRelativeLink } from "fumadocs-ui/mdx";
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { JsonLd } from "@/components/json-ld";
-import { articleJsonLd, createMetadata } from "@/lib/seo";
+import { getMDXComponents } from "@/components/mdx";
+import { PageHistory } from "@/components/page-history";
+import { sourceUrl } from "@/lib/doc-history";
+import { createMetadata } from "@/lib/seo";
+import { imageUrl, lucideIcon, markdownUrl, source } from "@/lib/source";
+import { docPageLd } from "@/lib/structured-data";
 
 export default async function Page(props: {
 	params: Promise<{ slug?: string[] }>;
@@ -20,24 +25,45 @@ export default async function Page(props: {
 	if (!page) notFound();
 
 	const MDX = page.data.body;
+	const md = markdownUrl(page);
+	const icon = lucideIcon(page.data.icon);
 
 	return (
 		<DocsPage toc={page.data.toc} full={page.data.full}>
 			<JsonLd
-				data={articleJsonLd({
+				data={docPageLd({
 					title: page.data.title,
 					description: page.data.description,
-					path: page.url,
+					url: page.url,
+					tree: source.getPageTree(),
 				})}
 			/>
-			<DocsTitle>{page.data.title}</DocsTitle>
-			<DocsDescription>{page.data.description}</DocsDescription>
+			<DocsTitle className="flex items-center gap-3">
+				{icon ? (
+					<span className="text-fd-primary [&_svg]:size-7" aria-hidden="true">
+						{icon}
+					</span>
+				) : null}
+				{page.data.title}
+			</DocsTitle>
+			{/*
+				`doc-lede` rather than Fumadocs' own sizing, which renders the lede larger and greyer
+				than the prose under it. The class is styled in global.css off the body tokens.
+			*/}
+			<DocsDescription className="doc-lede mb-0">
+				{page.data.description}
+			</DocsDescription>
+			<div className="flex flex-row items-center gap-2 border-b pb-6">
+				<MarkdownCopyButton markdownUrl={md} />
+				<ViewOptionsPopover markdownUrl={md} githubUrl={sourceUrl(page.path)} />
+			</div>
 			<DocsBody>
 				<MDX
 					components={getMDXComponents({
 						a: createRelativeLink(source, page),
 					})}
 				/>
+				<PageHistory contentPath={page.path} />
 			</DocsBody>
 		</DocsPage>
 	);
@@ -60,5 +86,6 @@ export async function generateMetadata(props: {
 		path: page.url,
 		ogType: "article",
 		keywords: [page.data.title.toLowerCase()],
+		image: imageUrl(page),
 	});
 }

@@ -7,6 +7,8 @@ This guide walks you through wiring a complete CRUD surface for a `users` table 
 
 <Steps>
 
+<Step>
+
 ### Define your Drizzle schema
 
 ```ts accent=drizzle title="db/schema.ts"
@@ -36,6 +38,10 @@ export type User = typeof users.$inferSelect;
   [Timestamps](/docs/timestamps) and [Soft delete](/docs/soft-delete).
 </Callout>
 
+</Step>
+
+<Step>
+
 ### Configure the module once
 
 ```ts accent=nest title="app.module.ts"
@@ -58,6 +64,10 @@ export class AppModule {}
 ```
 
 The module creates and owns the connection, exposes it globally, and closes it on application shutdown.
+
+</Step>
+
+<Step>
 
 ### Create an empty service
 
@@ -83,6 +93,10 @@ export class UsersService extends SqlBaseCrudService<
   `@Inject('DRIZZLE_DB')` constructor, `forFeature` constructs the service for
   you. The table is bound in `forFeature`, **not** in the service.
 </Callout>
+
+</Step>
+
+<Step>
 
 ### Bind the service to its table
 
@@ -113,6 +127,10 @@ import { UsersService } from './users.service';
 })
 export class UsersModule {}
 ```
+
+</Step>
+
+<Step>
 
 ### Use it in a controller
 
@@ -169,6 +187,7 @@ export class UsersController {
 
 `@Param('id', ParseIntPipe)` works because the `id` column is `serial`. If you switch to a `uuid` primary key, **remove `ParseIntPipe`**. See [Primary keys](/docs/primary-keys).
 
+</Step>
 </Steps>
 
 ## What you got

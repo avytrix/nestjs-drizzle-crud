@@ -1,5 +1,7 @@
 {
 	"title": "Support",
 	"description": "Get help, report a bug, and fund the work",
+	"icon": "LifeBuoy",
+	"defaultOpen": true,
 	"pages": ["getting-help", "sponsor"]
 }

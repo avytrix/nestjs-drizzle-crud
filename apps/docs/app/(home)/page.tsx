@@ -20,11 +20,11 @@ export default function HomePage() {
 					</h1>
 					<p className="text-lg leading-relaxed text-fd-muted-foreground md:text-xl">
 						Configure the connection once in{" "}
-						<code className="rounded-[2px] bg-[var(--fd-surface-muted)] px-1.5 py-0.5 font-mono text-base text-fd-foreground">
+						<code className="rounded-lg bg-[var(--fd-surface-muted)] px-1.5 py-0.5 font-mono text-base text-fd-foreground">
 							AppModule
 						</code>
-						. Every entity gets the full CRUD surface, type-safe,
-						dialect-aware, and ready to extend.
+						. Every entity gets the full CRUD surface, type-safe, dialect-aware,
+						and ready to extend.
 					</p>
 					<HeroTagChips />
 					<HeroCtaPills />
