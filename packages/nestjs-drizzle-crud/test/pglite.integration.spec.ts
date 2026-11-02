@@ -2526,3 +2526,41 @@ describe("M18: deeper relation filters", () => {
 		});
 	});
 });
+
+describe("3.5.2 fixes", () => {
+	it("answers soft delete on an entity without it, and full-text search on MySQL, with a 400", async () => {
+		const db = await sharedDb();
+		const svc = itemsService(db);
+		await expect400(svc.softDelete(1));
+		await expect400(svc.restore(1));
+		await expect400(svc.massSoftDelete([1]));
+		await expect400(svc.massRestore([1]));
+		const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+		const mysql = itemsService(db, { dialect: "mysql" });
+		warn.mockRestore();
+		await expect400(mysql.fullTextSearch("plain", ["name"]));
+	});
+
+	it("sorts a bare sortBy ascending, the same in findAll and over HTTP", async () => {
+		const svc = itemsService(await sharedDb());
+		const names = (res: any) => res.data.map((row: any) => row.name);
+		const direct = names(await svc.findAll({}, { sortBy: "name" }));
+		const http = names(
+			await svc.findAll({}, svc.parseQuery({ sortBy: "name" }).pagination),
+		);
+		expect(direct).toEqual([...direct].sort());
+		expect(http).toEqual(direct);
+	});
+
+	it("counts only related rows of the caller's tenant", async () => {
+		const db = await freshDb();
+		await db.insert(docNotes).values({ doc_id: 1, tenant_id: 2, body: "x" });
+		const svc = docsService(db);
+		const res = await svc.findAll(
+			{},
+			{},
+			{ ...asTenant(1), counts: ["notes"] },
+		);
+		expect(res.data.map((d: any) => d._count.notes)).toEqual([1, 0, 0]);
+	});
+});

@@ -366,6 +366,20 @@ export abstract class SqlBaseCrudService<
 		);
 	}
 
+	// The tenant scope on a related table: one condition per scope column that
+	// the related table also has. A related table without the column is shared
+	// across tenants, so it is left unscoped.
+	protected relatedScopeConditions(
+		target: any,
+		options?: SqlOperationOptions,
+	): any[] {
+		return Object.entries(this.resolveScope(options) ?? {})
+			.filter(([key]) => this.columnOf(target, key))
+			.map(([key, value]) =>
+				value === null ? isNull(target[key]) : eq(target[key], value),
+			);
+	}
+
 	// Write the scope onto a row about to be inserted, over whatever the body
 	// said, so a create can only ever land in the caller's own tenant.
 	protected applyScopeToRow(
@@ -1052,7 +1066,7 @@ export abstract class SqlBaseCrudService<
 	// (or a query with no sort at all) still page in the same order every time.
 	protected buildOrderBy(
 		sortBy?: SortInput,
-		sortOrder: SortOrder = "desc",
+		sortOrder: SortOrder = "asc",
 	): any[] {
 		return this.resolveSort(sortBy, sortOrder).map((spec) =>
 			this.orderOf(spec),
@@ -1064,15 +1078,16 @@ export abstract class SqlBaseCrudService<
 	}
 
 	// Resolve a caller sort (or the configured defaultSort) into ORDER BY
-	// entries, primary key last. A single string keeps its 3.3 meaning: one
-	// column in `sortOrder` (default "desc"). A list, or a string with commas,
-	// sorts by each entry in turn, ascending unless it starts with "-".
+	// entries, primary key last. A single string sorts one column in
+	// `sortOrder` (default "asc", the same as `?sortBy=` over HTTP). A list, or
+	// a string with commas, sorts by each entry in turn, ascending unless it
+	// starts with "-".
 	// A caller column that does not exist, or sits outside sortableColumns, is
 	// a 400. An unknown column in defaultSort is a config mistake, so it is
 	// warned about and skipped instead.
 	protected resolveSort(
 		sortBy?: SortInput,
-		sortOrder: SortOrder = "desc",
+		sortOrder: SortOrder = "asc",
 		options?: SqlOperationOptions,
 	): SortSpec[] {
 		// Fail fast on a bad sortOrder; anything other than "desc" used to sort
@@ -1324,7 +1339,9 @@ export abstract class SqlBaseCrudService<
 
 		if (search.mode === "fullText") {
 			if (this.config.dialect !== "postgresql") {
-				throw new Error("Full-text search only supported in PostgreSQL");
+				throw new BadRequestException(
+					"Full-text search only supported in PostgreSQL",
+				);
 			}
 			const tsVector = sql.join(
 				columns.map((column) => sql`to_tsvector('english', ${column})`),
@@ -1640,7 +1657,7 @@ export abstract class SqlBaseCrudService<
 		pagination?: PaginationOptions,
 		options?: SqlOperationOptions,
 	): Promise<CrudPage<T, number | null>> {
-		const { sortBy, sortOrder = "desc" } = pagination || {};
+		const { sortBy, sortOrder = "asc" } = pagination || {};
 		const withCount = pagination?.withCount !== false;
 		const {
 			page,
@@ -1715,7 +1732,7 @@ export abstract class SqlBaseCrudService<
 		pagination?: CursorPaginationOptions,
 		options?: SqlOperationOptions,
 	): Promise<CursorPage<T>> {
-		const { sortBy, sortOrder = "desc", count = false } = pagination || {};
+		const { sortBy, sortOrder = "asc", count = false } = pagination || {};
 		const { limit } = this.resolvePagination(1, pagination?.limit);
 		const plan = this.planList(filters, sortBy, sortOrder, options);
 		const signature = plan.sort
@@ -2186,14 +2203,7 @@ export abstract class SqlBaseCrudService<
 		const conditions = [inArray(referenced, wanted)];
 		const softDeleted = this.softDeleteCondition(target);
 		if (softDeleted) conditions.push(softDeleted);
-		for (const [key, value] of Object.entries(
-			this.resolveScope(options) ?? {},
-		)) {
-			if (!this.columnOf(target, key)) continue;
-			conditions.push(
-				value === null ? isNull(target[key]) : eq(target[key], value),
-			);
-		}
+		conditions.push(...this.relatedScopeConditions(target, options));
 		const found: any[] = await tx
 			.select({ id: referenced })
 			.from(target)
@@ -2513,7 +2523,9 @@ export abstract class SqlBaseCrudService<
 
 	async softDelete(id: any, options?: SqlOperationOptions): Promise<boolean> {
 		if (!this.config.softDelete?.enabled) {
-			throw new Error("Soft delete is not enabled for this entity");
+			throw new BadRequestException(
+				"Soft delete is not enabled for this entity",
+			);
 		}
 
 		const { transaction, hooks = {} } = options || {};
@@ -2572,7 +2584,9 @@ export abstract class SqlBaseCrudService<
 
 	async restore(id: any, options?: SqlOperationOptions): Promise<T> {
 		if (!this.config.softDelete?.enabled) {
-			throw new Error("Soft delete is not enabled for this entity");
+			throw new BadRequestException(
+				"Soft delete is not enabled for this entity",
+			);
 		}
 
 		const { transaction, hooks = {} } = options || {};
@@ -3160,7 +3174,7 @@ export abstract class SqlBaseCrudService<
 		options?: SqlOperationOptions,
 	): Promise<boolean> {
 		if (!this.config.softDelete?.enabled)
-			throw new Error("Soft delete not enabled");
+			throw new BadRequestException("Soft delete not enabled");
 		if (options?.bulkMode === "perItem") {
 			return this.massSoftDeletePerItem(ids, options);
 		}
@@ -3228,7 +3242,7 @@ export abstract class SqlBaseCrudService<
 
 	async massRestore(ids: any[], options?: SqlOperationOptions): Promise<T[]> {
 		if (!this.config.softDelete?.enabled)
-			throw new Error("Soft delete not enabled");
+			throw new BadRequestException("Soft delete not enabled");
 		if (options?.bulkMode === "perItem") {
 			return this.massRestorePerItem(ids, options);
 		}
@@ -3836,6 +3850,7 @@ export abstract class SqlBaseCrudService<
 		}
 		const softDeleted = this.softDeleteCondition(target);
 		if (softDeleted) conditions.push(softDeleted);
+		conditions.push(...this.relatedScopeConditions(target, options));
 		const total = sql<number>`count(*)`;
 		if (this.relationType(relation) === "manyToMany") {
 			const joinLocal = relation.through[relation.throughLocalKey!];
@@ -4514,7 +4529,9 @@ export abstract class SqlBaseCrudService<
 		options?: SqlOperationOptions,
 	): Promise<{ data: T[]; total: number; page: number; limit: number }> {
 		if (this.config.dialect !== "postgresql") {
-			throw new Error("Full-text search only supported in PostgreSQL");
+			throw new BadRequestException(
+				"Full-text search only supported in PostgreSQL",
+			);
 		}
 
 		if (!Array.isArray(searchColumns) || searchColumns.length === 0) {

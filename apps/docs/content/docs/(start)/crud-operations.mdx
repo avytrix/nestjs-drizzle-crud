@@ -200,7 +200,7 @@ The `pagination` argument takes these keys:
     page: { type: "number", default: "1", description: "1-based page number." },
     limit: { type: "number", default: "20", description: "Page size, capped at pagination.maxLimit." },
     sortBy: { type: "string | Array<string | SortColumn>", description: "A column, a list such as [\"-created_at\", \"name\"] (a - prefix sorts descending), or { column, order } objects. \"region.name\" sorts by a belongs-to column." },
-    sortOrder: { type: '"asc" | "desc"', default: '"desc"', description: "Direction for a single sortBy string with no prefix. Anything else is a 400." },
+    sortOrder: { type: '"asc" | "desc"', default: '"asc"', description: "Direction for a single sortBy string with no prefix. Anything else is a 400." },
     withCount: { type: "boolean", default: "true", description: "false skips the COUNT(*) query: total is null and hasMore is set." },
   }}
 />
@@ -230,9 +230,9 @@ status without any setup. They come from
 | Every `mass*` method | `BulkOperationException` | 400 | One or more items failed. `errors` lists each one with the status it would have had alone; nothing is written. |
 | Every method on a scoped entity | `MissingScopeException` | 403 | The scope needs a context value, such as a tenant id, that the call does not have. |
 
-Two failures are plain `Error`s, which NestJS turns into a 500: `softDelete`, `restore`,
-`massSoftDelete` and `massRestore` on an entity with soft delete off, and `fullTextSearch` on
-MySQL (or `search.mode: "fullText"` there). Both are configuration mistakes, not bad input. [Errors](/docs/errors) shows the response
+`softDelete`, `restore`, `massSoftDelete` and `massRestore` on an entity with soft delete off,
+and `fullTextSearch` on MySQL (or `search.mode: "fullText"` there), are a 400
+`BadRequestException`. [Errors](/docs/errors) shows the response
 bodies and how to write a custom filter.
 
 ## How do delete, softDelete and forceDelete differ?

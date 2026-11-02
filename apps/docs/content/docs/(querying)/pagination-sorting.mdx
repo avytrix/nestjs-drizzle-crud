@@ -49,7 +49,7 @@ Five fields, all optional.
     page: { type: "number", default: "1", description: "1-indexed page number. Values below 1 become 1." },
     limit: { type: "number", default: "pagination.defaultLimit (20)", description: "Rows per page. Capped at pagination.maxLimit (100 by default)." },
     sortBy: { type: "string | Array<string | { column: string; order?: 'asc' | 'desc' }>", default: "the entity's defaultSort", description: "One column, a list, or a comma separated string. A dotted name sorts by a belongs-to relation column." },
-    sortOrder: { type: "'asc' | 'desc'", default: "'desc'", description: "Direction for a single sortBy string without a - or + prefix. Any other value is a 400." },
+    sortOrder: { type: "'asc' | 'desc'", default: "'asc'", description: "Direction for a single sortBy string without a - or + prefix. Any other value is a 400." },
     withCount: { type: "boolean", default: "true", description: "false skips the COUNT(*) query: total is null and hasMore is set." },
   }}
 />
@@ -120,7 +120,7 @@ These are a 400:
 - a column that does not exist on the table or the relation,
 - a column outside [`sortableColumns`](/docs/allowlists) when that allowlist is set.
 
-Over HTTP, [`parseQuery`](/docs/query-parsing) reads `?sortBy=author.name,-created_at`. It always hands the service a list, so an unprefixed column in the query string sorts ascending unless `?sortOrder=desc` is set: `?sortBy=views` is `views ASC`, while `findAll({}, { sortBy: 'views' })` is `views DESC`.
+Over HTTP, [`parseQuery`](/docs/query-parsing) reads `?sortBy=author.name,-created_at`. It always hands the service a list, and an unprefixed column sorts ascending unless `?sortOrder=desc` is set: `?sortBy=views` and `findAll({}, { sortBy: 'views' })` are both `views ASC`. Before 3.5.2 the second was `views DESC`.
 
 ### Why does every query end with the primary key?
 

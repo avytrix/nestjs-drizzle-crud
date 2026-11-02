@@ -94,7 +94,7 @@ const total = await usersService.count(
 | --- | --- | --- |
 | `create(data, options?)` | `Promise<T>` | Runs `validateCreate`, `beforeCreate`, `mapCreateDtoToEntity`, the insert, then `afterCreate`. Sets the timestamps, the scope and the version. |
 | `update(id, data, options?)` | `Promise<T>` | 404 when the row is missing. 400 (`ValidationFailedException`) when `data` has no column to set. Runs `validateUpdate`, `beforeUpdate`, `mapUpdateDtoToEntity`, the update, then `afterUpdate`. |
-| `softDelete(id, options?)` | `Promise<boolean>` | Sets the soft delete column to now. 404 when the row is missing. Throws a plain `Error` when soft delete is off for the entity. |
+| `softDelete(id, options?)` | `Promise<boolean>` | Sets the soft delete column to now. 404 when the row is missing. 400 when soft delete is off for the entity. |
 | `restore(id, options?)` | `Promise<T>` | Clears the soft delete column. 404 when the row is missing. |
 | `delete(id, options?)` | `Promise<boolean>` | Hard delete. 404 for a missing row or a row in the trash; 409 (`EntityInUseException`) when other rows still reference it. |
 | `forceDelete(id, options?)` | `Promise<boolean>` | Hard delete whether or not the row is soft-deleted. Runs the delete hooks. |

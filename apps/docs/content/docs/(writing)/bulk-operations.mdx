@@ -34,7 +34,7 @@ await users.massUpsert(rows, { conflictTarget: 'email' });
 | `massForceDelete(ids[], options?)` | `Promise<boolean>` | Hard delete, including rows that are in the trash. |
 | `massUpsert(data[], upsert?, options?)` | `Promise<T[]>` | See [Upsert](/docs/upsert). |
 
-Duplicate ids are written once. The rows come back in the order of the ids you passed. `massSoftDelete` and `massRestore` throw a plain `Error` when soft delete is not enabled for the entity, because that is a configuration mistake, not bad input.
+Duplicate ids are written once. The rows come back in the order of the ids you passed. `massSoftDelete` and `massRestore` are a 400 `BadRequestException` when soft delete is not enabled for the entity.
 
 ## How many queries does a bulk call cost?
 

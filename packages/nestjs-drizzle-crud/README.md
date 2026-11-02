@@ -597,7 +597,7 @@ await service.findAll(
 // → { data: [...], total: 240, page: 2, limit: 25 }
 ```
 
-`limit` is capped at `pagination.maxLimit`. `sortOrder` defaults to `'desc'`.
+`limit` is capped at `pagination.maxLimit`. `sortOrder` defaults to `'asc'`.
 The primary key is always the last `ORDER BY` column, so rows that tie on the
 sort column never repeat or go missing between pages.
 

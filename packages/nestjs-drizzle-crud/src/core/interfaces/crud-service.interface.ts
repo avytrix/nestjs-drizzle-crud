@@ -5,6 +5,7 @@ export interface PaginationOptions {
 	limit?: number;
 	// One column, or a list: ["region.name", "-name"] or [{ column, order }].
 	sortBy?: SortInput;
+	/** Direction for a single `sortBy` column without a prefix. Default "asc". */
 	sortOrder?: "asc" | "desc";
 	// false skips the COUNT(*): `total` is then null and `hasMore` is set.
 	withCount?: boolean;

@@ -110,8 +110,8 @@ Bad input on a read is a 400, the same as on a write: `find("abc")` on an intege
 
 On a [scoped entity](/docs/multi-tenancy), a row of another tenant counts as missing everywhere, and a call without the tenant is a 403 `MissingScopeException`. `update` and `restore` return the written row.
 
-<Callout title="softDelete on an entity without soft delete is a 500" type="warn">
-  `softDelete` and `restore` throw a plain `Error` (`Soft delete is not enabled for this entity`) when soft delete is off. That is a configuration mistake, not bad input, so it is not mapped to a 4xx.
+<Callout title="softDelete on an entity without soft delete is a 400" type="warn">
+  `softDelete` and `restore` throw a `BadRequestException` (`Soft delete is not enabled for this entity`) when soft delete is off. Before 3.5.2 this was a plain `Error` and reached the client as a 500.
 </Callout>
 
 ### Bulk methods

@@ -62,7 +62,7 @@ export class UsersService extends SqlBaseCrudService<
 ### Reads
 
 - `findAll(filters?, pagination?, options?)` returns `{ data, total, page, limit }`, never a bare array. With `withCount: false` (or `?withCount=false`) it skips `COUNT(*)`: `total` is `null` and `hasMore` is a boolean.
-- `findAll` always ends `ORDER BY` with the primary key ascending. `sortBy` is one column (direction from `sortOrder`, default `"desc"`), a `-` or `+` prefixed column, a comma separated string, or a list: `["region.name", "-name"]` or `[{ column, order }]`. In a list, an unprefixed entry is ascending. A dotted entry sorts by a top-level belongs-to column.
+- `findAll` always ends `ORDER BY` with the primary key ascending. `sortBy` is one column (direction from `sortOrder`, default `"asc"`), a `-` or `+` prefixed column, a comma separated string, or a list: `["region.name", "-name"]` or `[{ column, order }]`. In a list, an unprefixed entry is ascending. A dotted entry sorts by a top-level belongs-to column.
 - `page` below 1 becomes 1 and `limit` is clamped to 1 to `maxLimit`. A bad `sortOrder` or unknown sort column is a 400.
 - `findByCursor(filters, { cursor, limit, sortBy, sortOrder, count }, options)` is keyset pagination: `{ data, limit, nextCursor, total? }`. Pass `nextCursor` back as `cursor`; `count` defaults to false. A cursor made for another sort is a 400.
 - `find(id)` and `findOne(where)` return `T | null`; `exists(id)` returns a boolean. `findOne` is a 400 when no condition is left (every value `undefined`) or a key is not a column; `null` means `IS NULL`; its keys skip the allowlists.
@@ -97,7 +97,7 @@ export class UsersService extends SqlBaseCrudService<
 ### Writes
 
 - `create` returns `T`. `update` returns `T` and is a 400 when nothing is left to set. `softDelete` and `delete` return a boolean. `restore` returns `T`. `update`, `softDelete`, `restore` and `delete` are a 404 for a missing row.
-- `delete` is a 404 for a row in the trash: purge with `forceDelete(id)` or `massForceDelete(ids)`. `softDelete` on an entity with soft delete off throws a plain `Error`.
+- `delete` is a 404 for a row in the trash: purge with `forceDelete(id)` or `massForceDelete(ids)`. `softDelete` on an entity with soft delete off is a 400.
 - Without `writableColumns`, create and update drop the soft delete and version columns from the body, and update also drops the primary key and `createdAt`. With it, any other column is a 400.
 - Writes take `options.relations` and `options.counts` and return the rows with them loaded.
 - Nested create needs `writableRelations: ["posts"]` and `RETURNING`: an array for has-many, an object for belongs-to, ids or objects for many-to-many, all in one transaction.

@@ -53,7 +53,7 @@ The second argument takes these fields, all optional.
     after: { type: "string | null", default: "none", description: "Alias of cursor. cursor wins when both are set." },
     limit: { type: "number", default: "pagination.defaultLimit (20)", description: "Rows per page, clamped to 1 to pagination.maxLimit (100 by default)." },
     sortBy: { type: "string | Array<string | { column: string; order?: 'asc' | 'desc' }>", default: "defaultSort, then the primary key", description: "Same shapes as findAll, belongs-to relation columns included." },
-    sortOrder: { type: "'asc' | 'desc'", default: "'desc'", description: "Direction for a single sortBy string without a - or + prefix." },
+    sortOrder: { type: "'asc' | 'desc'", default: "'asc'", description: "Direction for a single sortBy string without a - or + prefix." },
     count: { type: "boolean", default: "false", description: "Also run the count query and return total." },
   }}
 />
