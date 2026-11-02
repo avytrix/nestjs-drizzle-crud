@@ -4,6 +4,12 @@ import { ArrowRight } from "lucide-react";
 // Newest first; the top banner announces RELEASES[0].
 export const RELEASES = [
 	{
+		version: "3.5.2",
+		date: "Nov 2, 2026",
+		title: "Sort default, 400s and scoped counts",
+		body: "A bare sortBy now sorts ascending in findAll, the same as ?sortBy= over HTTP. Soft delete calls on an entity without soft delete, and full-text search on MySQL, are 400s instead of 500s. Relation counts only count rows in the caller's tenant.",
+	},
+	{
 		version: "3.5.1",
 		date: "Nov 2, 2026",
 		title: "Published as @avytrix/nestjs-drizzle-crud",

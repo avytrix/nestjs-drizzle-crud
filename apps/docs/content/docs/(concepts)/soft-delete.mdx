@@ -119,7 +119,7 @@ await usersService.forceDelete(42);                             // gone for good
 
 The mass methods run in a transaction: one `SELECT` checks the ids exist, then one
 `UPDATE ... WHERE id IN (...)` (or `DELETE`) writes them all. Calling any soft delete or restore
-method on an entity with soft delete turned off throws a plain `Error`, which Nest returns as a 500.
+method on an entity with soft delete turned off is a 400 `BadRequestException`.
 
 <Callout title="restore does not check the trash">
   `restore` clears the column on any row with that id, so restoring a live row succeeds and changes

@@ -193,7 +193,7 @@ const total = await this.users.count(
   }}
 />
 
-`mode: "fullText"` on MySQL throws a plain `Error`, so it surfaces as a 500. For results ordered by relevance, call `fullTextSearch()` instead; [full-text search in PostgreSQL](/docs/full-text-search) compares the two.
+`mode: "fullText"` on MySQL is a 400. For results ordered by relevance, call `fullTextSearch()` instead; [full-text search in PostgreSQL](/docs/full-text-search) compares the two.
 
 ```ts title="users.service.ts"
 await this.users.findAll(

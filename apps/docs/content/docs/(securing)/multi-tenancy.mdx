@@ -140,7 +140,7 @@ With [nested create](/docs/relations-on-writes), child rows get the scope values
 
 ## Are related tables scoped?
 
-On reads, no. The scope applies to the service's own table; a relation loaded with `relations` or counted with `counts` follows its foreign key. That is safe when related rows always share the parent's tenant, which a foreign key usually guarantees. Give a related table its own service with its own scope when it is queried on its own.
+Relation counts are: `counts` only counts related rows that match the scope, when the related table has the scope column. A relation loaded with `relations` follows its foreign key. That is safe when related rows always share the parent's tenant, which a foreign key usually guarantees. Give a related table its own service with its own scope when it is queried on its own.
 
 ## Common questions
 

@@ -246,7 +246,7 @@ ignores the primary key and `createdAt`.
 
 # Sorting and cursor pagination
 
-`sortBy` takes one column (with `sortOrder`, default `'desc'`) or a list:
+`sortBy` takes one column (with `sortOrder`, default `'asc'`) or a list:
 `['team.name', '-created_at']` or `[{ column, order }]`. A dotted entry sorts by a
 top-level belongs-to column. The primary key is always the last sort column.
 

@@ -101,6 +101,7 @@ export interface CursorPaginationOptions {
 	after?: string | null;
 	limit?: number;
 	sortBy?: SortInput;
+	/** Direction for a single `sortBy` column without a prefix. Default "asc". */
 	sortOrder?: SortOrder;
 	/** Also run the count query and return `total`. Off by default. */
 	count?: boolean;

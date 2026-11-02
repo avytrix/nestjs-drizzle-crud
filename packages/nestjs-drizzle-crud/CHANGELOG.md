@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Scope note: the 3.0.x line is PostgreSQL-first. MySQL-specific paths (non-`RETURNING`
 restore, `ER_DUP_ENTRY` mapping, dialect locking) are tracked separately and unchanged here.
 
+## [3.5.2] - 2026-11-02
+
+### Fixed
+
+- `softDelete`, `restore`, `massSoftDelete` and `massRestore` on an entity without soft delete,
+  and full-text search on MySQL (`fullTextSearch()` or `search.mode: "fullText"`), now throw a
+  `BadRequestException`. They were a plain `Error`, which reached the client as a 500.
+- `options.counts` now applies the tenant scope to the related rows it counts, when the related
+  table has the scope column. Before, a parent's count included rows of other tenants.
+
+### Changed
+
+- `sortOrder` now defaults to `"asc"` in `findAll` and `findByCursor`, so a bare
+  `sortBy: "name"` sorts the same way as `?sortBy=name` over HTTP. Pass `sortOrder: "desc"` to
+  keep the old order.
+
 ## [3.5.1] - 2026-11-02
 
 ### Changed

@@ -192,7 +192,7 @@ The second argument of `findAll` and `fullTextSearch`.
     page: { type: "number", default: "1", description: "1-based. Values below 1 are clamped to 1." },
     limit: { type: "number", default: "pagination.defaultLimit", description: "Clamped to 1 to pagination.maxLimit." },
     sortBy: { type: "SortInput", description: "One column, a list, or a comma separated string. A - prefix sorts descending." },
-    sortOrder: { type: '"asc" | "desc"', default: '"desc"', description: "Direction for a single unprefixed sortBy column." },
+    sortOrder: { type: '"asc" | "desc"', default: '"asc"', description: "Direction for a single unprefixed sortBy column." },
     withCount: { type: "boolean", default: "true", description: "false skips the COUNT(*): total is null and hasMore is set." },
   }}
 />

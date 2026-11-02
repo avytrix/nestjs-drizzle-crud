@@ -8,8 +8,8 @@ For Drizzle full text search on PostgreSQL in NestJS, call `fullTextSearch(term,
 
 <Callout type="warn" title="PostgreSQL only">
   Full-text search uses PostgreSQL's `tsvector` and `tsquery` types. On any other dialect the
-  method throws a plain `Error` (`Full-text search only supported in PostgreSQL`), which Nest
-  answers with a 500. There is no MySQL implementation.
+  method throws a 400 `BadRequestException` (`Full-text search only supported in PostgreSQL`).
+  There is no MySQL implementation.
 </Callout>
 
 ## How do I run a full-text search?
