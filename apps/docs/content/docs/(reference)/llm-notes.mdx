@@ -1,199 +1,247 @@
 ---
-title: For AI agents
-description: Condensed, accurate package facts for code generation. Prefer these over guessing.
+title: nestjs-drizzle-crud facts for AI agents
+description: A condensed fact sheet of nestjs-drizzle-crud for AI coding agents, with setup, generics, return shapes, filters, relations, errors and anti-patterns.
+icon: Bot
 ---
 
-This page is a tight, fact-only summary designed to be read by code-generation tools. Prefer the rules and gotchas below over re-deriving them from the rest of the docs.
+nestjs-drizzle-crud facts for AI agents fit on one page: register `DrizzleCrudModule.forRoot` once and `forFeature` per entity, declare each service as an empty subclass of `SqlBaseCrudService` with four generics, and call its methods. Lists return `{ data, total, page, limit }`, errors are Nest HTTP exceptions, and every rule below is checked against the package source.
 
-## Package
+<Callout title="When this page and the types disagree, trust the types">
+  The TypeScript declarations shipped in the package are the canonical definition. Generate code
+  against `import type { ... } from "nestjs-drizzle-crud"`, and use this page for the rules the
+  types cannot express.
+</Callout>
 
-- **Name:** `nestjs-drizzle-crud`
-- **Version:** `3.5.0`
-- **License:** MIT
-- **Peers:** `@nestjs/common`, `@nestjs/core`, `drizzle-orm` (`>=0.28.0 <1.0.0`), `reflect-metadata`. Optional: `postgres` (PG) / `mysql2` (MySQL), `@nestjs/swagger` (only for `ApiCrudQuery` / `ApiCrudList`).
+## Package facts
 
-## Setup is two steps and no per-service connection wiring
+| Fact | Value |
+| --- | --- |
+| Name | `nestjs-drizzle-crud`, version <Version />, MIT |
+| Runtime dependencies | None |
+| Peers | `@nestjs/common` and `@nestjs/core` `>=10.0.0`, `drizzle-orm` `>=0.28.0 <1.0.0`, `reflect-metadata` `^0.1.13 \|\| ^0.2.0` |
+| Optional peers | `postgres` `>=3.0.0` (only for `connectionString`), `@nestjs/swagger` `>=7.0.0` (only for `ApiCrudQuery`, `ApiCrudList` and `openapi`) |
+| Node | `>=20.0.0` |
+| Dialects | `"postgresql"` and `"mysql"`. For MySQL, build the Drizzle instance yourself (with `mysql2`) and pass it as `db` |
+| Binary | `nestjs-drizzle-crud-mcp`, an MCP server over stdio with `list_docs`, `get_doc` and `search_docs` over `AGENT.md`, `README.md` and `CHANGELOG.md` |
+| Agent rule templates | `AGENTS.template.md` and `CLAUDE.template.md`, shipped in the package |
 
-1. `DrizzleCrudModule.forRoot({ dialect, connectionString | db, schema, defaults })` once in `AppModule`.
-2. `DrizzleCrudModule.forFeature([{ service, table, config? }])` in each feature module.
+## How do I set it up?
 
-## A service is an empty subclass: do NOT inject the db or pass `dialect`/`db`
+Setup is two module calls and no connection wiring in services.
 
-```ts
-class XService extends SqlBaseCrudService<X, CreateXDto, UpdateXDto, XFilterDto> {}
+1. `DrizzleCrudModule.forRoot({ dialect, connectionString | db, schema?, defaults?, sql?, hooks? })` once in `AppModule` (or `forRootAsync({ imports?, inject?, useFactory })`). It is global.
+2. `DrizzleCrudModule.forFeature([{ service, table, config? }])` in each feature module. It builds each service and exports it.
+
+```ts accent=nest title="users.service.ts"
+export class UsersService extends SqlBaseCrudService<
+  User,          // typeof users.$inferSelect
+  CreateUserDto,
+  UpdateUserDto,
+  CrudFilter
+> {}
 ```
 
-## Rules / gotchas
+## Rules for generated code
 
-- **Generics order:** `SqlBaseCrudService<Entity, CreateDto, UpdateDto, FilterDto>`. All but `Entity` default to `Partial<Entity>`.
-- Do **not** add an `@Inject('DRIZZLE_DB')` constructor, `forFeature` constructs the service for you. Adding a constructor that calls `super({...})` is a legacy/manual pattern and is unnecessary.
-- The table is passed in `forFeature`, **not** in the service.
-- If tables lack timestamp / soft-delete columns, set `defaults: { softDelete: false, timestamps: false }`. `softDelete.column` and `timestamps.createdAt` / `updatedAt` name the **key** in the Drizzle table object (`deletedAt` for `deletedAt: timestamp('deleted_at')`); a key the table lacks makes the service throw at startup with the key to use.
-- `softDelete`, `timestamps`, `pagination` and `sql` merge one level deep across forRoot, `@CrudService` and `forFeature`: `pagination: { defaultLimit: 5 }` keeps `maxLimit`.
-- `findAll` returns `{ data, total, page, limit }`. Not a bare array. With `{ withCount: false }` (or `?withCount=false`) it skips `COUNT(*)`: `total` is `null` and `hasMore` is a boolean.
-- Filter operators live inside an object value: `{ age: { gte: 18 } }`. Operators: `eq gt gte lt lte neq like ilike in notIn between isNull isNotNull startsWith endsWith contains iStartsWith iEndsWith iContains arrayContains arrayOverlaps jsonContains`. `startsWith` / `endsWith` / `contains` escape the value and follow `caseSensitive`; the `i` forms are always case-insensitive; the array and JSON operators are PostgreSQL only.
-- Groups: `{ or: [filterA, filterB], and: [...], not: filter }`, nestable, each member a full filter (columns, relations, collections), also in `count`. `like` / `ilike` require caller-supplied `%` wildcards (`ilike` is `LIKE` on MySQL); a bare string is an exact match, case-insensitive on text columns when `caseSensitive === false`, and `%` / `_` / `\` in the value are literal data, never wildcards. `{ isNull: false }` means `IS NOT NULL`, and `"true"` / `"false"` strings work.
-- String filter values are fine on integer, uuid and enum columns (plain `=`), and date strings are parsed for date columns. An unknown filter key, an unknown operator or an invalid date is a 400; `null` / `undefined` values are skipped.
-- `findOne(where)` throws a 400 when no condition is left (every value `undefined`) or a key is not a column; `null` means `IS NULL`.
-- `findAll` always ends `ORDER BY` with the primary key, so offset pages are stable. `sortBy` takes one column (with `sortOrder`, default `'desc'`) or a list: `['region.name', '-name']` or `[{ column, order }]`; a dotted entry sorts by a top-level belongs-to column.
-- `findByCursor(filters, { cursor, limit, sortBy, count })` is keyset pagination: returns `{ data, limit, nextCursor, total? }`; pass `nextCursor` back as `cursor`; `count` defaults to false.
-- `service.parseQuery(@Query() query)` (or `parseCrudQuery(query, table, options)`) turns `?age[gte]=18&region[name]=Asia&or[0][code]=IN&sortBy=-name&page=2&fields=id,name&with=region&search=x&cursor=` into `{ filters, pagination, options, isCursor }`, coercing by column type; unknown keys are a 400. `withDeleted` / `onlyDeleted` need `allowTrash: true`. Type the FilterDto generic as `CrudFilter`.
-- Allowlists per entity: `filterableColumns`, `sortableColumns`, `selectableColumns`, `searchableColumns`, `loadableRelations`, `writableColumns`. Unset allows everything; anything outside a set list is a 400. `findOne` where keys are not checked. `skipAllowlists: true` for trusted calls. Without `writableColumns`, create/update ignore the soft delete column, and update ignores the primary key and createdAt.
-- `findAll` and `count` accept `options.search: { term, columns, mode? }`. Default `mode` is `'ilike'` and joins cross-column contains checks with `OR`; `mode: 'fullText'` is PostgreSQL-only. Search is applied to both data and count queries.
-- `delete` / `softDelete` return `boolean`; `update` / `restore` return the entity and throw `EntityNotFoundException` (→ 404) when missing. On Postgres, `restore()` returns the row via `RETURNING` rather than re-fetching it.
-- All exceptions extend `@nestjs/common`'s `HttpException`, so Nest's default filter maps them to status codes automatically: 404 (not found), 409 (unique violation), 400 (validation / bad input, including Postgres `22P02` / `22007` / `22008` on reads). Custom filters can `instanceof` them. `DatabaseConnectionException` and `TransactionException` are deprecated; nothing throws them.
-- Relations: declare in `forFeature` `config.relations`, then eager-load with `options.relations: ['relName']` (a dotted path nests: `['states', 'states.cities']`, `['state.country']`, and the parent path is pulled in automatically).
-  - `{ table, localKey, references? }` is belongs-to: `LEFT JOIN`ed into the main query, resolves to an object or `null`.
-  - `{ table, type: 'hasMany', foreignKey, parentKey?, orderBy? }` resolves to an array.
-  - `{ table, type: 'manyToMany', through, throughLocalKey, throughForeignKey, references?, parentKey?, orderBy? }` resolves to an array; the join-table key never appears in the result.
-  - Nested relations go in a `relations` map on the relation itself.
-  - **Every collection and every nested level costs exactly ONE extra query for the whole result set, never one per row.** A page of 50 countries with their states and each state's cities is 4 queries: data, count, states, cities.
-- A collection is never joined. Filter via `findAll({ relName: { col: value } })` with the same operators: belongs-to uses the join, has-many and many-to-many compile to `parentKey IN (SELECT ... WHERE ...)`, so `total` and pagination stay correct. A relation filter can nest through the related table's own `relations` at any depth (`{ state: { country: { code: 'IN' } } }`, `?state[country][code]=IN`); only the top-level belongs-to is joined, deeper levels are `EXISTS`. A collection value may be `{ some }`, `{ none }` or `{ every }` (`NOT EXISTS`; `every` is true for a parent with no rows; `some: {}` = has any, `none: {}` = has none). `filterableColumns` takes the full dotted path.
-- A relation missing its required keys throws when the service is constructed (nested included, with the full path in the message).
-- `options.select` narrows the projection and accepts dotted relation paths at any depth: `['id', 'name', 'region.code', 'states.cities.name']`. Unknown names are ignored. When every entry is dotted the base row is returned in full. The parent key, the child foreign key and any key a nested level needs are re-added automatically, because the grouping needs them.
-- The package ships an MCP server, `npx nestjs-drizzle-crud-mcp` (stdio), with `list_docs`, `get_doc` and `search_docs` over `AGENT.md` / `README.md` / `CHANGELOG.md`. Rules templates for every agent: `AGENTS.template.md` and `CLAUDE.template.md`.
-- Primary keys: `primaryKey` (default `'id'`) per entity in `forFeature` config. `primaryKeyType` is deprecated and has no effect. UUID works on Postgres via `RETURNING`; with `uuid` keys, route params are strings. Don't use `ParseIntPipe`.
-- Nested collections default `parentKey` to their host table's own primary key, not the root service's.
-- Row locks use `FOR UPDATE OF <base table>`, so they work with an eager belongs-to.
-- Full-text search is PostgreSQL-only. `fullTextSearch()` always applies page and limit, and rejects unknown columns with a 400. `sql.enableFullTextSearch` and `sql.jsonSupport` are deprecated no-ops.
-- Bulk methods are transactional and set-based: one `SELECT` that checks the ids plus one `INSERT` / `UPDATE` / `DELETE` for the whole set. A failure throws `BulkOperationException` and rolls back the entire operation; its 400 body lists `errors: [{ index | id, status, message }]` for the failed items only. `bulkMode: 'perItem'` runs one single-row call per item instead.
-- `upsert(dto, { conflictTarget, update })` and `massUpsert(rows, ...)`: `ON CONFLICT DO UPDATE` on Postgres, `ON DUPLICATE KEY UPDATE` on MySQL. A clash on another unique key is a 409.
-- A soft-deleted belongs-to parent comes back as `null` and never matches a relation filter. Trash: pass `onlyDeleted: true` (or `withDeleted: true`) in the options of any read. Purge: `forceDelete(id)` / `massForceDelete(ids)`; `delete(id)` answers 404 for a row in the trash.
-- `executeSqlTransaction(async (tx) => ...)` opens a transaction; pass `{ transaction: tx }` in `options` to any CRUD method to enlist it.
+### Services
+
+- **Generics:** `SqlBaseCrudService<T, CreateDto, UpdateDto, FilterDto>`. All four are required; none has a default. Use `CrudFilter` for `FilterDto` when filters come from a query string.
+- A service is an empty subclass. No `@Injectable()`, no constructor, no `@Inject(DRIZZLE_DB)`: `forFeature` calls `new Service(config)` itself, and a decorator or extra constructor parameter breaks that.
+- The table goes in `forFeature`, not in the service. Per-entity config goes in `forFeature` `config` or `@CrudService(config)`; `forFeature` wins.
+- For a hand-written query inside a service, use `this.config.db` and `this.config.table`. Elsewhere, inject `DRIZZLE_DB`.
+- Override protected hooks for custom logic: `validateCreate`, `validateUpdate`, `beforeCreate`, `afterCreate`, `beforeUpdate`, `afterUpdate`, `beforeSoftDelete`, `afterSoftDelete`, `beforeRestore`, `afterRestore`, `beforeDelete`, `afterDelete`, `mapCreateDtoToEntity`, `mapUpdateDtoToEntity`. Create runs `validateCreate`, then `beforeCreate`, then `mapCreateDtoToEntity`.
+- `executeSqlTransaction(async (tx) => ...)` is protected: call it from a service method and pass `{ transaction: tx }` to each CRUD call that joins it.
+
+### Config
+
+- Defaults: `softDelete: true` on `deleted_at`, `timestamps: true` on `created_at` and `updated_at`, `pagination: { defaultLimit: 20, maxLimit: 100 }`, `primaryKey: "id"`, `sql.caseSensitive: false`, `sql.useReturning` true on PostgreSQL and forced off on MySQL.
+- Tables without those columns need `defaults: { softDelete: false, timestamps: false }`. `softDelete.column`, `timestamps.createdAt` / `updatedAt` and `versionColumn` name the key in the Drizzle table object (`deletedAt` for `deletedAt: timestamp("deleted_at")`); a key the table lacks throws at startup with the key to use.
+- `softDelete`, `timestamps`, `pagination` and `sql` merge one level deep across `forRoot`, `@CrudService` and `forFeature`: `pagination: { defaultLimit: 5 }` keeps `maxLimit`. Arrays (allowlists) replace.
+- `connectionString` is PostgreSQL only and `schema` is optional. `primaryKeyType`, `sql.jsonSupport` and `sql.enableFullTextSearch` are deprecated no-ops.
+
+### Reads
+
+- `findAll(filters?, pagination?, options?)` returns `{ data, total, page, limit }`, never a bare array. With `withCount: false` (or `?withCount=false`) it skips `COUNT(*)`: `total` is `null` and `hasMore` is a boolean.
+- `findAll` always ends `ORDER BY` with the primary key ascending. `sortBy` is one column (direction from `sortOrder`, default `"desc"`), a `-` or `+` prefixed column, a comma separated string, or a list: `["region.name", "-name"]` or `[{ column, order }]`. In a list, an unprefixed entry is ascending. A dotted entry sorts by a top-level belongs-to column.
+- `page` below 1 becomes 1 and `limit` is clamped to 1 to `maxLimit`. A bad `sortOrder` or unknown sort column is a 400.
+- `findByCursor(filters, { cursor, limit, sortBy, sortOrder, count }, options)` is keyset pagination: `{ data, limit, nextCursor, total? }`. Pass `nextCursor` back as `cursor`; `count` defaults to false. A cursor made for another sort is a 400.
+- `find(id)` and `findOne(where)` return `T | null`; `exists(id)` returns a boolean. `findOne` is a 400 when no condition is left (every value `undefined`) or a key is not a column; `null` means `IS NULL`; its keys skip the allowlists.
+- `count(filters?, options?)` returns a number. `countBy(column, filters?, options?)` returns `[{ value, count }]`, largest first; the column must be filterable.
+- `options.search: { term, columns, mode? }` works on `findAll` and `count`. `mode` defaults to `"ilike"`, an escaped contains match ORed across columns; `"fullText"` is PostgreSQL only.
+- `fullTextSearch(term, columns, pagination?, options?)` is PostgreSQL only, returns `{ data, total, page, limit }`, always applies page and limit, and is a 400 for an unknown column.
+- Trash: `withDeleted: true` or `onlyDeleted: true` on any read. A soft-deleted belongs-to parent comes back as `null` and never matches a relation filter.
+
+### Filters
+
+- A key is a column, a relation, or a group (`and`, `or`, `not`). Keys are ANDed.
+- Column values: a scalar is an exact match, an array is `IN`, `null` and `undefined` are skipped, an object holds operators: `{ age: { gte: 18, lt: 65 } }`.
+- Operators: `eq neq gt gte lt lte like ilike in notIn between isNull isNotNull startsWith endsWith contains iStartsWith iEndsWith iContains arrayContains arrayOverlaps jsonContains`.
+- `like` and `ilike` take your own `%` wildcards (`ilike` is `LIKE` on MySQL). `startsWith`, `endsWith` and `contains` escape `%`, `_` and `\` and follow `sql.caseSensitive`; the `i` forms are always case-insensitive. `arrayContains`, `arrayOverlaps` and `jsonContains` are PostgreSQL only.
+- A bare string is an exact match, case-insensitive on text columns while `caseSensitive` is false. `{ isNull: false }` means `IS NOT NULL`, and `"true"` / `"false"` strings work.
+- Date strings are parsed for date columns; an invalid date is a 400. An unknown filter key or operator is a 400, and so is an operator on the wrong column type.
+- Groups nest and hold column, relation and collection filters: `{ or: [{ status: "a" }, { state: { name: "Ohio" } }], not: { tags: { name: "x" } } }`. They also apply to `count`.
+
+### Relations
+
+- Declare relations in the entity config, then load with `options.relations: ["state"]`. A dotted path nests (`["states.cities"]`) and pulls in its parent.
+  - Belongs-to: `{ table, localKey, references? }`, `LEFT JOIN`ed into the main query, resolves to an object or `null`.
+  - Has-many: `{ table, type: "hasMany", foreignKey, parentKey?, orderBy? }`, resolves to an array.
+  - Many-to-many: `{ table, type: "manyToMany", through, throughLocalKey, throughForeignKey, references?, parentKey?, orderBy? }`, resolves to an array without the join key.
+  - Nested: a `relations` map on the relation itself. `parentKey` defaults to the host table's primary key at every level.
+- Every collection and every nested level costs one query for the whole result, never one per row. Fifty countries with states and cities is four queries: data, count, states, cities.
+- A relation missing its required keys throws when the service is built, with the full path.
+- Relation filters use the same operators. A top-level belongs-to uses the join; deeper levels are `EXISTS`; collections are `IN (SELECT ...)` subqueries, so `total` and pagination stay right. A collection value may be `{ some }`, `{ none }` or `{ every }`; `every` is true for a parent with no rows. `filterableColumns` takes the full dotted path.
+- `options.select` narrows columns, with dotted paths at any depth: `["id", "name", "region.code", "states.cities.name"]`. The keys a nested level needs are added back automatically.
+- `options.counts: ["posts"]` adds `_count: { posts: n }`, one grouped query per relation; soft-deleted related rows are not counted.
+
+### Writes
+
+- `create` returns `T`. `update` returns `T` and is a 400 when nothing is left to set. `softDelete` and `delete` return a boolean. `restore` returns `T`. `update`, `softDelete`, `restore` and `delete` are a 404 for a missing row.
+- `delete` is a 404 for a row in the trash: purge with `forceDelete(id)` or `massForceDelete(ids)`. `softDelete` on an entity with soft delete off throws a plain `Error`.
+- Without `writableColumns`, create and update drop the soft delete and version columns from the body, and update also drops the primary key and `createdAt`. With it, any other column is a 400.
+- Writes take `options.relations` and `options.counts` and return the rows with them loaded.
+- Nested create needs `writableRelations: ["posts"]` and `RETURNING`: an array for has-many, an object for belongs-to, ids or objects for many-to-many, all in one transaction.
+- Use `attach(id, "tags", ids)`, `detach(id, "tags", ids?)` and `sync(id, "tags", ids)` for many-to-many links, never raw inserts into the join table.
+- `upsert(dto, { conflictTarget?, update? }, options?)` and `massUpsert(rows, ...)`: `ON CONFLICT DO UPDATE` on PostgreSQL, `ON DUPLICATE KEY UPDATE` on MySQL. A clash on another unique key is a 409.
+- Bulk methods (`massCreate`, `massUpdate`, `massSoftDelete`, `massRestore`, `massDelete`, `massForceDelete`, `massUpsert`) run in one transaction: one `SELECT` that checks the ids, plus one statement for the set. Any failure rolls back everything and throws `BulkOperationException`, a 400 with `errors: [{ index | id, status, message }]`. `bulkMode: "perItem"` runs the single-row method per item.
+
+### Errors
+
+- Every exception extends a Nest `HttpException` subclass, so no custom filter is needed: `EntityNotFoundException` 404, `DuplicateEntityException` 409, `StaleVersionException` 409, `EntityInUseException` 409, `MissingScopeException` 403, `ForeignKeyViolationException` 400, `ValidationFailedException` 400, `BulkOperationException` 400.
+- Postgres data errors (`22001`, `23514`, `22003`, `22P02`, `22007`, `22008`, `21000`) become 400 on reads and writes. `DatabaseConnectionException` and `TransactionException` are deprecated; nothing throws them.
+
+### Controllers, tenancy, events, locking
+
+- **Controllers:** prefer `class UsersController extends createCrudController(UsersService, { dto: { create, update } })` under `@Controller("users")`. Bulk routes are off until enabled in `routes`. The `:id` is parsed from the primary key column (`ParseIntPipe` for an integer, `ParseUUIDPipe` for a uuid) unless `idType` is set; do not add your own pipe. To change a route, turn it off in `routes` and add your own handler. `deleteMode` defaults to `"hard"`.
+- **Hand-written list routes:** `const q = this.usersService.parseQuery(query)`, then `q.isCursor ? findByCursor(q.filters, q.pagination, q.options) : findAll(q.filters, q.pagination, q.options)`. `withDeleted` and `onlyDeleted` need `allowTrash: true`. `parseCrudQuery(query, table, options)` is the standalone form.
+- **OpenAPI:** `@ApiCrudList({ table, ...entityConfig })` on a list route, or `openapi` in the controller options. Needs `@nestjs/swagger`.
+- **Tenancy:** set `scope: (ctx) => ({ tenant_id: ctx.tenantId })` and provide the context with `CrudContext.middleware((req) => ({ tenantId }))`, `CrudContext.run(ctx, fn)` or `options.context`. Never add a manual tenant filter or set the column in the body. Another tenant's id is a 404; a missing context value is a 403. `skipScope: true` only for trusted jobs. A scoped upsert is PostgreSQL only.
+- **Events:** `hooks: { enableGlobalHooks: true }` in `forRoot`, then inject `CrudEventBus` and `subscribe({ afterWrite(e) { ... } })`. One event per mass call (`bulk: true`). Use `e.transaction` for atomic audit rows. `skipEvents: true` skips events; `hooks.skipBefore` / `skipAfter` do not.
+- **Optimistic locking:** `versionColumn: "version"` (integer, starts at 1). Clients send the version they read in the update body or as `expectedVersion`; a stale one is a 409. Never write the version yourself. Mass writes take `expectedVersions: { [String(id)]: version }`.
+- **Row locks:** `lock: "update" | "share"` or `forNoKeyUpdate: true` on a read, as `FOR ... OF <base table>`, so they work with an eager belongs-to. PostgreSQL only; ignored on MySQL.
+- **Primary keys:** the type comes from the Drizzle column. With uuid keys, route params are strings: never `ParseIntPipe`. On MySQL, supply uuid keys yourself on insert.
 
 ## Quick reference
 
-### Configure
-
-```ts
+```ts accent=nest title="app.module.ts"
 DrizzleCrudModule.forRoot({
-  dialect: 'postgresql',
+  dialect: "postgresql",
   connectionString: process.env.DATABASE_URL,
   schema,
 });
 ```
 
-### Service
-
-```ts
-class UsersService extends SqlBaseCrudService<User> {}
-```
-
-### Bind
-
-```ts
+```ts accent=nest title="users.module.ts"
 DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
 ```
 
-### Filter
-
-```ts
-await service.findAll({
-  status: 'active',                        // exact
-  role: ['admin', 'editor'],               // IN
-  age: { gte: 18, lt: 65 },                // operators
-  name: { startsWith: 'jo' },              // escaped pattern
-  publishedAt: { isNull: false },          // IS NOT NULL
-  or: [{ region: { name: 'Asia' } }, { population: { gte: 1e8 } }],
-});
-```
-
-### Controller list endpoint
-
-```ts
-@Get()
-findAll(@Query() query: Record<string, unknown>) {
-  const q = this.users.parseQuery(query);
-  return q.isCursor
-    ? this.users.findByCursor(q.filters, q.pagination, q.options)
-    : this.users.findAll(q.filters, q.pagination, q.options);
-}
-```
-
-### List search
-
-```ts
-await service.findAll(
-  { status: 'active' },
+```ts title="users.service.ts"
+await usersService.findAll(
+  {
+    status: "active",                       // exact
+    role: ["admin", "editor"],              // IN
+    age: { gte: 18, lt: 65 },               // operators
+    name: { startsWith: "jo" },             // escaped pattern
+    publishedAt: { isNull: false },         // IS NOT NULL
+    or: [{ state: { name: "Ohio" } }, { age: { gte: 65 } }],
+  },
   { page: 1, limit: 20 },
-  { search: { term: 'john', columns: ['name', 'email'] } },
+  { relations: ["state"], search: { term: "john", columns: ["name", "email"] } },
 );
 ```
 
-### Eager load relations
-
-```ts
-await service.findAll({}, { page: 1, limit: 20 }, { relations: ['state'] });
+```ts accent=nest title="users.controller.ts"
+@Get()
+list(@Query() query: Record<string, unknown>) {
+  const q = this.usersService.parseQuery(query);
+  return q.isCursor
+    ? this.usersService.findByCursor(q.filters, q.pagination, q.options)
+    : this.usersService.findAll(q.filters, q.pagination, q.options);
+}
 ```
 
-## Public exports (alphabetical)
+## Public exports
 
-```
-and, asc, BaseCrudSpecHelper, between, BulkMode, BulkOperationException,
-BulkOperationItemError, BulkOperationResult, ColumnFilter, CrudAllowlists,
-CrudFeature, CrudFeatureConfig, CrudFilter, CrudService, CursorPage,
-CursorPaginationOptions, DatabaseConnectionException, desc,
+All 98, alphabetical, from the package root:
+
+```txt title="nestjs-drizzle-crud"
+and, ApiCrudList, ApiCrudQuery, ApiCrudQueryOptions, ApiCrudSource, asc,
+BaseCrudSpecHelper, between, BulkMode, BulkOperationException,
+BulkOperationItemError, BulkOperationResult, CollectionFilter,
+CollectionQuantifier, ColumnFilter, CountByRow, createCrudController,
+CrudAllowlists, CrudContext, CrudContextValue, CrudControllerInstance,
+CrudControllerOptions, CrudEvent, CrudEventBus, CrudEventPhase, CrudFeature,
+CrudFeatureConfig, CrudFilter, CrudPage, CrudRouteName, CrudRouteOptions,
+CrudScope, CrudScopeValues, CrudService, CrudSubscriber, CrudWriteOperation,
+CursorPage, CursorPaginationOptions, DatabaseConnectionException, desc,
 DRIZZLE_CONNECTION, DRIZZLE_CRUD_CONFIG, DRIZZLE_DB, DrizzleConnection,
 DrizzleCrudConfig, DrizzleCrudModule, DuplicateEntityException,
-EntityInUseException, eq, EntityNotFoundException, FilterGroup,
+EntityInUseException, EntityNotFoundException, eq, FilterGroup,
 FilterOperator, FilterOperators, FilterScalar, ForeignKeyViolationException,
-gt, gte, ICrudService, ilike, inArray, isNotNull, isNull, like, lt, lte, ne,
-not, notInArray, OperationOptions, or, PaginationOptions, parseCrudQuery,
-ParseCrudQueryOptions, ParsedCrudQuery, PrimaryKeyType, RelationConfig,
-RelationNode, RelationsConfig, RelationType, SelectTree, SortColumn,
-SortInput, SortOrder, sql, SqlBaseCrudService, SqlCrudConfig, SqlDialect,
-SqlOperationOptions, SqlSearchMode, SqlSearchOptions, TestCrudFactory,
-TransactionException, UpsertOptions, ValidationFailedException
+gt, gte, ICrudService, ilike, inArray, isNotNull, isNull, like, lt, lte,
+MissingScopeException, ne, not, notInArray, OperationOptions, or,
+PaginationOptions, parseCrudQuery, ParseCrudQueryOptions, ParsedCrudQuery,
+PrimaryKeyType, RelationConfig, RelationCounts, RelationNode, RelationsConfig,
+RelationType, SelectTree, SortColumn, SortInput, SortOrder, sql,
+SqlBaseCrudService, SqlCrudConfig, SqlDialect, SqlOperationOptions,
+SqlSearchMode, SqlSearchOptions, StaleVersionException, TestCrudFactory,
+TransactionException, UncountedCrudPage, UpsertOptions,
+ValidationFailedException
 ```
 
-## Anti-patterns: do not generate these
+## What should generated code never do?
 
-```ts accent=nest
-// ❌ wrong: db is not injected
-class UsersService extends SqlBaseCrudService<User> {
+```ts accent=nest title="anti-patterns.ts"
+// Wrong: the db is not injected, and super() takes no hand-built config
+class UsersService extends SqlBaseCrudService<User, CreateUserDto, UpdateUserDto, CrudFilter> {
   constructor(@Inject(DRIZZLE_DB) private db: any) {
-    super({ dialect: 'postgresql' as const, db, table: users });
+    super({ dialect: "postgresql", db, table: users } as any);
   }
 }
 
-// ❌ wrong: super() takes no arguments
-class UsersService extends SqlBaseCrudService<User> {
-  constructor() {
-    super(/* nothing */);
-  }
-}
+// Wrong: only one generic; all four are required
+class UsersService extends SqlBaseCrudService<User> {}
 
-// ❌ wrong: table is bound in forFeature, not the service
-class UsersService extends SqlBaseCrudService<User, /* ... */, users> {}
+// Wrong: treating the list envelope as an array
+const rows = await this.usersService.findAll({});
+rows.map((row) => row.id); // findAll returns { data, total, page, limit }
 
-// ❌ wrong: returning a bare array from a controller
-@Get()
-async findAll() {
-  return this.users.findAll({});  // returns { data, total, page, limit }
-}
+// Wrong: ParseIntPipe on a uuid primary key
+@Get(":id")
+find(@Param("id", ParseIntPipe) id: number) {}
 
-// ❌ wrong: ParseIntPipe on a UUID primary key
-@Get(':id')
-find(@Param('id', ParseIntPipe) id: number) { /* ... */ }
+// Wrong: a manual tenant filter on a scoped entity
+this.usersService.findAll({ tenant_id: req.user.tenantId });
 ```
 
 ## Sources of truth
 
-When in doubt, prefer:
+1. The TypeScript types: `import type { ... } from "nestjs-drizzle-crud"`.
+2. The package README and `AGENT.md` on <Ext to="npm">npm</Ext>, also served by the MCP server.
+3. The source on <Ext to="github">GitHub</Ext>.
+4. The [Changelog](/docs/changelog), for behaviour changes release by release.
 
-1. The TypeScript types, `import type { ... } from 'nestjs-drizzle-crud'` is the canonical definition.
-2. The package README on npm.
-3. The repo at `github.com/avytrix/nestjs-drizzle-crud`.
-4. The [Changelog](/docs/changelog). Release-by-release behavior changes since 3.0.0.
+## Common questions
 
-This page summarizes (1) and (2) and may lag minor patch releases. If a generated snippet disagrees with the TypeScript types, **trust the types**.
+<Accordions>
+  <Accordion title="Do the SqlBaseCrudService generics have defaults?">
+    No. All four, `T`, `CreateDto`, `UpdateDto` and `FilterDto`, are required. `SqlBaseCrudService<User>` alone does not compile.
+  </Accordion>
+  <Accordion title="Is mysql2 a peer dependency?">
+    No. The package has no MySQL driver peer. For MySQL you build the Drizzle instance with your own driver and pass it as `db`; `connectionString` only works for PostgreSQL.
+  </Accordion>
+  <Accordion title="Should a service have a constructor or @Injectable()?">
+    No. `forFeature` constructs the service with a factory and passes the merged config to the base constructor. A decorator or an extra constructor parameter breaks registration.
+  </Accordion>
+  <Accordion title="How many queries does eager loading cost?">
+    One for the data, one for the count, and one per collection or nested level for the whole result set. A top-level belongs-to rides in the main query as a `LEFT JOIN`.
+  </Accordion>
+</Accordions>
 
-## 3.5.0 rules
+## Next steps
 
-- **Controllers:** prefer `class XController extends createCrudController(XService, { dto: { create, update } })` under `@Controller('x')` over hand-writing CRUD routes. Bulk routes are off until enabled in `routes`. The id is parsed from the primary key column (`ParseIntPipe` / `ParseUUIDPipe`); do not add your own pipe unless you set `idType`. Do not override a generated method by name; disable the route and add your own.
-- **OpenAPI:** `@ApiCrudList({ table, ...entityConfig })` on a list route. Keep the entity config in one constant shared with `forFeature`. Needs `@nestjs/swagger` installed.
-- **Tenancy:** set `scope: (ctx) => ({ tenant_id: ctx.tenantId })` on the entity and provide the context with `CrudContext.middleware(req => ({ tenantId }))` in a module's `configure`, `CrudContext.run(ctx, fn)`, or `options.context`. Never add a manual `tenant_id` filter or set it in the body: the scope is ANDed into every read and write and written on create. Another tenant's id is a 404; a missing context value is a 403 (`MissingScopeException`). `skipScope: true` only for trusted jobs. Scoped upsert is PostgreSQL only.
-- **Events:** `hooks: { enableGlobalHooks: true }` in `forRoot`, then inject `CrudEventBus` and `subscribe({ afterWrite(e) {...} })`. One event per mass call (`bulk: true`). Use `e.transaction` to write audit rows atomically. `options.skipEvents` skips them; `hooks.skipBefore/skipAfter` do not.
-- **Optimistic locking:** `versionColumn: 'version'` (integer, default 1). Clients send the version they read in the update body (or `expectedVersion`); a stale one is a 409 `StaleVersionException`. Never write the version yourself. Bulk: `expectedVersions: { [String(id)]: version }`.
-- **Relations on writes:** `create(dto, { relations: ['author'] })` returns the row with relations loaded (also update, upsert, restore, mass writes). Nested create needs `writableRelations: ['posts']`; has-many takes an array, belongs-to an object, many-to-many ids or objects; one transaction, PostgreSQL. Use `attach(id, 'tags', ids)`, `detach(id, 'tags', ids?)`, `sync(id, 'tags', ids)` for links, never raw inserts into the join table.
-- **Aggregates:** `options.counts: ['posts']` adds `_count: { posts: n }` with one grouped query per relation (collections only); `?counts=posts` from a query string. `countBy('status', filters)` returns `[{ value, count }]`; the column must be filterable.
+<Cards>
+  <Card icon={<Bot />} title="AI agents and MCP" href="/docs/ai-agents" description="Run the MCP server and add the rules templates to your agent." />
+  <Card icon={<Braces />} title="SqlBaseCrudService API reference" href="/docs/api" description="Every method, its signature and what it throws." />
+  <Card icon={<Package />} title="Package exports reference" href="/docs/exports" description="Every export, grouped and explained." />
+</Cards>

@@ -1,65 +1,88 @@
 ---
-title: Getting help
-description: Where to ask questions about nestjs-drizzle-crud, how to report a bug, how to report a security issue, and answers to the questions that come up most.
+title: Getting help with nestjs-drizzle-crud
+description: Get help with nestjs-drizzle-crud. Ask in GitHub Discussions, report bugs as issues, report security issues privately, and include what to send.
+icon: LifeBuoy
 ---
 
-Ask usage questions in [GitHub Discussions](https://github.com/avytrix/nestjs-drizzle-crud/discussions), report reproducible defects as [issues](https://github.com/avytrix/nestjs-drizzle-crud/issues), and report security problems privately. This page covers each route and the questions that come up most.
+To get help with nestjs-drizzle-crud, ask usage questions in GitHub Discussions, report a bug you can reproduce as a GitHub issue, and report a security vulnerability privately through a GitHub security advisory. A report that includes the package version, the table definition, the entity config and the exact call gets answered fastest.
 
-## Where to ask
+<Callout type="warn" title="Never report a vulnerability in public">
+  Do not put a security problem in an issue, a discussion or a pull request. Use the private
+  advisory form described under the security question below, which only the maintainers can see.
+</Callout>
+
+## Where do I ask?
+
+Pick the channel by what you need; each one is watched.
 
 | You want to | Go to |
 | --- | --- |
-| Ask how to do something | [Discussions](https://github.com/avytrix/nestjs-drizzle-crud/discussions) |
-| Report a bug you can reproduce | [Issues](https://github.com/avytrix/nestjs-drizzle-crud/issues/new/choose) |
-| Request a feature | [Issues](https://github.com/avytrix/nestjs-drizzle-crud/issues/new/choose), feature request template |
-| Report a security vulnerability | Follow [SECURITY.md](https://github.com/avytrix/nestjs-drizzle-crud/blob/main/SECURITY.md). Do not open a public issue. |
+| Ask how to do something | [GitHub Discussions](https://github.com/avytrix/nestjs-drizzle-crud/discussions) |
+| Report a bug you can reproduce | <Ext to="issues">GitHub issues</Ext>, bug report template |
+| Request a feature | <Ext to="issues">GitHub issues</Ext>, feature request template |
+| Report a security vulnerability | [A private security advisory](https://github.com/avytrix/nestjs-drizzle-crud/security/advisories/new) |
 | Contribute code | [CONTRIBUTING.md](https://github.com/avytrix/nestjs-drizzle-crud/blob/main/CONTRIBUTING.md) |
-| Fund the work | [Sponsor](/docs/sponsor) |
+| Fund the work | [Sponsor nestjs-drizzle-crud](/docs/sponsor) |
 
-## Reporting a bug well
+Blank issues are turned off, so every issue starts from the bug report or feature request template.
 
-A good report gets fixed in one round trip. Include:
+## What should a bug report include?
 
-1. The package version, the dialect, and the NestJS and Drizzle versions.
-2. The Drizzle table definition for the entity involved, trimmed to the relevant columns.
+A report with a reproduction usually gets fixed in one round trip. The bug report template asks for most of this; fill in all of it:
+
+1. The `nestjs-drizzle-crud` version, the dialect, and your Node, NestJS and Drizzle versions.
+2. The Drizzle table definition for the entity, trimmed to the relevant columns.
 3. The `forRoot` and `forFeature` config for that entity.
 4. The call you made and what came back, including the exception class and HTTP status.
-5. The SQL if you have it. Drizzle logging (`drizzle(client, { logger: true })`) prints the statement the service built.
+5. The SQL, if you have it. Drizzle logging (`drizzle(client, { logger: true })`) prints the statement the service built.
+6. The stack trace, if there is one.
 
-## Frequently asked questions
+Search the existing issues first; the template asks you to confirm the bug is not a duplicate.
 
-### Why does `findAll` return an object instead of an array?
+## How do I report a security vulnerability?
 
-`findAll` returns `{ data, total, page, limit }` because pagination is on by default. `total` comes from a second count query that applies the same filters and search, so it stays correct as you page.
+Report it privately through [GitHub's security advisory form](https://github.com/avytrix/nestjs-drizzle-crud/security/advisories/new), as the [security policy](https://github.com/avytrix/nestjs-drizzle-crud/blob/main/SECURITY.md) says. Include:
 
-### Why is my `like` filter not matching anything?
+- What the vulnerability is and what an attacker could do with it.
+- Steps to reproduce, ideally a minimal proof of concept.
+- The affected version or versions.
 
-`like` and `ilike` take the wildcards you supply. `{ name: { ilike: 'jo' } }` matches the exact string `jo`; you want `{ name: { ilike: 'jo%' } }`. A bare string value such as `{ name: 'jo' }` is an exact match, and by default a case-insensitive one.
+The maintainers acknowledge reports within 72 hours, work with you on a fix and agree a disclosure date. Reporters are credited in the advisory unless they prefer otherwise.
 
-### Why did my insert fail on a column that does not exist?
+| Question | Answer |
+| --- | --- |
+| What is in scope? | The published npm package, `packages/nestjs-drizzle-crud`. |
+| What is out of scope? | `apps/api` and `apps/docs`, the private example app and this docs site. Report problems there as normal issues. |
+| Which versions get security fixes? | 3.x. Versions before 3.0 do not. |
 
-Soft delete and package-managed timestamps write to `deleted_at`, `created_at` and `updated_at`. If your tables do not have those columns, disable them: `defaults: { softDelete: false, timestamps: false }`. See [Soft delete](/docs/soft-delete) and [Timestamps](/docs/timestamps).
+## Need paid help?
 
-### Can I use has-many or many-to-many relations?
+Community help stays free. If you want the package integrated, a migration done, a feature built or your services reviewed on your own schedule, see [commercial support and custom development](/docs/commercial-support).
 
-Not through `relations`. The package supports many-to-one and one-to-one (belongs-to) only. Model collections with your own method over `this.config.db`, which stays available for anything the base service does not cover. See [Relations](/docs/relations).
+## Common questions
 
-### Do I need to inject the database into my service?
+<Accordions>
+  <Accordion title="Why does findAll return an object instead of an array?">
+    `findAll` returns `{ data, total, page, limit }` because every list is paginated. `total` comes from a count query with the same filters and search, so it stays correct as you page.
+  </Accordion>
+  <Accordion title="Why is my like filter not matching anything?">
+    `like` and `ilike` use the wildcards you supply, so `{ name: { ilike: "jo" } }` only matches `jo`. Write `{ name: { ilike: "jo%" } }`, or use `startsWith`, which adds and escapes the wildcard for you.
+  </Accordion>
+  <Accordion title="Why does my service fail at startup with a missing column?">
+    Soft delete and timestamps are on by default and expect `deleted_at`, `created_at` and `updated_at`. Turn them off with `defaults: { softDelete: false, timestamps: false }`, or point them at your column keys.
+  </Accordion>
+  <Accordion title="Do I need to inject the database into my service?">
+    No. `forFeature` builds the service and hands it the config, Drizzle instance included. Adding `@Injectable()` or an `@Inject(DRIZZLE_DB)` constructor breaks that registration.
+  </Accordion>
+  <Accordion title="Does it work with MySQL?">
+    Yes. You pass your own Drizzle MySQL instance as `db`, and the package reads written rows back because MySQL has no `RETURNING`. Full-text search, the array and JSON operators and row locks are PostgreSQL only.
+  </Accordion>
+</Accordions>
 
-No. `forFeature` builds the service and hands it the config, including the Drizzle instance. Adding `@Injectable()` or an `@Inject(DRIZZLE_DB)` constructor breaks that registration. See [Defining services](/docs/defining-services).
+## Next steps
 
-### Does it work with MySQL?
-
-Yes, with two caveats. MySQL has no `RETURNING`, so the package re-reads written rows, and you supply UUID keys yourself on insert. Full-text search is PostgreSQL only. Everything else is identical across dialects.
-
-### How do I run raw Drizzle queries?
-
-Use `this.config.db` inside your service, or inject `DRIZZLE_DB` anywhere in your app. The package never hides Drizzle, so a hand-written query for a report sits next to the generated CRUD without ceremony.
-
-### Is it production ready?
-
-It runs against a real PostgreSQL database in CI through an example NestJS app, on top of unit tests for the query builders. Read the [changelog](/docs/changelog) before upgrading; the 3.x line is PostgreSQL-first, and MySQL-specific paths are tracked separately.
-
-## Keeping it maintained
-
-Every answer here, and every guide on this site, is unpaid work given away under MIT. If the package is doing a job for you, [sponsoring it](/docs/sponsor) is what keeps that going.
+<Cards>
+  <Card icon={<Shield />} title="Error handling in NestJS with Drizzle" href="/docs/errors" description="What each exception means and the status it returns." />
+  <Card icon={<Bot />} title="nestjs-drizzle-crud facts for AI agents" href="/docs/llm-notes" description="Condensed rules and gotchas, checked against the source." />
+  <Card icon={<Sparkles />} title="Sponsor nestjs-drizzle-crud" href="/docs/sponsor" description="Fund the fixes, the docs and the next release." />
+</Cards>
