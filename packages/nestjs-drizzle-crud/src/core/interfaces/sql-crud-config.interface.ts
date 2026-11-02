@@ -3,6 +3,7 @@ import type {
 	SortColumn,
 	SqlDialect,
 } from "../types/sql.types";
+import type { BulkMode, CrudAllowlists } from "./query.interface";
 
 // "belongsTo" (default): many-to-one / one-to-one, loaded with a LEFT JOIN.
 // "hasMany": one-to-many, loaded with one extra batched query per relation.
@@ -70,7 +71,10 @@ export interface SqlSearchOptions {
 	mode?: SqlSearchMode;
 }
 
-export interface SqlCrudConfig {
+// The allowlists (filterableColumns, sortableColumns, selectableColumns,
+// searchableColumns, loadableRelations, writableColumns) come from
+// CrudAllowlists. Unset, each allows everything.
+export interface SqlCrudConfig extends CrudAllowlists {
 	// Database configuration
 	dialect: SqlDialect;
 	db: any; // Drizzle database instance
@@ -136,4 +140,14 @@ export interface SqlOperationOptions {
 	};
 	lock?: "update" | "share" | "none";
 	forNoKeyUpdate?: boolean;
+	// Soft delete scope for reads (and for the existence check of delete): also
+	// return soft-deleted rows, or return only them. Related tables keep
+	// hiding their own deleted rows.
+	withDeleted?: boolean;
+	onlyDeleted?: boolean;
+	// Skip the per-entity allowlists for a trusted, server-side call.
+	skipAllowlists?: boolean;
+	// Mass writes: one statement for the batch ("set", the default) or the
+	// single-row method per item in its own savepoint ("perItem").
+	bulkMode?: BulkMode;
 }
