@@ -58,11 +58,21 @@ CREATE TABLE country_tags (
   tag_id uuid NOT NULL REFERENCES tags(id),
   PRIMARY KEY (country_id, tag_id)
 );
+CREATE TABLE projects (
+  id serial PRIMARY KEY,
+  tenant_id integer NOT NULL,
+  name varchar NOT NULL,
+  version integer NOT NULL DEFAULT 1,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  deleted_at timestamptz
+);
 `;
 
 // 5 regions, exactly 50 countries, states for the first three of them, cities
-// for the first two states, and two tags linked to the first two countries.
-// The e2e specs assert against these numbers.
+// for the first two states, two tags linked to the first two countries, and
+// five projects: 1-3 for tenant 1, 4-5 for tenant 2. The e2e specs assert
+// against these numbers.
 const SEED = `
 INSERT INTO regions (name, code) VALUES
   ('Asia', 'AS'), ('Europe', 'EU'), ('Africa', 'AF'),
@@ -103,6 +113,10 @@ SELECT c.id, t.id
 FROM countries c
 JOIN tags t ON (c.name = 'India' AND t.name IN ('populous', 'himalayan'))
             OR (c.name = 'Nepal' AND t.name = 'himalayan');
+
+INSERT INTO projects (tenant_id, name) VALUES
+  (1, 'Apollo'), (1, 'Gemini'), (1, 'Mercury'),
+  (2, 'Hubble'), (2, 'Kepler');
 `;
 
 // Build a fresh in-memory database, create the tables, seed the fixture, and

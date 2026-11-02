@@ -4,6 +4,7 @@ import { DrizzleCrudModule } from "nestjs-drizzle-crud";
 import { CountriesModule } from "./countries/countries.module";
 import { createPgliteDb, isPglite } from "./db/pglite";
 import * as schema from "./db/schema";
+import { ProjectsModule } from "./projects/projects.module";
 import { TagsModule } from "./tags/tags.module";
 
 @Module({
@@ -37,6 +38,7 @@ import { TagsModule } from "./tags/tags.module";
 		}),
 		CountriesModule,
 		TagsModule,
+		ProjectsModule,
 	],
 })
 export class AppModule {}
