@@ -1,6 +1,6 @@
 ---
 title: Pagination & sorting
-description: The findAll() return shape, default sort, and the sortBy/sortOrder options.
+description: "The findAll() return shape, default sort, and sortBy: one column, several columns, or a belongs-to relation column such as region.name."
 ---
 
 `findAll(filters?, pagination?, options?)` returns a paginated result envelope, **not** a bare array.
@@ -41,8 +41,8 @@ const { data, total, page, limit } = await service.findAll(
 | --- | --- | --- | --- |
 | `page` | `number` | `1` | 1-indexed. |
 | `limit` | `number` | `defaults.pagination.defaultLimit` | Capped at `defaults.pagination.maxLimit` (default `100`). |
-| `sortBy` | `string` | `defaultSort` (entity) | One column key. |
-| `sortOrder` | `'asc' \| 'desc'` | `'desc'` | Direction for `sortBy`. |
+| `sortBy` | `string \| Array<string \| SortColumn>` | `defaultSort` (entity) | One column, or a list. See below. |
+| `sortOrder` | `'asc' \| 'desc'` | `'desc'` | Direction for a single `sortBy` string. |
 
 ## Sorting
 
@@ -55,7 +55,30 @@ await service.findAll(
 );
 ```
 
-`sortBy` takes one column key. For a multi-column order, use the entity's `defaultSort` (see below).
+A single string sorts by one column in `sortOrder`, which defaults to `'desc'`, as it always has.
+
+### How do I sort by several columns?
+
+Pass a list. Each entry sorts ascending unless it starts with `-`; an entry can also be a `{ column, order }` object. A comma separated string means the same list.
+
+```ts
+await service.findAll({}, { sortBy: ['status', '-createdAt'] });
+// ORDER BY status ASC, created_at DESC, id ASC
+
+await service.findAll({}, { sortBy: [{ column: 'views', order: 'desc' }, { column: 'title' }] });
+await service.findAll({}, { sortBy: 'status,-createdAt' }); // same as the first
+```
+
+### How do I sort by a related column?
+
+Write it as `relation.column`. It works for a top-level belongs-to relation, which is joined for the data query only (the count query stays unjoined):
+
+```ts
+await countries.findAll({}, { sortBy: ['region.name', 'name'] });
+// LEFT JOIN regions ... ORDER BY regions.name ASC, countries.name ASC, countries.id ASC
+```
+
+A has-many or many-to-many column cannot be sorted on, because a row has many of them; that is a 400. So is an unknown column, and a column outside [`sortableColumns`](/docs/allowlists). Over HTTP, [`parseQuery`](/docs/query-parsing) reads `?sortBy=region.name,-name`.
 
 ### Why does every query end with the primary key?
 
@@ -155,7 +178,8 @@ A `LIMIT 0` or negative `OFFSET` can never reach SQL. Every value is clamped via
 
 | Input | Why |
 | --- | --- |
-| Caller `sortBy` not a column on the table | Mirrors the unknown-column guard, typos surface immediately instead of returning unsorted data. |
+| Caller `sortBy` not a column on the table (or on a belongs-to relation) | Mirrors the unknown-column guard, typos surface immediately instead of returning unsorted data. |
+| Caller `sortBy` outside `sortableColumns` | See [Allowlists](/docs/allowlists). |
 | Caller `sortOrder` other than `'asc'` / `'desc'` | Without the guard, anything other than `'desc'` silently sorted ascending. |
 | `{ gt / gte / lt / lte: NaN }` or `{ …: Infinity }` | Reaches SQL as an opaque 500; rejected as 400 instead. |
 | A filter key that is not a column or relation, or an unknown operator | Dropping it would return every row for a typo. See [Filtering](/docs/filtering#what-happens-with-an-unknown-filter-key). |
@@ -165,9 +189,10 @@ For the full per-method exception table (404 / 409 / 400 / 500 mapping), see [Er
 
 ## Cursor-based pagination
 
-The package does **not** ship cursor-based pagination out of the box. `findAll` is offset-based. For large datasets, write a custom method that uses Drizzle's `where(...).orderBy(...).limit(...)` chain with a cursor column (e.g. `id > lastSeenId`).
+`findAll` is offset based. For deep pages, infinite scroll or lists that change while people read them, use `findByCursor`, which returns a `nextCursor` instead of a page number. See [Cursor pagination](/docs/cursor-pagination).
 
 ## Next
 
+- → [Cursor pagination with `findByCursor`](/docs/cursor-pagination)
 - → [Relations: eager loading via `options.relations`](/docs/relations)
 - → [Bulk operations: transactional pagination-free reads](/docs/bulk-operations)

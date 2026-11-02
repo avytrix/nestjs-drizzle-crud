@@ -1,7 +1,10 @@
+import type { SortInput } from "./query.interface";
+
 export interface PaginationOptions {
 	page?: number;
 	limit?: number;
-	sortBy?: string;
+	// One column, or a list: ["region.name", "-name"] or [{ column, order }].
+	sortBy?: SortInput;
 	sortOrder?: "asc" | "desc";
 }
 

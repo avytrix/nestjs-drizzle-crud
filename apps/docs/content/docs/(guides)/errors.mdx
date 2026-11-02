@@ -13,9 +13,9 @@ Every exception in `nestjs-drizzle-crud` extends `@nestjs/common`'s `HttpExcepti
 | **409 Conflict** | `DuplicateEntityException` | `create`, `update` when a unique constraint is violated (Postgres SQLSTATE `23505`). |
 | **409 Conflict** | `EntityInUseException` | `delete` blocked because other rows still reference this one (`23503`, with `ON DELETE RESTRICT` or `NO ACTION`). |
 | **400 Bad Request** | `ForeignKeyViolationException` | `create`, `update` referencing a parent row that does not exist (`23503`). The message names the offending column. |
-| **400 Bad Request** | `ValidationFailedException` | A value the column cannot take: too long (`22001`), a failed check (`23514`), out of range (`22003`), the wrong type such as `"abc"` for an integer or an unknown enum label (`22P02`), or a bad date (`22007`, `22008`). Also an `update` with no column to set, and whatever your `validateCreate` / `validateUpdate` hooks throw. |
+| **400 Bad Request** | `ValidationFailedException` | A value the column cannot take: too long (`22001`), a failed check (`23514`), out of range (`22003`), the wrong type such as `"abc"` for an integer or an unknown enum label (`22P02`), or a bad date (`22007`, `22008`), or the same key twice in one `massUpsert` (`21000`). Also an `update` with no column to set, a column outside `writableColumns`, and whatever your `validateCreate` / `validateUpdate` hooks throw. |
 | **400 Bad Request** | `BulkOperationException` | Any bulk method whose transaction rolled back. The body lists each failed item, see [Bulk operations](/docs/bulk-operations#what-does-a-failed-bulk-call-return-over-http). |
-| **400 Bad Request** | `BadRequestException` | Bad pagination, sort, filter or search input: an unknown filter column or operator, an invalid date, a `findOne` with no condition, an unknown `fullTextSearch` column. See [Pagination & sorting, Clamping & fail-fast](/docs/pagination-sorting#clamping-fail-fast). |
+| **400 Bad Request** | `BadRequestException` | Bad pagination, sort, filter or search input: an unknown filter column or operator, an operator on the wrong column type, an invalid date, an invalid cursor, a `findOne` with no condition, an unknown `fullTextSearch` column, anything outside an [allowlist](/docs/allowlists), and anything [`parseQuery`](/docs/query-parsing) cannot read. See [Pagination & sorting, Clamping & fail-fast](/docs/pagination-sorting#clamping-fail-fast). |
 
 `DatabaseConnectionException` and `TransactionException` are still exported but deprecated: nothing in the package throws them. A failed transaction rejects with the error that caused it.
 
@@ -38,8 +38,10 @@ A "missing" row includes soft-deleted rows when soft-delete is enabled.
 | Method | 404 | 409 | 400 |
 | --- | --- | --- | --- |
 | `create(dto)` |  | unique violation | hook rejection (`ValidationFailedException`), missing FK target |
+| `upsert(dto, upsert)` |  | unique violation on another key | hook rejection, missing FK target, unknown conflict target |
 | `update(id, dto)` | row missing or soft-deleted | unique violation | hook rejection, missing FK target, nothing to update |
 | `delete(id)` | row missing or soft-deleted | still referenced by other rows |  |
+| `forceDelete(id)` | row missing | still referenced by other rows |  |
 | `softDelete(id)` | row missing or soft-deleted |  |  |
 | `restore(id)` | row missing |  |  |
 
@@ -47,7 +49,7 @@ A "missing" row includes soft-deleted rows when soft-delete is enabled.
 
 ### Bulk methods
 
-Every bulk method (`massCreate`, `massUpdate`, `massSoftDelete`, `massRestore`, `massDelete`) runs in a single transaction. Any failure throws `BulkOperationException` (→ 400) and rolls back the entire operation. No partial writes. The response body lists each failed item as `{ index | id, status, message }`, and the exception's `errors` field keeps the original errors for logging.
+Every bulk method (`massCreate`, `massUpdate`, `massSoftDelete`, `massRestore`, `massDelete`, `massForceDelete`, `massUpsert`) runs in a single transaction. Any failure throws `BulkOperationException` (→ 400) and rolls back the entire operation. No partial writes. The response body lists each failed item as `{ index | id, status, message }`, and the exception's `errors` field keeps the original errors for logging.
 
 ### `executeSqlTransaction`
 

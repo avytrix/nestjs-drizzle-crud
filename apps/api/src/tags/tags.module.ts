@@ -13,6 +13,8 @@ import { TagsService } from "./tags.service";
 				config: {
 					primaryKey: "id",
 					primaryKeyType: "uuid",
+					// Soft delete is off project wide (app.module.ts) and on here.
+					softDelete: { enabled: true },
 					defaultSort: [{ column: "name", order: "asc" }],
 				},
 			},

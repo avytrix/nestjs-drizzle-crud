@@ -1,0 +1,54 @@
+---
+title: Upsert
+description: "upsert and massUpsert insert a row or update the one that already holds its unique key, in one statement: ON CONFLICT DO UPDATE on Postgres, ON DUPLICATE KEY UPDATE on MySQL."
+---
+
+`upsert(dto, { conflictTarget, update })` inserts the row, or updates the existing row that already has the same unique key, in one statement. It returns the row as stored either way.
+
+```ts
+const user = await users.upsert(
+  { email: 'ada@example.com', name: 'Ada', role: 'admin' },
+  { conflictTarget: 'email' },
+);
+```
+
+On Postgres this is `INSERT ... ON CONFLICT (email) DO UPDATE SET name = excluded.name, role = excluded.role, ... RETURNING *`.
+
+## Options
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `conflictTarget` | the primary key | A column or a list of columns with a unique constraint or index. An unknown column is a 400. |
+| `update` | every column you sent, except the conflict target, the primary key and `createdAt` | The columns to overwrite when the row exists. `updatedAt` is included, so it moves on an update. |
+
+Pass `update: []` to keep the existing row untouched. The row still comes back, which makes `upsert` a get-or-create:
+
+```ts
+const tag = await tags.upsert({ name: 'urgent' }, { conflictTarget: 'name', update: [] });
+```
+
+## Which hooks run?
+
+`validateCreate`, `beforeCreate` and `mapCreateDtoToEntity`, because the statement starts as an insert, and [`writableColumns`](/docs/allowlists) applies. The after hooks do not run, since the package cannot tell an insert from an update without an extra query.
+
+## Errors
+
+The same mapping as `create`. A unique violation on a different key is a 409, a value the column cannot hold is a 400, and a foreign key that points nowhere is a 400.
+
+```ts
+// sku is unique too: moving row 1 onto row 2's sku is a 409
+await items.upsert({ id: 1, sku: 'A2', ... }, { conflictTarget: 'id' });
+```
+
+## Many rows at once
+
+`massUpsert(rows, upsertOptions, options?)` is one `INSERT ... ON CONFLICT` for the whole batch, in a transaction. When it fails, the failing items are named in a [`BulkOperationException`](/docs/bulk-operations#what-does-a-failed-bulk-call-return-over-http). Two rows of the same batch with the same conflict key are a 400 on Postgres ("the same key appears more than once in one upsert"), because one statement cannot update a row twice.
+
+## MySQL
+
+MySQL uses `ON DUPLICATE KEY UPDATE`, which fires on any unique key, so `conflictTarget` does not choose the key there. MySQL has no `RETURNING` either, so the package reads the rows back by `conflictTarget`: send a value for every conflict target column, otherwise it is a 400.
+
+## Next
+
+- → [Bulk operations](/docs/bulk-operations)
+- → [Errors](/docs/errors)

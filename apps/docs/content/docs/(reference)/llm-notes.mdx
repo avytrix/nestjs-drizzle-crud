@@ -8,7 +8,7 @@ This page is a tight, fact-only summary designed to be read by code-generation t
 ## Package
 
 - **Name:** `nestjs-drizzle-crud`
-- **Version:** `3.3.0`
+- **Version:** `3.4.0`
 - **License:** MIT
 - **Peers:** `@nestjs/common`, `@nestjs/core`, `drizzle-orm` (`>=0.28.0 <1.0.0`), `reflect-metadata`. Optional: `postgres` (PG) / `mysql2` (MySQL).
 
@@ -31,10 +31,14 @@ class XService extends SqlBaseCrudService<X, CreateXDto, UpdateXDto, XFilterDto>
 - If tables lack timestamp / soft-delete columns, set `defaults: { softDelete: false, timestamps: false }`. `softDelete.column` and `timestamps.createdAt` / `updatedAt` name the **key** in the Drizzle table object (`deletedAt` for `deletedAt: timestamp('deleted_at')`); a key the table lacks makes the service throw at startup with the key to use.
 - `softDelete`, `timestamps`, `pagination` and `sql` merge one level deep across forRoot, `@CrudService` and `forFeature`: `pagination: { defaultLimit: 5 }` keeps `maxLimit`.
 - `findAll` returns `{ data, total, page, limit }`. Not a bare array.
-- Filter operators live inside an object value: `{ age: { gte: 18 } }`. Operators: `eq gt gte lt lte neq like ilike in isNull isNotNull`. `like` / `ilike` require caller-supplied `%` wildcards (`ilike` is `LIKE` on MySQL); a bare string is an exact match, case-insensitive on text columns when `caseSensitive === false`, and `%` / `_` / `\` in the value are literal data, never wildcards. `{ isNull: false }` means `IS NOT NULL`, and `"true"` / `"false"` strings work.
+- Filter operators live inside an object value: `{ age: { gte: 18 } }`. Operators: `eq gt gte lt lte neq like ilike in notIn between isNull isNotNull startsWith endsWith contains iStartsWith iEndsWith iContains arrayContains arrayOverlaps jsonContains`. `startsWith` / `endsWith` / `contains` escape the value and follow `caseSensitive`; the `i` forms are always case-insensitive; the array and JSON operators are PostgreSQL only.
+- Groups: `{ or: [filterA, filterB], and: [...], not: filter }`, nestable, each member a full filter (columns, relations, collections), also in `count`. `like` / `ilike` require caller-supplied `%` wildcards (`ilike` is `LIKE` on MySQL); a bare string is an exact match, case-insensitive on text columns when `caseSensitive === false`, and `%` / `_` / `\` in the value are literal data, never wildcards. `{ isNull: false }` means `IS NOT NULL`, and `"true"` / `"false"` strings work.
 - String filter values are fine on integer, uuid and enum columns (plain `=`), and date strings are parsed for date columns. An unknown filter key, an unknown operator or an invalid date is a 400; `null` / `undefined` values are skipped.
 - `findOne(where)` throws a 400 when no condition is left (every value `undefined`) or a key is not a column; `null` means `IS NULL`.
-- `findAll` always ends `ORDER BY` with the primary key, so offset pages are stable.
+- `findAll` always ends `ORDER BY` with the primary key, so offset pages are stable. `sortBy` takes one column (with `sortOrder`, default `'desc'`) or a list: `['region.name', '-name']` or `[{ column, order }]`; a dotted entry sorts by a top-level belongs-to column.
+- `findByCursor(filters, { cursor, limit, sortBy, count })` is keyset pagination: returns `{ data, limit, nextCursor, total? }`; pass `nextCursor` back as `cursor`; `count` defaults to false.
+- `service.parseQuery(@Query() query)` (or `parseCrudQuery(query, table, options)`) turns `?age[gte]=18&region[name]=Asia&or[0][code]=IN&sortBy=-name&page=2&fields=id,name&with=region&search=x&cursor=` into `{ filters, pagination, options, isCursor }`, coercing by column type; unknown keys are a 400. `withDeleted` / `onlyDeleted` need `allowTrash: true`. Type the FilterDto generic as `CrudFilter`.
+- Allowlists per entity: `filterableColumns`, `sortableColumns`, `selectableColumns`, `searchableColumns`, `loadableRelations`, `writableColumns`. Unset allows everything; anything outside a set list is a 400. `findOne` where keys are not checked. `skipAllowlists: true` for trusted calls. Without `writableColumns`, create/update ignore the soft delete column, and update ignores the primary key and createdAt.
 - `findAll` and `count` accept `options.search: { term, columns, mode? }`. Default `mode` is `'ilike'` and joins cross-column contains checks with `OR`; `mode: 'fullText'` is PostgreSQL-only. Search is applied to both data and count queries.
 - `delete` / `softDelete` return `boolean`; `update` / `restore` return the entity and throw `EntityNotFoundException` (→ 404) when missing. On Postgres, `restore()` returns the row via `RETURNING` rather than re-fetching it.
 - All exceptions extend `@nestjs/common`'s `HttpException`, so Nest's default filter maps them to status codes automatically: 404 (not found), 409 (unique violation), 400 (validation / bad input, including Postgres `22P02` / `22007` / `22008` on reads). Custom filters can `instanceof` them. `DatabaseConnectionException` and `TransactionException` are deprecated; nothing throws them.
@@ -52,8 +56,9 @@ class XService extends SqlBaseCrudService<X, CreateXDto, UpdateXDto, XFilterDto>
 - Nested collections default `parentKey` to their host table's own primary key, not the root service's.
 - Row locks use `FOR UPDATE OF <base table>`, so they work with an eager belongs-to.
 - Full-text search is PostgreSQL-only. `fullTextSearch()` always applies page and limit, and rejects unknown columns with a 400. `sql.enableFullTextSearch` and `sql.jsonSupport` are deprecated no-ops.
-- Bulk methods are transactional, with a savepoint per item. A failure throws `BulkOperationException` and rolls back the entire operation; its 400 body lists `errors: [{ index | id, status, message }]` for the failed items only.
-- A soft-deleted belongs-to parent comes back as `null` and never matches a relation filter. To list or purge soft-deleted rows, query the table with Drizzle in a service method; `findAll({ deletedAt: { isNotNull: true } })` always returns nothing.
+- Bulk methods are transactional and set-based: one `SELECT` that checks the ids plus one `INSERT` / `UPDATE` / `DELETE` for the whole set. A failure throws `BulkOperationException` and rolls back the entire operation; its 400 body lists `errors: [{ index | id, status, message }]` for the failed items only. `bulkMode: 'perItem'` runs one single-row call per item instead.
+- `upsert(dto, { conflictTarget, update })` and `massUpsert(rows, ...)`: `ON CONFLICT DO UPDATE` on Postgres, `ON DUPLICATE KEY UPDATE` on MySQL. A clash on another unique key is a 409.
+- A soft-deleted belongs-to parent comes back as `null` and never matches a relation filter. Trash: pass `onlyDeleted: true` (or `withDeleted: true`) in the options of any read. Purge: `forceDelete(id)` / `massForceDelete(ids)`; `delete(id)` answers 404 for a row in the trash.
 - `executeSqlTransaction(async (tx) => ...)` opens a transaction; pass `{ transaction: tx }` in `options` to any CRUD method to enlist it.
 
 ## Quick reference
@@ -87,9 +92,22 @@ await service.findAll({
   status: 'active',                        // exact
   role: ['admin', 'editor'],               // IN
   age: { gte: 18, lt: 65 },                // operators
-  name: { ilike: 'jo%' },                  // pattern (caller wildcards)
+  name: { startsWith: 'jo' },              // escaped pattern
   publishedAt: { isNull: false },          // IS NOT NULL
+  or: [{ region: { name: 'Asia' } }, { population: { gte: 1e8 } }],
 });
+```
+
+### Controller list endpoint
+
+```ts
+@Get()
+findAll(@Query() query: Record<string, unknown>) {
+  const q = this.users.parseQuery(query);
+  return q.isCursor
+    ? this.users.findByCursor(q.filters, q.pagination, q.options)
+    : this.users.findAll(q.filters, q.pagination, q.options);
+}
 ```
 
 ### List search
@@ -111,18 +129,21 @@ await service.findAll({}, { page: 1, limit: 20 }, { relations: ['state'] });
 ## Public exports (alphabetical)
 
 ```
-and, asc, BaseCrudSpecHelper, BulkOperationException, BulkOperationItemError,
-BulkOperationResult, CrudFeature, CrudFeatureConfig, CrudService,
-DatabaseConnectionException, desc, DRIZZLE_CONNECTION, DRIZZLE_CRUD_CONFIG,
-DRIZZLE_DB, DrizzleConnection, DrizzleCrudConfig, DrizzleCrudModule,
-DuplicateEntityException, EntityInUseException, eq, EntityNotFoundException,
-ForeignKeyViolationException, gt, gte, ICrudService, ilike, inArray,
-isNotNull, isNull, like, lt, lte, ne, OperationOptions, or,
-PaginationOptions, PrimaryKeyType, RelationConfig, RelationNode,
-RelationsConfig, RelationType, SelectTree, SortColumn, SortOrder, sql,
-SqlBaseCrudService, SqlCrudConfig, SqlDialect, SqlOperationOptions,
-SqlSearchMode, SqlSearchOptions, TestCrudFactory, TransactionException,
-ValidationFailedException
+and, asc, BaseCrudSpecHelper, between, BulkMode, BulkOperationException,
+BulkOperationItemError, BulkOperationResult, ColumnFilter, CrudAllowlists,
+CrudFeature, CrudFeatureConfig, CrudFilter, CrudService, CursorPage,
+CursorPaginationOptions, DatabaseConnectionException, desc,
+DRIZZLE_CONNECTION, DRIZZLE_CRUD_CONFIG, DRIZZLE_DB, DrizzleConnection,
+DrizzleCrudConfig, DrizzleCrudModule, DuplicateEntityException,
+EntityInUseException, eq, EntityNotFoundException, FilterGroup,
+FilterOperator, FilterOperators, FilterScalar, ForeignKeyViolationException,
+gt, gte, ICrudService, ilike, inArray, isNotNull, isNull, like, lt, lte, ne,
+not, notInArray, OperationOptions, or, PaginationOptions, parseCrudQuery,
+ParseCrudQueryOptions, ParsedCrudQuery, PrimaryKeyType, RelationConfig,
+RelationNode, RelationsConfig, RelationType, SelectTree, SortColumn,
+SortInput, SortOrder, sql, SqlBaseCrudService, SqlCrudConfig, SqlDialect,
+SqlOperationOptions, SqlSearchMode, SqlSearchOptions, TestCrudFactory,
+TransactionException, UpsertOptions, ValidationFailedException
 ```
 
 ## Anti-patterns: do not generate these

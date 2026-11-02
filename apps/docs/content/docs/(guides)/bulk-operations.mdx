@@ -1,11 +1,11 @@
 ---
 title: Bulk operations
-description: "massCreate, massUpdate, massSoftDelete, massRestore, massDelete: transactional, one savepoint per item, and a 400 body that lists every failed item."
+description: "massCreate, massUpdate, massSoftDelete, massRestore, massDelete and massForceDelete: one statement for the whole set, in a transaction, with a 400 body that lists every failed item."
 ---
 
-Bulk operations run inside a single database transaction. If any item fails, the entire operation is rolled back and a `BulkOperationException` (400) is thrown. Its response body lists each failed item with its own status and message.
+Bulk operations write the whole set with one statement, inside a single database transaction. If any item fails, the entire operation is rolled back and a `BulkOperationException` (400) is thrown. Its response body lists each failed item with its own status and message.
 
-## The five methods
+## The methods
 
 ```ts
 await service.massCreate([dto1, dto2, dto3]);
@@ -13,6 +13,8 @@ await service.massUpdate([1, 2, 3], { status: 'archived' });
 await service.massSoftDelete([1, 2, 3]);
 await service.massRestore([1, 2, 3]);
 await service.massDelete([1, 2, 3]);
+await service.massForceDelete([1, 2, 3]); // soft-deleted rows too
+await service.massUpsert(rows, { conflictTarget: 'email' }); // see Upsert
 ```
 
 | Method | Returns | Failure mode |
@@ -22,25 +24,44 @@ await service.massDelete([1, 2, 3]);
 | `massSoftDelete(ids[], options?)` | `Promise<boolean>` | Same. |
 | `massRestore(ids[], options?)` | `Promise<T[]>` | Same. |
 | `massDelete(ids[], options?)` | `Promise<boolean>` | Same. |
+| `massForceDelete(ids[], options?)` | `Promise<boolean>` | Same. Also deletes rows that are in the trash. |
+| `massUpsert(data[], upsert, options?)` | `Promise<T[]>` | Same. See [Upsert](/docs/upsert). |
+
+Duplicate ids are written once. The rows come back in the order of the ids you passed.
+
+## How many queries does a bulk call cost?
+
+A fixed number, whatever the number of ids:
+
+| Method | Statements |
+| --- | --- |
+| `massCreate` | one multi-row `INSERT ... RETURNING` |
+| `massUpdate` | one `SELECT` to check every id exists, one `UPDATE ... WHERE id IN (...)` |
+| `massSoftDelete`, `massRestore` | one `SELECT`, one `UPDATE ... WHERE id IN (...)` |
+| `massDelete`, `massForceDelete` | one `SELECT`, one `DELETE ... WHERE id IN (...)` |
+| `massUpsert` | one `INSERT ... ON CONFLICT DO UPDATE` |
+
+So `massUpdate` over 100 ids is two queries, not two hundred. Without `RETURNING` (MySQL) one more `SELECT` reads the rows back. On MySQL, `massCreate` of rows with auto-increment keys inserts row by row, because MySQL only reports the first id of a multi-row insert.
 
 ## Transactional semantics
 
 All bulk methods wrap their work in a single transaction. If any row fails (constraint violation, FK error, validation, etc.), the transaction is rolled back. No partial writes are visible to subsequent reads.
 
-Each item runs in its own savepoint inside that transaction. On PostgreSQL a failed statement aborts the whole transaction, so without the savepoint every item after the first failure would also fail with `25P02` ("current transaction is aborted"). With it, only the items that are actually wrong show up in the error list. Before 3.3.1, `massCreate([ok, duplicate, ok, ok])` reported three failures; now it reports one.
-
-<Callout type="info" title="Still one query per item">
-  The items still run one after another, and update, delete, soft delete and
-  restore each check that the row exists first, so a bulk call over 100 ids
-  costs about 200 queries. Set-based bulk writes (`UPDATE ... WHERE id IN`)
-  are planned.
-</Callout>
+When the set statement fails, the package needs to know which items caused it. It replays the batch one item at a time, each in its own savepoint, all inside an outer savepoint that is rolled back at the end, and reports the items that fail. That replay only runs on the failure path, and it leaves nothing behind even inside your own transaction. Two rows of the same batch that clash only with each other show up as the second of the pair, because the replay has already written the first. When no single item fails, the statement's own error is thrown instead.
 
 <Callout type="info">
   A bulk operation that succeeds returns its full result. A bulk operation
   that fails throws `BulkOperationException` and **none** of the rows are
   modified. Use this as a guarantee, not just an optimization.
 </Callout>
+
+## Can I still run one query per item?
+
+Yes, with `bulkMode: 'perItem'`. Each item then goes through the single-row method (`create`, `update`, `delete`, ...) in its own savepoint, as in 3.3. Use it when a per-item hook must see the rows written before it.
+
+```ts
+await service.massUpdate(ids, { status: 'archived' }, { bulkMode: 'perItem' });
+```
 
 ## What does a failed bulk call return over HTTP?
 
@@ -83,9 +104,9 @@ The `errors` property keeps the original `Error` objects for logging. The respon
 
 ## Lifecycle hooks during bulk operations
 
-The standard `beforeCreate` / `afterCreate` (and the corresponding update / delete / softDelete / restore hooks) fire **once per row**, in array order. A `massCreate([a, b, c])` calls `beforeCreate` three times before the insert, then the insert, then `afterCreate` three times.
+The standard `beforeCreate` / `afterCreate` (and the corresponding update / delete / softDelete / restore hooks) fire **once per row**, in array order. A `massCreate([a, b, c])` calls `validateCreate` and `beforeCreate` three times, then runs the one insert, then calls `afterCreate` three times. `massUpdate` checks the ids first, then calls `validateUpdate` and `beforeUpdate` once per id.
 
-If any row's `beforeCreate` throws, that item is recorded as failed, the rest still run, and the transaction rolls back at the end. No rows are written.
+If any row's hook throws, that item is recorded as failed, the rest still run, and nothing is written. If `beforeUpdate` returns different data for different ids, one `SET` cannot express it, so `massUpdate` writes those rows with one `UPDATE` each.
 
 ## Passing options
 

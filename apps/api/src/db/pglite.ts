@@ -50,7 +50,8 @@ CREATE TABLE tags (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name varchar NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  deleted_at timestamptz
 );
 CREATE TABLE country_tags (
   country_id integer NOT NULL REFERENCES countries(id),

@@ -20,15 +20,12 @@ import { TagsService } from "./tags.service";
 export class TagsController {
 	constructor(private readonly tags: TagsService) {}
 
+	// `?onlyDeleted=true` is the trash view, `?withDeleted=true` lists both.
+	// parseQuery only accepts them because of allowTrash.
 	@Get()
-	findAll(@Query("page") page?: string, @Query("limit") limit?: string) {
-		return this.tags.findAll(
-			{},
-			{
-				page: page ? Number(page) : undefined,
-				limit: limit ? Number(limit) : undefined,
-			},
-		);
+	findAll(@Query() query: Record<string, unknown>) {
+		const q = this.tags.parseQuery(query, { allowTrash: true });
+		return this.tags.findAll(q.filters, q.pagination, q.options);
 	}
 
 	@Get(":id")
@@ -51,6 +48,32 @@ export class TagsController {
 	@HttpCode(200)
 	removeMany(@Body() dto: BulkDeleteTagsDto) {
 		return this.tags.massDelete(dto.ids);
+	}
+
+	// Hard-deletes every id, in the trash or not, in one statement.
+	@Post("purge")
+	@HttpCode(200)
+	purgeMany(@Body() dto: BulkDeleteTagsDto) {
+		return this.tags.massForceDelete(dto.ids);
+	}
+
+	// Moves a tag to the trash (soft delete).
+	@Post(":id/archive")
+	@HttpCode(200)
+	archive(@Param("id", ParseUUIDPipe) id: string) {
+		return this.tags.softDelete(id);
+	}
+
+	@Post(":id/restore")
+	@HttpCode(200)
+	restore(@Param("id", ParseUUIDPipe) id: string) {
+		return this.tags.restore(id);
+	}
+
+	// Hard delete, whether the tag is in the trash or not.
+	@Delete(":id/purge")
+	purge(@Param("id", ParseUUIDPipe) id: string) {
+		return this.tags.forceDelete(id);
 	}
 
 	@Delete(":id")

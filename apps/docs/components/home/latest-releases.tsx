@@ -4,6 +4,12 @@ import { ArrowRight } from "lucide-react";
 // Newest first; the top banner announces RELEASES[0].
 export const RELEASES = [
 	{
+		version: "3.4.0",
+		date: "Nov 2, 2026",
+		title: "Query parsing, allowlists, cursors, upsert",
+		body: "parseQuery turns a query string into typed filters, allowlists keep clients to the columns you choose, and findByCursor pages without OFFSET. Filters gain or / not groups and new operators, sortBy takes several columns or a relation column, soft-deleted rows can be listed and purged, and bulk writes are one statement for the whole set.",
+	},
+	{
 		version: "3.3.1",
 		date: "Nov 2, 2026",
 		title: "Audit fixes: filters, soft delete, bulk errors",

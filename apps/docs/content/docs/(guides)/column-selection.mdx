@@ -22,7 +22,7 @@ Omit `select` and every column comes back, which is the default.
 | `'states.name'` | The `name` column of every child in the has-many `states` relation. |
 | `'states.cities.name'` | The `name` column at the next nesting level down. Paths can be any depth. |
 
-A dotted entry only takes effect when the relation is also listed in `options.relations`. Names that do not match a real column are ignored rather than rejected, so a typo returns fewer columns instead of an error.
+A dotted entry only takes effect when the relation is also listed in `options.relations`. Names that do not match a real column are ignored rather than rejected, so a typo returns fewer columns instead of an error. Two things make them a 400 instead: a `selectableColumns` [allowlist](/docs/allowlists) that does not list the name, and [`parseQuery`](/docs/query-parsing), which checks every `?fields=` entry.
 
 ## Narrowing a relation
 

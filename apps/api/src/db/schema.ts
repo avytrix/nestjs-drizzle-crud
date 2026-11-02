@@ -50,10 +50,13 @@ export const cities = pgTable("cities", {
 	...timestamps,
 });
 
+// Tags are soft-deleted (see tags.module.ts), which is what the trash and
+// purge routes need.
 export const tags = pgTable("tags", {
 	id: uuid("id").primaryKey().defaultRandom(),
 	name: varchar("name").notNull(),
 	...timestamps,
+	deleted_at: timestamp("deleted_at", { withTimezone: true }),
 });
 
 // Join table for the countries <-> tags many-to-many relation.

@@ -22,7 +22,7 @@ The four generics correspond to:
 | `T` |  | The entity row type (typically `typeof table.$inferSelect`). |
 | `CreateDto` | `Partial<T>` | The shape accepted by `create()` and `massCreate()`. |
 | `UpdateDto` | `Partial<T>` | The shape accepted by `update()` and `massUpdate()`. |
-| `FilterDto` | `Partial<T>` | The shape accepted by `findAll(filters)` and `count(filters)`. |
+| `FilterDto` | `Partial<T>` | The shape accepted by `findAll(filters)` and `count(filters)`. Use `CrudFilter` when filters come from [`parseQuery`](/docs/query-parsing). |
 
 ## Read
 
@@ -30,9 +30,13 @@ The four generics correspond to:
 | --- | --- | --- |
 | `find(id, options?)` | `Promise<T \| null>` | By primary key. Skips soft-deleted rows. |
 | `findOne(where, options?)` | `Promise<T \| null>` | `where` is a `Partial<T>`: exact, case-sensitive equality, `null` for `IS NULL`, or an operator object. `undefined` values are skipped; if nothing is left, or a key is not a column, it throws a 400 rather than returning an arbitrary row. |
-| `findAll(filters?, pagination?, options?)` | `Promise<{ data: T[]; total: number; page: number; limit: number }>` | Supports `options.search`. An unknown filter key is a 400. Always ends `ORDER BY` with the primary key. See [Filtering](/docs/filtering) and [Pagination](/docs/pagination-sorting). |
+| `findAll(filters?, pagination?, options?)` | `Promise<{ data: T[]; total: number; page: number; limit: number }>` | Supports `options.search`, `and` / `or` / `not` groups and multi-column or relation `sortBy`. An unknown filter key is a 400. Always ends `ORDER BY` with the primary key. See [Filtering](/docs/filtering) and [Pagination](/docs/pagination-sorting). |
+| `findByCursor(filters?, pagination?, options?)` | `Promise<CursorPage<T>>` | Keyset pagination: `{ data, limit, nextCursor, total? }`. `total` only with `count: true`. See [Cursor pagination](/docs/cursor-pagination). |
 | `exists(id, options?)` | `Promise<boolean>` | Cheaper than `find` when you only need a yes/no. |
 | `count(filters?, options?)` | `Promise<number>` | Total rows matching the filter and `options.search`, ignoring pagination. |
+| `parseQuery(query, options?)` | `ParsedCrudQuery` | Turns an HTTP query object into `{ filters, pagination, options, ... }` for this entity. See [Parse query strings](/docs/query-parsing). |
+
+Every read takes `withDeleted` / `onlyDeleted` to include or only return soft-deleted rows. See [Soft delete](/docs/soft-delete#how-do-i-list-soft-deleted-rows).
 
 ### `find` signature
 
@@ -98,6 +102,10 @@ const total = s.count(
 | `delete(id, options?)` | `Promise<boolean>` | Hard delete. |
 | `softDelete(id, options?)` | `Promise<boolean>` | Sets `deleted_at` to `now()`. Requires soft delete enabled. |
 | `restore(id, options?)` | `Promise<T>` | Clears `deleted_at`. Throws `EntityNotFoundException` if missing. |
+| `forceDelete(id, options?)` | `Promise<boolean>` | Hard delete, soft-deleted or not. |
+| `upsert(data, upsert?, options?)` | `Promise<T>` | `ON CONFLICT DO UPDATE` (Postgres) or `ON DUPLICATE KEY UPDATE` (MySQL). `upsert` is `{ conflictTarget?, update? }`. See [Upsert](/docs/upsert). |
+
+`create`, `update` and `upsert` apply [`writableColumns`](/docs/allowlists#which-columns-can-a-body-write-by-default). Without it, `update` ignores the primary key and `createdAt`, and both ignore the soft delete column.
 
 ## Bulk (single transaction, rolls back on any failure)
 
@@ -108,8 +116,10 @@ const total = s.count(
 | `massSoftDelete(ids[], options?)` | `Promise<boolean>` |
 | `massRestore(ids[], options?)` | `Promise<T[]>` |
 | `massDelete(ids[], options?)` | `Promise<boolean>` |
+| `massForceDelete(ids[], options?)` | `Promise<boolean>` |
+| `massUpsert(data[], upsert?, options?)` | `Promise<T[]>` |
 
-Each item runs in its own savepoint, so only the items that are wrong are reported. Throws `BulkOperationException` on failure; its 400 body is `{ statusCode, error, message, errors: [{ index | id, status, message }] }`. See [Bulk operations](/docs/bulk-operations).
+Each method is one statement for the whole set (plus one `SELECT` that checks the ids exist), and `bulkMode: 'perItem'` runs the single-row method per item instead. When the statement fails, the items that fail are named. Throws `BulkOperationException` on failure; its 400 body is `{ statusCode, error, message, errors: [{ index | id, status, message }] }`. See [Bulk operations](/docs/bulk-operations).
 
 ## Search
 
@@ -163,6 +173,14 @@ interface SqlOperationOptions {
   lock?: 'update' | 'share' | 'none';
   /** Use FOR NO KEY UPDATE. PostgreSQL only. See [Row-level locks](/docs/row-locks). */
   forNoKeyUpdate?: boolean;
+  /** Also return soft-deleted rows. */
+  withDeleted?: boolean;
+  /** Return only soft-deleted rows (the trash). */
+  onlyDeleted?: boolean;
+  /** Skip the entity's allowlists for a trusted, server-side call. */
+  skipAllowlists?: boolean;
+  /** Mass writes: one statement ('set', default) or one call per item ('perItem'). */
+  bulkMode?: 'set' | 'perItem';
 }
 ```
 

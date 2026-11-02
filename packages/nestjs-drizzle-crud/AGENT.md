@@ -44,9 +44,11 @@ Order your decisions by these priorities:
 # Think Before You Build
 
 Before writing a query, check whether the base service already covers it:
-filters, comparison operators, pagination, default sort, eager loading,
-relation filters, soft delete, timestamps, bulk writes, transactions, row locks
-and full text search all ship. If you are writing `db.select()` inside a
+filters (with or / not groups), comparison and pattern operators, query string
+parsing, allowlists, offset and cursor pagination, multi-column and relation
+sorts, eager loading, relation filters, soft delete with a trash view and purge,
+timestamps, set-based bulk writes, upsert, transactions, row locks and full text
+search all ship. If you are writing `db.select()` inside a
 service, stop and check the API reference first.
 
 ---
@@ -129,9 +131,10 @@ Those are legacy manual patterns and they break registration.
 
 | Group | Methods |
 | --- | --- |
-| Read | `find(id)`, `findOne(where)`, `findAll(filters, pagination, options)`, `exists(id)`, `count(filters)` |
-| Write | `create(dto)`, `update(id, dto)`, `softDelete(id)`, `restore(id)`, `delete(id)` |
-| Bulk | `massCreate`, `massUpdate`, `massSoftDelete`, `massRestore`, `massDelete` |
+| Read | `find(id)`, `findOne(where)`, `findAll(filters, pagination, options)`, `findByCursor(filters, cursorPagination, options)`, `exists(id)`, `count(filters)` |
+| Write | `create(dto)`, `update(id, dto)`, `upsert(dto, { conflictTarget, update })`, `softDelete(id)`, `restore(id)`, `delete(id)`, `forceDelete(id)` |
+| Bulk | `massCreate`, `massUpdate`, `massUpsert`, `massSoftDelete`, `massRestore`, `massDelete`, `massForceDelete` |
+| Query string | `parseQuery(query, options)`, or the standalone `parseCrudQuery(query, table, options)` |
 | Search | `fullTextSearch(term, columns, pagination)`, PostgreSQL only |
 | Transaction | `executeSqlTransaction(cb)` |
 
@@ -139,7 +142,7 @@ Those are legacy manual patterns and they break registration.
 `softDelete` return a boolean. `update` and `restore` return the entity and
 throw `EntityNotFoundException` when the row is missing.
 
-Every method takes `options`: `{ transaction, relations, select, search, hooks, lock, forNoKeyUpdate }`.
+Every method takes `options`: `{ transaction, relations, select, search, hooks, lock, forNoKeyUpdate, withDeleted, onlyDeleted, skipAllowlists, bulkMode }`.
 
 ---
 
@@ -163,17 +166,82 @@ await service.findAll({
 ```
 
 Operators inside an object value: `eq`, `gt`, `gte`, `lt`, `lte`, `neq`, `like`,
-`ilike`, `in`, `isNull`, `isNotNull`. Any other operator is a 400. A bare string
-is an exact match, not a pattern, and `%` in it is a literal character.
-`isNull` and `isNotNull` take `true` / `false` or the strings `"true"` /
-`"false"`.
+`ilike`, `in`, `notIn`, `between` (`[from, to]`), `isNull`, `isNotNull`,
+`startsWith`, `endsWith`, `contains` (escaped, case-insensitive unless
+`sql.caseSensitive`), `iStartsWith`, `iEndsWith`, `iContains` (always
+case-insensitive), and on PostgreSQL only `arrayContains`, `arrayOverlaps` and
+`jsonContains`. Any other operator is a 400. A bare string is an exact match,
+not a pattern, and `%` in it is a literal character. `isNull` and `isNotNull`
+take `true` / `false` or the strings `"true"` / `"false"`.
+
+OR and NOT need no raw Drizzle. `and`, `or` and `not` group filter objects, nest,
+and can hold relation and collection filters:
+
+```typescript
+await posts.findAll({
+  status: 'published',
+  or: [{ author: { name: 'Ann' } }, { views: { gte: 1000 } }],
+  not: { tags: { name: 'internal' } },
+});
+```
 
 `findOne(where)` throws a 400 when no condition is left (every value
 `undefined`) or a key is not a column, and `null` means `IS NULL`. Never feed it
 an optional field without checking it first.
 
-**Never build a filter form or a where clause by hand in a controller.** Map the
-query DTO to the filter object and let the service compile the SQL.
+**Never build a filter form or a where clause by hand in a controller.** Hand
+the query string to `parseQuery`, which coerces values by column type and
+rejects unknown keys with a 400, and let the service compile the SQL:
+
+```typescript
+@Get()
+findAll(@Query() query: Record<string, unknown>) {
+  const q = this.users.parseQuery(query);
+  return q.isCursor
+    ? this.users.findByCursor(q.filters, q.pagination, q.options)
+    : this.users.findAll(q.filters, q.pagination, q.options);
+}
+```
+
+Type the service's `FilterDto` generic as `CrudFilter` so the parsed filters fit.
+The query string grammar: `col=v`, `col[op]=v`, `col[in]=a,b`,
+`relation[col]=v`, `or[0][col]=v`, `not[col]=v`, `sortBy=-a,relation.b`,
+`page`, `limit`, `fields=a,relation.b`, `with=relation`, `search`, `cursor`.
+`withDeleted` / `onlyDeleted` only with `parseQuery(query, { allowTrash: true })`.
+
+---
+
+# Allowlists: set them on every entity a client can reach
+
+```typescript
+config: {
+  filterableColumns: ['status', 'team.name'],
+  sortableColumns: ['name', 'created_at'],
+  selectableColumns: ['id', 'name', 'email', 'team.name'],
+  searchableColumns: ['name', 'email'],
+  loadableRelations: ['team'],
+  writableColumns: ['name', 'email', 'role'],
+}
+```
+
+Unset lists allow everything. Anything outside a set list is a 400, in the
+service and in `parseQuery`. `findOne(where)` keys are not checked (server-side
+lookups); pass `skipAllowlists: true` for any other trusted call. Without
+`writableColumns`, create and update ignore the soft delete column, and update
+ignores the primary key and `createdAt`.
+
+---
+
+# Sorting and cursor pagination
+
+`sortBy` takes one column (with `sortOrder`, default `'desc'`) or a list:
+`['team.name', '-created_at']` or `[{ column, order }]`. A dotted entry sorts by a
+top-level belongs-to column. The primary key is always the last sort column.
+
+For infinite scroll, exports and deep pages use `findByCursor(filters,
+{ cursor, limit, sortBy, count })`. It returns `{ data, limit, nextCursor,
+total? }`; pass `nextCursor` back as `cursor`. Do not hand-roll `id > lastId`
+pagination.
 
 ---
 
@@ -265,9 +333,10 @@ you asked for them or not.
   Reads then exclude deleted rows automatically, including a soft-deleted
   belongs-to parent. `softDelete.column` and the `timestamps` keys name the key
   in the Drizzle table object (`deletedAt` for a camelCase schema). A key the
-  table does not have stops the app at startup. To list or purge deleted rows,
-  query the table with Drizzle in a service method; a
-  `{ deletedAt: { isNotNull: true } }` filter always returns nothing.
+  table does not have stops the app at startup. For a trash view pass
+  `onlyDeleted: true` (or `withDeleted: true`) in the options of any read; to
+  purge, call `forceDelete(id)` or `massForceDelete(ids)`. `delete(id)` answers
+  404 for a row that is already in the trash. Never query `deleted_at` by hand.
 - **Timestamps:** prefer schema managed (`defaultNow()` plus `$onUpdate()`) so
   every write path is stamped by the database. The package managed option uses
   the application clock and only covers writes that go through the package.
@@ -314,9 +383,15 @@ await service.executeSqlTransaction(async (tx) => {
 ```
 
 Pass `{ transaction: tx }` to enlist any method. All bulk methods already run in
-a single transaction, with a savepoint per item, and roll back as a unit. The
-400 from `BulkOperationException` lists only the failed items:
-`errors: [{ index | id, status, message }]`.
+a single transaction and roll back as a unit. Each is one statement for the
+whole set (plus one `SELECT` that checks the ids), so never loop `create` or
+`update` over an array yourself. The 400 from `BulkOperationException` lists
+only the failed items: `errors: [{ index | id, status, message }]`.
+`bulkMode: 'perItem'` runs one single-row call per item when a hook needs it.
+
+To insert or update by a unique key, use
+`upsert(dto, { conflictTarget: 'email' })` or `massUpsert(rows, ...)` rather
+than a find followed by a create.
 
 Take a row lock with `options.lock: 'update' | 'share'` only inside a
 transaction, and prefer `forNoKeyUpdate` when the key is not changing. The lock
