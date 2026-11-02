@@ -4,6 +4,12 @@ import { ArrowRight } from "lucide-react";
 // Newest first; the top banner announces RELEASES[0].
 export const RELEASES = [
 	{
+		version: "3.7.1",
+		date: "Nov 2, 2026",
+		title: "Clearer scoped upsert error on MySQL",
+		body: "A scoped upsert on MySQL is refused with an error that names both dialects that support it: PostgreSQL and SQLite.",
+	},
+	{
 		version: "3.7.0",
 		date: "Nov 2, 2026",
 		title: "SQLite, MySQL connections, full-text options",

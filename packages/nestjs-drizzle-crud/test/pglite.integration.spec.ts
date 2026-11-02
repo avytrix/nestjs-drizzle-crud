@@ -2933,3 +2933,21 @@ describe("3.7.0: full-text search options", () => {
 		expect(trash.data.map((p: any) => p.id)).toEqual([1]);
 	});
 });
+
+describe("3.7.1: scoped upsert on MySQL", () => {
+	it("names both dialects that support it", async () => {
+		const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+		const svc = docsService(await sharedDb(), { dialect: "mysql" });
+		warn.mockRestore();
+		const error = await expect400(
+			svc.upsert(
+				{ title: "x", slug: "x" },
+				{ conflictTarget: "slug" },
+				asTenant(1),
+			),
+		);
+		expect(error.message).toBe(
+			"upsert on a scoped entity needs PostgreSQL or SQLite",
+		);
+	});
+});

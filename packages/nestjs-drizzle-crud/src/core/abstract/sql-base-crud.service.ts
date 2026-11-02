@@ -3147,7 +3147,7 @@ export abstract class SqlBaseCrudService<
 			// inside the tenant. Refuse rather than overwrite another tenant.
 			if (scope) {
 				throw new BadRequestException(
-					"upsert on a scoped entity needs PostgreSQL",
+					"upsert on a scoped entity needs PostgreSQL or SQLite",
 				);
 			}
 			statement = insert.onDuplicateKeyUpdate({ set });

@@ -123,7 +123,7 @@ MySQL uses `ON DUPLICATE KEY UPDATE`, and three things change:
 
 - **Any unique key triggers the update.** MySQL does not let you choose the key, so `conflictTarget` does not pick it there.
 - **The rows are read back.** MySQL has no `RETURNING`, so the package selects the rows by the `conflictTarget` columns after the write. Send a value for every conflict target column, otherwise the call is a 400.
-- **Scoped entities are refused.** `ON DUPLICATE KEY UPDATE` has no `WHERE`, so it cannot keep the update inside one tenant. Any upsert on a [scoped entity](/docs/multi-tenancy) is a 400 ("upsert on a scoped entity needs PostgreSQL") rather than a risk of overwriting another tenant's row.
+- **Scoped entities are refused.** `ON DUPLICATE KEY UPDATE` has no `WHERE`, so it cannot keep the update inside one tenant. Any upsert on a [scoped entity](/docs/multi-tenancy) is a 400 ("upsert on a scoped entity needs PostgreSQL or SQLite") rather than a risk of overwriting another tenant's row.
 
 ## Common questions
 

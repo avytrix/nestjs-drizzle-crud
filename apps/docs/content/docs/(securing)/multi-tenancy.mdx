@@ -130,7 +130,7 @@ All of them:
 | Bulk | `massUpdate`, `massSoftDelete`, `massRestore`, `massDelete`, `massForceDelete` | 400 with a 404 entry for that id, nothing written |
 | Links | `attach`, `detach`, `sync` | 404 |
 
-The scope is ANDed into the existence check and into the `UPDATE` or `DELETE` statement itself, so a row cannot change tenant between the two. On upsert it sits in the `ON CONFLICT DO UPDATE ... WHERE`, on PostgreSQL and SQLite alike. MySQL's `ON DUPLICATE KEY UPDATE` has no `WHERE`, so a scoped upsert on MySQL is a 400 (`upsert on a scoped entity needs PostgreSQL`).
+The scope is ANDed into the existence check and into the `UPDATE` or `DELETE` statement itself, so a row cannot change tenant between the two. On upsert it sits in the `ON CONFLICT DO UPDATE ... WHERE`, on PostgreSQL and SQLite alike. MySQL's `ON DUPLICATE KEY UPDATE` has no `WHERE`, so a scoped upsert on MySQL is a 400 (`upsert on a scoped entity needs PostgreSQL or SQLite`).
 
 ## What does a create or update do with the scope column?
 
