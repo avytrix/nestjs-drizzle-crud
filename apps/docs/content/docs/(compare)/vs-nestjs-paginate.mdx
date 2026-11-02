@@ -1,0 +1,118 @@
+---
+title: nestjs-drizzle-crud vs nestjs-paginate
+description: nestjs-drizzle-crud vs nestjs-paginate compared. One is a CRUD layer for Drizzle ORM, the other a TypeORM helper for paginated, filtered lists.
+icon: GitCompare
+---
+
+nestjs-drizzle-crud vs nestjs-paginate is mostly a question of ORM and scope. nestjs-paginate is a pagination and filtering helper for TypeORM repositories and query builders: it reads a list request and returns one page with metadata and links. nestjs-drizzle-crud is a full CRUD layer for Drizzle ORM: lists, pagination and filtering are one part of it, next to create, update, delete, soft delete, upsert and bulk writes.
+
+<Callout title="How this page was checked">
+  Facts about nestjs-paginate come from its [README](https://github.com/ppetzold/nestjs-paginate) and [npm entry](https://www.npmjs.com/package/nestjs-paginate), checked on 2 November 2026 against version `16.0.1`. Facts about nestjs-drizzle-crud come from the package source at version <Version />.
+</Callout>
+
+## How do the two libraries differ at a glance?
+
+| | nestjs-drizzle-crud | nestjs-paginate |
+| --- | --- | --- |
+| ORM | Drizzle ORM (`drizzle-orm` from 0.28.0 up to, not including, 1.0.0) | TypeORM (peer `typeorm ^1.0.0` in `16.0.1`, [npm](https://registry.npmjs.org/nestjs-paginate)) |
+| Databases | PostgreSQL and MySQL | PostgreSQL, CockroachDB, MySQL, MariaDB and SQLite appear in its [JSONB support matrix](https://github.com/ppetzold/nestjs-paginate#jsonb-support) |
+| Scope | Reads and writes | Reading paginated lists |
+| Entry point | `SqlBaseCrudService` subclass per table | `paginate(query, repository, config)` and the `@Paginate()` decorator |
+| Offset pagination | Yes, `{ data, total, page, limit }` | Yes, `{ data, meta, links }`, which the README says conforms to JSON:API |
+| Cursor pagination | Yes, opaque cursor over any sortable columns | Yes, on numeric and date columns ([README](https://github.com/ppetzold/nestjs-paginate#cursor-based-pagination)) |
+| Filter allowlist | Optional; unset allows every column | Required: operators are whitelisted per column in `filterableColumns` |
+| Unknown filter | Always a 400 | Ignored by default, 400 with `throwOnInvalidFilter: true` |
+| Boolean logic | `or`, `and`, `not` groups as bracket keys | A `filter=` expression with `AND`, `OR`, `NOT` and parentheses |
+| To-many filters | `some`, `none`, `every` | `$any`, `$all`, `$none` |
+| Swagger | `ApiCrudList`, `ApiCrudQuery` (optional `@nestjs/swagger`) | `@PaginatedSwaggerDocs`, `@ApiPaginationQuery`, `@ApiOkPaginatedResponse` |
+| License | MIT | MIT |
+
+Its npm page shows `16.0.1` published on 19 October 2026, and the [GitHub repository](https://github.com/ppetzold/nestjs-paginate) had a push on 30 October 2026, as of November 2026. It is actively released.
+
+## What does nestjs-paginate do better?
+
+Several things, each from its own [README](https://github.com/ppetzold/nestjs-paginate):
+
+- **Secure filtering by default.** A column cannot be filtered at all unless it is in `filterableColumns`, with its operators listed. In nestjs-drizzle-crud the allowlists are opt-in: with none set, any column can be filtered, sorted and selected. See [Allowlists](/docs/allowlists).
+- **Response links.** Each page carries `links.first`, `previous`, `current`, `next` and `last`, plus `meta.totalPages`. `findAll` returns `total`, `page` and `limit` and leaves link building to you.
+- **A text filter language.** `filter=(color=$eq:black OR color=$eq:white) AND NOT name=$eq:Leche` reads like a sentence and has a complexity cap (100 nodes by default).
+- **JSONB paths, virtual columns and polymorphic (`~`) columns** for sorting, searching and filtering.
+- **More databases** through TypeORM, including SQLite.
+- **It works with your existing TypeORM repositories**, so there is nothing to migrate if you are on TypeORM.
+
+## What does nestjs-drizzle-crud do that nestjs-paginate does not?
+
+nestjs-paginate covers the read side only; its README documents no create, update or delete helpers. nestjs-drizzle-crud adds:
+
+- **Writes:** `create`, `update`, `upsert`, `softDelete`, `restore`, `forceDelete`, and mass versions that run in one transaction. See [Bulk operations](/docs/bulk-operations) and [Upsert](/docs/upsert).
+- **Generated routes:** `createCrudController` registers list, get, create, update, delete, soft delete, restore and trash routes. See [CRUD controller factory](/docs/controller-factory).
+- **Safety on writes:** `writableColumns`, optimistic locking, tenant scopes and typed exceptions that map to 404, 409 and 400.
+- **Relation counts and grouped counts** with `?counts=` and `countBy`. See [Aggregates](/docs/aggregates).
+- **Drizzle ORM.** If your schema is in Drizzle, nestjs-paginate cannot read it, because it works on TypeORM repositories and query builders.
+
+## How do the query strings compare?
+
+The same list request in each, as each library documents it:
+
+| Intent | nestjs-drizzle-crud | nestjs-paginate |
+| --- | --- | --- |
+| Page and size | `page=2&limit=5` | `page=2&limit=5` |
+| Sort | `sortBy=-color` | `sortBy=color:DESC` |
+| Exact match | `color=white` | `filter.color=white` or `filter.color=$eq:white` |
+| Operator | `age[gte]=3` | `filter.age=$gte:3` |
+| Range | `age[between]=4,6` | `filter.age=$btw:4,6` |
+| Negation | `not[id][in]=2,5,7` | `filter.id=$not:$in:2,5,7` |
+| Null | `seen_at[isNull]=true` | `filter.seenAt=$null` |
+| Starts with | `summary[startsWith]=term` | `filter.summary=$sw:term` |
+| Search box | `search=i` (searches `searchableColumns`; a 400 without them) | `search=i` (searches `searchableColumns`) |
+| Columns | `fields=id,name,color` | `select=id,name,color` |
+| Soft-deleted rows | `withDeleted=true` (needs `allowTrash`) | `withDeleted=true` (needs `allowWithDeletedInQuery`) |
+| Cursor | `cursor=` then `cursor=<nextCursor>` | `cursor=<value>` with `paginationType: PaginationType.CURSOR` |
+
+See [Parse query strings into filters](/docs/query-parsing) for the nestjs-drizzle-crud side.
+
+## When should I choose nestjs-paginate?
+
+Choose nestjs-paginate when:
+
+- your project uses TypeORM,
+- you only need paginated, filtered list endpoints and write the other routes yourself,
+- you want strict per-column operator whitelists by default, response links, or the `filter=` expression language, or
+- you need SQLite, JSONB path filters or virtual columns.
+
+## When should I choose nestjs-drizzle-crud?
+
+Choose nestjs-drizzle-crud when:
+
+- your schema is in Drizzle ORM on PostgreSQL or MySQL,
+- you want reads and writes from one service, not only list pages,
+- you want generated routes, soft delete, upsert, bulk writes or tenant scopes without writing them, or
+- you want cursor pagination over text columns as well as numbers and dates.
+
+Set the [allowlists](/docs/allowlists) before you expose a list route, so a client can only touch the columns you name.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Does nestjs-paginate work with Drizzle ORM?">
+    No. Its README describes it as a helper for TypeORM repositories or query builders, and version `16.0.1` lists `typeorm` as a peer dependency.
+  </Accordion>
+  <Accordion title="Does nestjs-drizzle-crud return pagination links?">
+    No. `findAll` returns `data`, `total`, `page` and `limit`, plus `hasMore` when the count is skipped. Build links from those values if your clients need them.
+  </Accordion>
+  <Accordion title="Which one rejects unknown filters?">
+    nestjs-drizzle-crud always answers 400 for an unknown column or operator. nestjs-paginate ignores them by default and answers 400 when `throwOnInvalidFilter` is `true`.
+  </Accordion>
+  <Accordion title="Can nestjs-drizzle-crud whitelist filter operators per column?">
+    It whitelists columns, not operators: `filterableColumns` names the columns a filter may use, and any operator works on a listed column.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<ListOrdered />} title="Pagination and sorting" href="/docs/pagination-sorting" description="The findAll envelope, page limits and the default sort." />
+  <Card icon={<Timer />} title="Cursor pagination" href="/docs/cursor-pagination" description="Keyset pages with findByCursor and ?cursor=." />
+  <Card icon={<ShieldCheck />} title="Allowlists" href="/docs/allowlists" description="Limit which columns a client may filter, sort, select and write." />
+  <Card icon={<Database />} title="Drizzle vs TypeORM vs Prisma" href="/docs/drizzle-vs-typeorm-prisma" description="Choosing the ORM before choosing the CRUD layer." />
+</Cards>

@@ -1,0 +1,168 @@
+---
+title: Drizzle optimistic locking with versions
+description: Drizzle optimistic locking with a version column in NestJS. Set versionColumn, send the version you read, and a stale write is a 409 conflict.
+icon: GitCompareArrows
+---
+
+Drizzle optimistic locking with a version column stops a client from overwriting a change it never saw. Set `versionColumn` on the entity, send back the version you read, and a write against a row that has moved on since then is a 409 `StaleVersionException`. The package bumps the version in SQL on every write. It takes no row lock, so it suits the read, edit, save flow of a form.
+
+<Callout title="Who this is for">
+  Use a version column when two people can edit the same row and the last save must not silently win. If you need to hold a row while one transaction reads and writes it, use [row locks](/docs/row-locks) instead.
+</Callout>
+
+## How do I turn on optimistic locking?
+
+Add an integer column and name it in the entity config.
+
+<Steps>
+
+<Step>
+
+### Add a version column to the table
+
+```ts accent=drizzle title="schema.ts"
+export const projects = pgTable('projects', {
+  id: serial('id').primaryKey(),
+  name: varchar('name').notNull(),
+  version: integer('version').notNull().default(1),
+});
+```
+
+</Step>
+
+<Step>
+
+### Set versionColumn for the entity
+
+```ts accent=nest title="projects.module.ts"
+DrizzleCrudModule.forFeature([
+  { service: ProjectsService, table: projects, config: { versionColumn: 'version' } },
+]);
+```
+
+<PropsTable
+  props={{
+    versionColumn: { type: "string", description: "The key of the integer version column in your Drizzle table object. Unset, optimistic locking is off. A key the table does not have fails at startup." },
+  }}
+/>
+
+</Step>
+
+<Step>
+
+### Send the version back on every write
+
+Return the version you read with the update, as shown in the next section. A write against a newer version is a 409.
+
+</Step>
+
+</Steps>
+
+## How does the version change?
+
+It starts at 1 on `create`, whatever the body says, and goes up by one on every write:
+
+| Write | Version |
+| --- | --- |
+| `create`, `massCreate` | set to 1 |
+| `update`, `massUpdate` | plus one |
+| `softDelete`, `massSoftDelete` | plus one |
+| `restore`, `massRestore` | plus one |
+| `upsert`, `massUpsert` | 1 on insert, plus one when the row existed |
+
+It is computed in SQL (`SET version = version + 1`), never taken from a body. The version key is removed from a create or update body before anything else happens, so it is never written directly, even when [`writableColumns`](/docs/allowlists) lists it.
+
+## How do I send the version I read?
+
+Either in the body under the version column's key, which is what a REST client does with the object it fetched:
+
+```ts title="projects.edit.ts"
+const project = await projects.find(1);                 // version: 3
+await projects.update(1, { name: 'New', version: 3 });  // ok, now version 4
+await projects.update(1, { name: 'Late', version: 3 }); // 409
+```
+
+or as `options.expectedVersion`, which also works for the methods without a body:
+
+```ts title="projects.edit.ts"
+await projects.softDelete(1, { expectedVersion: 4 });
+await projects.restore(1, { expectedVersion: 5 });
+await projects.delete(1, { expectedVersion: 6 });
+```
+
+<PropsTable
+  props={{
+    expectedVersion: { type: "number", description: "The version the caller last read. Used by update, softDelete, restore, delete and forceDelete. Wins over a version in the body." },
+    expectedVersions: { type: "Record<string, number>", description: "For mass writes: the expected version per id, keyed by the id as a string. Ids not listed are not checked." },
+  }}
+/>
+
+On `update`, a version that is not an integer is a 400.
+
+## What does a stale write return?
+
+A `StaleVersionException`, which extends Nest's `ConflictException`, so the HTTP answer is a 409:
+
+```json title="409 response"
+{
+  "message": "projects with id 1 was changed by someone else; read it again and retry",
+  "error": "Conflict",
+  "statusCode": 409
+}
+```
+
+The check runs twice. The existence check compares the version before anything is written, and the `UPDATE` or `DELETE` itself carries `AND version = <expected>`, so a write that lands between the two is also caught.
+
+## What if the client sends no version?
+
+Then there is no check, and the write still bumps the version. That keeps internal writes simple. If every client must send it, make the field required in your update DTO.
+
+## How does it work with bulk writes?
+
+Pass `expectedVersions`, keyed by the id as a string:
+
+```ts title="projects.bulk.ts"
+await projects.massUpdate([1, 2, 3], { status: 'archived' }, {
+  expectedVersions: { '1': 4, '2': 7 }, // id 3 is not checked
+});
+```
+
+Any id at another version makes the whole call a 400 `BulkOperationException` with a 409 entry for that id, and nothing is written:
+
+```json title="400 response"
+{
+  "statusCode": 400,
+  "error": "Bad Request",
+  "message": "Mass update errors. 1 error(s) occurred.",
+  "errors": [
+    { "id": 2, "status": 409, "message": "projects with id 2 was changed by someone else; read it again and retry" }
+  ]
+}
+```
+
+`massSoftDelete`, `massRestore`, `massDelete` and `massForceDelete` take `expectedVersions` the same way. See [Bulk operations](/docs/bulk-operations) for the rest of the error body.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="What HTTP status does a stale version return?">
+    A 409 Conflict from `StaleVersionException`. In a mass write the call is a 400 `BulkOperationException` with a 409 entry for each stale id.
+  </Accordion>
+  <Accordion title="Can a client set the version directly?">
+    No. The version key is removed from create and update bodies, and the package sets it in SQL: 1 on insert, plus one on every later write.
+  </Accordion>
+  <Accordion title="Is the version checked when the client does not send one?">
+    No. Without a version in the body or `expectedVersion` in the options, the write is not checked, but the version still goes up.
+  </Accordion>
+  <Accordion title="Does optimistic locking lock the row?">
+    No. It compares versions in the `WHERE` clause and holds no lock. For a lock across a read and a write, use `lock: 'update'` inside a transaction.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Lock />} title="Row locks with SELECT FOR UPDATE" href="/docs/row-locks" description="SELECT ... FOR UPDATE when a version check is not enough." />
+  <Card icon={<Layers />} title="Bulk operations" href="/docs/bulk-operations" description="expectedVersions on mass writes and the error body they return." />
+  <Card icon={<ShieldCheck />} title="Errors" href="/docs/errors" description="StaleVersionException and every other exception, with its HTTP status." />
+</Cards>

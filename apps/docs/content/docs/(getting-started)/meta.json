@@ -1,7 +1,0 @@
-{
-	"title": "Getting started",
-	"description": "Install the package and prepare your NestJS + Drizzle project",
-	"icon": "Rocket",
-	"defaultOpen": true,
-	"pages": ["installation", "quick-start"]
-}

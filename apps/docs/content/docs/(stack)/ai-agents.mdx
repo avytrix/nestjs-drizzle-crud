@@ -1,0 +1,176 @@
+---
+title: NestJS Drizzle MCP server for AI agents
+description: Run the NestJS Drizzle MCP server with npx so Claude Code, Cursor or Copilot can read the package docs, and add the AGENT.md rules file to your repo.
+icon: Bot
+---
+
+The NestJS Drizzle MCP server ships inside `@avytrix/nestjs-drizzle-crud`: run `npx -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp` and any MCP client (Claude Code, Cursor, Copilot, Codex, Gemini CLI and others) can list, read and search the package docs while it writes code. The package also ships a rules file, `AGENT.md`, with templates that load it into the file your agent reads. Neither adds a dependency to your app.
+
+<Callout title="Read-only by design">
+  The server only reads the markdown files inside its own installed package. It never connects to
+  your database and never writes anything.
+</Callout>
+
+## What are the server's stable facts?
+
+| Fact | Value |
+| --- | --- |
+| Package version | <Version /> |
+| Command (bin) | `nestjs-drizzle-crud-mcp` |
+| Transport | stdio: JSON-RPC 2.0, one message per line |
+| Runtime dependencies | zero; the server is plain Node with no MCP SDK |
+| Node.js | 20 or later, like the package |
+| Tools | `list_docs`, `get_doc`, `search_docs` |
+| Documents | `agent-guide` (`AGENT.md`), `readme` (`README.md`), `changelog` (`CHANGELOG.md`) |
+
+The server reports the installed package version in its `initialize` reply, so it always serves the docs for the version you run.
+
+## How do I run the MCP server?
+
+<RunTabs pkg="@avytrix/nestjs-drizzle-crud" command="nestjs-drizzle-crud-mcp" />
+
+It starts and waits for JSON-RPC messages on stdin. You do not run it by hand day to day: your agent starts it from the config below.
+
+## How do I add it to my agent?
+
+Register it once per project. Claude Code, Cursor, Windsurf, Gemini CLI and Cline use the same `mcpServers` shape:
+
+<Tabs items={["Claude Code", "Cursor", "VS Code / Copilot", "Codex CLI"]}>
+<Tab value="Claude Code">
+
+```json title=".mcp.json"
+{
+  "mcpServers": {
+    "nestjs-drizzle-crud": {
+      "command": "npx",
+      "args": ["-y", "-p", "@avytrix/nestjs-drizzle-crud", "nestjs-drizzle-crud-mcp"]
+    }
+  }
+}
+```
+
+Or add it from the CLI:
+
+```bash title="Terminal"
+claude mcp add nestjs-drizzle-crud -- npx -y -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp
+```
+
+</Tab>
+<Tab value="Cursor">
+
+```json title=".cursor/mcp.json"
+{
+  "mcpServers": {
+    "nestjs-drizzle-crud": {
+      "command": "npx",
+      "args": ["-y", "-p", "@avytrix/nestjs-drizzle-crud", "nestjs-drizzle-crud-mcp"]
+    }
+  }
+}
+```
+
+</Tab>
+<Tab value="VS Code / Copilot">
+
+VS Code keeps the entries under `servers` instead of `mcpServers`:
+
+```json title=".vscode/mcp.json"
+{
+  "servers": {
+    "nestjs-drizzle-crud": {
+      "command": "npx",
+      "args": ["-y", "-p", "@avytrix/nestjs-drizzle-crud", "nestjs-drizzle-crud-mcp"]
+    }
+  }
+}
+```
+
+</Tab>
+<Tab value="Codex CLI">
+
+```toml title="~/.codex/config.toml"
+[mcp_servers.nestjs-drizzle-crud]
+command = "npx"
+args = ["-y", "-p", "@avytrix/nestjs-drizzle-crud", "nestjs-drizzle-crud-mcp"]
+```
+
+</Tab>
+</Tabs>
+
+Windsurf, Gemini CLI and Cline take the same `mcpServers` block as Claude Code in their own MCP settings file. Zed uses a `context_servers` entry in its `settings.json` with the same command and arguments.
+
+## Which tools does the server expose?
+
+Three, defined in [`src/mcp/server.ts`](https://github.com/avytrix/nestjs-drizzle-crud/blob/main/packages/nestjs-drizzle-crud/src/mcp/server.ts):
+
+| Tool | Arguments | Returns |
+| --- | --- | --- |
+| `list_docs` | none | Each document with its top-level headings. Start here. |
+| `get_doc` | `doc`, optional `section` | A whole document, or every section whose heading contains `section` (case-insensitive). |
+| `search_docs` | `query`, optional `limit` (default 5, max 20) | The best-matching sections across all three documents, best first, each cut to 1,500 characters. |
+
+`doc` is one of `agent-guide`, `readme` or `changelog`. A typical agent turn is `search_docs({ query: "has-many eager loading" })`, then `get_doc({ doc: "agent-guide", section: "Relations" })`.
+
+A tool failure, such as an unknown tool name, comes back as a result with `isError: true`, so the client shows it to the model instead of dropping the turn.
+
+## Which rules file does my agent read?
+
+Copy the template that matches your tool into your project root:
+
+```bash title="Terminal"
+cp node_modules/@avytrix/nestjs-drizzle-crud/AGENTS.template.md ./AGENTS.md   # most tools
+cp node_modules/@avytrix/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md   # Claude Code
+```
+
+| Agent | File in your project root |
+| --- | --- |
+| OpenAI Codex, Cursor, GitHub Copilot, Zed, Cline, Windsurf, Jules | `AGENTS.md` |
+| Claude Code | `CLAUDE.md` |
+| Gemini CLI | `GEMINI.md` |
+| Aider | `CONVENTIONS.md`, then `aider --read CONVENTIONS.md` |
+
+Each template is a pointer, not a copy. Besides comments, it holds one line:
+
+```md title="AGENTS.md"
+@node_modules/@avytrix/nestjs-drizzle-crud/AGENT.md
+```
+
+`AGENT.md` ships inside the package and stays the single source of truth, so an upgrade updates the rules with it. If your agent does not resolve `@` imports, paste the contents of `AGENT.md` in place of that line, or run the MCP server so the agent fetches the guidance itself.
+
+Using several agents on one repo? Copy the template to each filename, or keep `AGENTS.md` and make the others a one-line pointer to it.
+
+## What is in the rules file?
+
+`AGENT.md` is written for an agent about to add an endpoint. It covers the facts agents most often get wrong:
+
+- A service is normally an empty subclass of `SqlBaseCrudService`, and the table goes in `forFeature`, not in the service.
+- Filters are objects, such as `{ age: { gte: 18 } }`, and `findAll` returns `{ data, total, page, limit }`.
+- Which exception maps to which HTTP status code, and how allowlists, scope and soft delete work.
+- A definition of done, so the agent stops when the endpoint is complete.
+
+It exists to prevent the two most common mistakes: hand-writing repository code the base service already has, and injecting the database into a service.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Does the MCP server add a dependency to my app?">
+    No. It is a bin inside `nestjs-drizzle-crud` with zero runtime dependencies, so installing the package is all it needs.
+  </Accordion>
+  <Accordion title="Can the MCP server touch my database?">
+    No. It only reads `AGENT.md`, `README.md` and `CHANGELOG.md` from its own installed package and answers over stdio.
+  </Accordion>
+  <Accordion title="Which transport does nestjs-drizzle-crud-mcp use?">
+    stdio, with one JSON-RPC 2.0 message per line. Your MCP client starts the process and talks to it directly.
+  </Accordion>
+  <Accordion title="Do I need both the rules file and the MCP server?">
+    No, either works alone. The rules file loads the guidance up front; the server lets the agent look things up as it goes.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Sparkles />} title="For AI agents" href="/docs/llm-notes" description="The package facts condensed for code generation." />
+  <Card icon={<Boxes />} title="Defining services" href="/docs/defining-services" description="What the agent is meant to produce." />
+  <Card icon={<Users />} title="Need a team?" href="/docs/commercial-support" description="Avytrix Technologies maintains this library and builds MCP servers and AI features for clients." />
+</Cards>

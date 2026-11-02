@@ -1,0 +1,177 @@
+---
+title: Drizzle hooks and validation in NestJS
+description: Add Drizzle hooks and validation to a NestJS service by overriding validateCreate, beforeCreate, afterUpdate and the DTO mappers on SqlBaseCrudService.
+icon: Workflow
+---
+
+Drizzle hooks and validation in a NestJS service built on `SqlBaseCrudService` are `protected` methods you override in your subclass: `validateCreate` and `validateUpdate` reject bad input, `beforeCreate` and `beforeUpdate` can rewrite it, the two mappers turn a DTO into the row to store, and the `after*` hooks run once the row is written. Each one is optional and defaults to a no-op or a pass-through.
+
+<Callout title="A before hook must return the data" type="warn">
+  `beforeCreate` and `beforeUpdate` return the DTO the write continues with. If yours returns nothing, the mapper receives `undefined` and the write loses every column from the body (an update then fails with a 400, nothing to update). Always end with `return data` (or a new object).
+</Callout>
+
+## In what order do the hooks run?
+
+Validation first, then the before hook, then the mapper, then the SQL, then the after hook:
+
+```txt title="create order"
+validateCreate(data)
+  -> beforeCreate(data)          skipped by hooks.skipBefore
+  -> mapCreateDtoToEntity(data)
+  -> INSERT
+  -> afterCreate(row)            skipped by hooks.skipAfter
+```
+
+`update` runs the same chain with `validateUpdate`, `beforeUpdate`, `mapUpdateDtoToEntity` and `afterUpdate`, after it has checked that the row exists (a missing row is a 404 before any hook runs). `upsert` starts as an insert, so it runs `validateCreate`, `beforeCreate` and `mapCreateDtoToEntity`, but no after hook.
+
+## How do I validate input?
+
+Override `validateCreate` or `validateUpdate` and throw. Any throw aborts the write before the SQL runs:
+
+```ts accent=nest title="users.service.ts"
+import { SqlBaseCrudService, ValidationFailedException } from "@avytrix/nestjs-drizzle-crud";
+
+export class UsersService extends SqlBaseCrudService<User, CreateUserDto, UpdateUserDto> {
+  protected async validateCreate(data: CreateUserDto): Promise<void> {
+    if (!data.email.includes("@")) {
+      throw new ValidationFailedException("email is not an address");
+    }
+  }
+
+  protected async validateUpdate(id: number, data: UpdateUserDto): Promise<void> {
+    if (data.email && !data.email.includes("@")) {
+      throw new ValidationFailedException("email is not an address");
+    }
+  }
+}
+```
+
+`ValidationFailedException` is a 400 with the message `Validation failed: email is not an address`. Any Nest `HttpException` you throw keeps its own status. In a mass method, the throw for each item is collected into a `BulkOperationException` (400) that lists the failing items.
+
+Validation always runs: `hooks.skipBefore` skips the before hooks, not `validateCreate` or `validateUpdate`. Keep it to checks on the input itself, and put heavier async work (a lookup in another table) in `beforeCreate` or `beforeUpdate`.
+
+## How do I map a DTO to a row?
+
+Override `mapCreateDtoToEntity` or `mapUpdateDtoToEntity`. Both run after the before hook and return the object to write. The defaults return a shallow copy of the input:
+
+```ts accent=nest title="users.service.ts"
+export class UsersService extends SqlBaseCrudService<User, CreateUserDto, UpdateUserDto> {
+  protected mapCreateDtoToEntity(data: CreateUserDto) {
+    return {
+      ...data,
+      email: data.email.toLowerCase().trim(),
+      status: "pending",
+    };
+  }
+
+  protected mapUpdateDtoToEntity(data: UpdateUserDto) {
+    const result: Record<string, any> = {};
+    if (data.name !== undefined) result.name = data.name;
+    if (data.email !== undefined) result.email = data.email.toLowerCase().trim();
+    return result;
+  }
+}
+```
+
+Mappers are the right place to:
+
+- normalize input (lowercase emails, trim whitespace),
+- set fields the caller cannot control (`status: "pending"`, `createdBy`),
+- strip fields the DTO allows but the table does not have.
+
+What the mapper returns still goes through [`writableColumns`](/docs/allowlists#which-columns-can-a-body-write-by-default), so a column it adds must be on that list when the list is set. Timestamps, the version column and the [tenant scope](/docs/multi-tenancy) are applied after the mapper.
+
+## How do I run code before or after a write?
+
+Override the `before*` and `after*` pair for that write. `afterCreate`, `afterUpdate` and `afterRestore` receive the stored row; the delete and soft delete hooks receive the id:
+
+```ts accent=nest title="users.service.ts"
+import { Logger } from "@nestjs/common";
+import { SqlBaseCrudService } from "@avytrix/nestjs-drizzle-crud";
+
+export class UsersService extends SqlBaseCrudService<User, CreateUserDto, UpdateUserDto> {
+  private readonly logger = new Logger(UsersService.name);
+
+  protected async beforeCreate(data: CreateUserDto): Promise<CreateUserDto> {
+    return { ...data, slug: slugify(data.name) };
+  }
+
+  protected async afterCreate(user: User): Promise<void> {
+    this.logger.log(`user ${user.id} created`);
+  }
+
+  protected async beforeDelete(id: number): Promise<void> {
+    this.logger.log(`deleting user ${id}`);
+  }
+}
+```
+
+A before hook that throws stops the write. An after hook runs after the SQL, so a throw there only undoes the write when the call runs in a [transaction](/docs/transactions): every mass method does, a single write does when you pass `options.transaction`.
+
+## How do I skip the hooks for one call?
+
+Pass `options.hooks`:
+
+```ts accent=nest title="import.script.ts"
+await users.create(dto, { hooks: { skipBefore: true, skipAfter: true } });
+```
+
+<PropsTable
+  props={{
+    "hooks.skipBefore": { type: "boolean", default: "false", description: "Skip beforeCreate, beforeUpdate, beforeDelete, beforeSoftDelete and beforeRestore for this call. Validation still runs." },
+    "hooks.skipAfter": { type: "boolean", default: "false", description: "Skip afterCreate, afterUpdate, afterDelete, afterSoftDelete and afterRestore for this call." },
+    skipEvents: { type: "boolean", default: "false", description: "Skip the module-level events of this call. Independent of the hooks options." },
+  }}
+/>
+
+This suits migrations and admin scripts. Skipping hooks does not skip the module-level [CRUD events](/docs/events), which follow `skipEvents` instead, so an audit trail built on them is not lost by accident.
+
+## Should I use hooks or events?
+
+Hooks for logic that belongs to one entity, events for logic that spans all of them. Hooks are protected methods on one service and run per row, even in a mass call. [CRUD events](/docs/events) (`hooks.enableGlobalHooks`) fire on one module-level bus for every entity, once per call, which suits audit trails and cache busting. When both are set up, both run.
+
+## Full hook list
+
+| Hook | Receives | Returns | Runs on |
+| --- | --- | --- | --- |
+| `validateCreate(data)` | `CreateDto` | `void`, or throws | `create`, `upsert`, and per item in `massCreate`, `massUpsert` |
+| `validateUpdate(id, data)` | `id`, `UpdateDto` | `void`, or throws | `update`, and per id in `massUpdate` |
+| `beforeCreate(data)` | `CreateDto` | the `CreateDto` to continue with | `create`, `upsert`, and per item in `massCreate`, `massUpsert` |
+| `mapCreateDtoToEntity(data)` | `CreateDto` | `Record<string, any>` | `create`, `upsert`, and per item in `massCreate`, `massUpsert` |
+| `afterCreate(row)` | `T` | `void` | `create`, and per row in `massCreate` |
+| `beforeUpdate(id, data)` | `id`, `UpdateDto` | the `UpdateDto` to continue with | `update`, and per id in `massUpdate` |
+| `mapUpdateDtoToEntity(data)` | `UpdateDto` | `Record<string, any>` | `update`, and per id in `massUpdate` |
+| `afterUpdate(row)` | `T` | `void` | `update`, and per row in `massUpdate` |
+| `beforeDelete(id)` | `id` | `void` | `delete`, `forceDelete`, and per id in `massDelete`, `massForceDelete` |
+| `afterDelete(id)` | `id` | `void` | `delete`, `forceDelete`, and per id in `massDelete`, `massForceDelete` |
+| `beforeSoftDelete(id)` | `id` | `void` | `softDelete`, and per id in `massSoftDelete` |
+| `afterSoftDelete(id)` | `id` | `void` | `softDelete`, and per id in `massSoftDelete` |
+| `beforeRestore(id)` | `id` | `void` | `restore`, and per id in `massRestore` |
+| `afterRestore(row)` | `T` | `void` | `restore`, and per row in `massRestore` |
+
+All hooks are `protected`, so code outside the class cannot call them. Override them in your service subclass.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Does validateCreate run when I pass skipBefore?">
+    Yes. `hooks.skipBefore` skips only the `before*` hooks. `validateCreate` and `validateUpdate` run on every create and update.
+  </Accordion>
+  <Accordion title="Does beforeCreate run before or after the mapper?">
+    Before. The order is `validateCreate`, then `beforeCreate`, then `mapCreateDtoToEntity`, then the insert, so the mapper sees whatever `beforeCreate` returned.
+  </Accordion>
+  <Accordion title="Do hooks run per row in a mass update?">
+    Yes. `massUpdate` runs `validateUpdate`, `beforeUpdate` and the mapper for each id and `afterUpdate` for each row, even though the update itself is one statement.
+  </Accordion>
+  <Accordion title="Does upsert run afterCreate?">
+    No. `upsert` and `massUpsert` run `validateCreate`, `beforeCreate` and `mapCreateDtoToEntity`, but no after hook. Use the `afterUpsert` event if you need to react to one.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<BellRing />} title="NestJS Drizzle CRUD events and audit logs" href="/docs/events" description="One before and one after event per write, for every entity." />
+  <Card icon={<Layers />} title="Transactions" href="/docs/transactions" description="Run hooks and writes in one transaction so a throw rolls both back." />
+  <Card icon={<ClipboardCheck />} title="Testing" href="/docs/testing" description="Exercise your hooks with TestCrudFactory." />
+</Cards>

@@ -1,12 +1,25 @@
 {
 	"title": "Documentation",
-	"description": "Type-safe CRUD for Drizzle ORM in NestJS",
+	"description": "NestJS + Drizzle ORM CRUD: type-safe services, filtering, pagination and relations",
 	"pages": [
 		"index",
-		"(getting-started)",
-		"(configuration)",
-		"(guides)",
-		"(reference)",
-		"(support)"
+		"---Start here---",
+		"...(start)",
+		"---Core concepts---",
+		"...(concepts)",
+		"---Querying---",
+		"...(querying)",
+		"---Writing data---",
+		"...(writing)",
+		"---Securing it---",
+		"...(securing)",
+		"---Put it in your stack---",
+		"...(stack)",
+		"---Compare---",
+		"...(compare)",
+		"---Reference---",
+		"...(reference)",
+		"---Ship it---",
+		"...(support)"
 	]
 }

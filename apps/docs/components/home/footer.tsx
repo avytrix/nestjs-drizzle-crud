@@ -1,7 +1,7 @@
 import { Heart, Package } from "lucide-react";
 import { GithubMark } from "@/components/github-mark";
 import Link from "next/link";
-import { siteConfig } from "@/lib/seo";
+import { avytrixUrl, siteConfig } from "@/lib/seo";
 
 export function Footer() {
 	return (
@@ -15,6 +15,38 @@ export function Footer() {
 						<div className="mt-1 text-xs text-fd-muted-foreground">
 							MIT · v{siteConfig.version}
 						</div>
+						<p className="mt-2 text-xs text-fd-muted-foreground">
+							Built and maintained by{" "}
+							<a
+								href={avytrixUrl("/", "home")}
+								target="_blank"
+								rel="noreferrer noopener"
+								className="font-medium text-fd-foreground underline-offset-2 hover:underline"
+							>
+								{siteConfig.organization.name}
+							</a>
+							.{" "}
+							<Link
+								href="/docs/commercial-support"
+								className="underline underline-offset-2 hover:text-fd-foreground"
+							>
+								Hire the team behind the library
+							</Link>
+						</p>
+						<ul className="mt-2 flex gap-3 text-xs">
+							{siteConfig.organization.profiles.map((p) => (
+								<li key={p.url}>
+									<a
+										href={p.url}
+										target="_blank"
+										rel="noreferrer noopener me"
+										className="text-fd-muted-foreground underline-offset-2 hover:text-fd-foreground hover:underline"
+									>
+										{siteConfig.organization.name} on {p.name}
+									</a>
+								</li>
+							))}
+						</ul>
 					</div>
 					<div className="flex flex-wrap items-center gap-1 text-sm">
 						<Link
@@ -47,14 +79,12 @@ export function Footer() {
 							<Heart className="size-4" />
 							Sponsor
 						</a>
-						<a
-							href="https://avytrix.dev"
-							target="_blank"
-							rel="noreferrer noopener"
+						<Link
+							href="/docs/built-by-avytrix"
 							className="inline-flex items-center -mx-2 rounded-lg px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
 						>
-							Avytrix Technologies
-						</a>
+							About the maintainers
+						</Link>
 						<a
 							href="https://www.npmjs.com/package/nestjs-drizzle-crud"
 							target="_blank"

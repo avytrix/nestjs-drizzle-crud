@@ -1,0 +1,251 @@
+---
+title: Soft delete in Drizzle ORM
+description: Soft delete rows in NestJS with Drizzle ORM. A deleted_at column hides them from reads, restore brings them back and forceDelete purges.
+icon: Trash
+---
+
+Soft delete in Drizzle ORM, with this package, means `softDelete(id)` sets a `deleted_at` timestamp on the row instead of removing it. Every read then adds `deleted_at IS NULL`, so the row disappears from `find`, `findAll`, `count` and the rest. `restore(id)` clears the column and brings the row back, and `forceDelete(id)` removes it for good. Soft delete is on by default for every entity.
+
+<Callout type="warn" title="The setting names the key, not the SQL column">
+  `softDelete.column` is the key in your Drizzle table object, `deleted_at` by default. A camelCase
+  schema such as `deletedAt: timestamp('deleted_at')` needs `column: 'deletedAt'`. Since 3.3.1 a
+  wrong key stops the service at startup with a message that names the right one, for example:
+  `softDelete.column is "deleted_at", but the table has no column under that key. The column
+  "deleted_at" is declared under the key "deletedAt"; set softDelete.column to "deletedAt".`
+  Before 3.3.1 the same mistake made every read fail with a 500.
+</Callout>
+
+## How do I enable soft delete?
+
+<Steps>
+
+<Step>
+
+### Add a nullable timestamp column
+
+```ts accent=drizzle title="db/schema.ts"
+import { pgTable, serial, timestamp, varchar } from 'drizzle-orm/pg-core';
+
+export const users = pgTable('users', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 100 }).notNull(),
+  email: varchar('email', { length: 255 }).notNull().unique(),
+  deleted_at: timestamp('deleted_at', { withTimezone: true }),
+});
+```
+
+The column must accept `null`. The package writes `new Date()` to it on `softDelete` and `null` on
+`restore`.
+
+</Step>
+
+<Step>
+
+### Keep the project default, or set it per entity
+
+Soft delete is already on in `forRoot`. Set `defaults.softDelete: false` to turn it off for the whole
+project:
+
+```ts accent=nest title="app.module.ts"
+DrizzleCrudModule.forRoot({
+  dialect: 'postgresql',
+  connectionString: process.env.DATABASE_URL,
+  schema,
+  defaults: { softDelete: true }, // the default
+});
+```
+
+Per entity, `forFeature` can turn it off or point it at another column:
+
+```ts accent=nest title="users/users.module.ts"
+DrizzleCrudModule.forFeature([
+  {
+    service: AuditLogService,
+    table: auditLog,
+    config: { softDelete: { enabled: false } },
+  },
+  {
+    service: UsersService,
+    table: users,
+    config: { softDelete: { column: 'archived_at' } },
+  },
+])
+```
+
+The entity config merges with the project default one level deep, so
+`{ softDelete: { column: 'archived_at' } }` keeps `enabled` from the project setting.
+
+</Step>
+
+<Step>
+
+### Delete, list and restore
+
+```ts title="users/users.trash.ts"
+await usersService.softDelete(42);                              // hidden from reads
+await usersService.findAll({}, {}, { onlyDeleted: true });      // the trash
+await usersService.restore(42);                                 // back in reads
+await usersService.forceDelete(42);                             // gone for good
+```
+
+</Step>
+
+</Steps>
+
+<PropsTable
+  props={{
+    "defaults.softDelete": { type: "boolean", default: "true", description: "forRoot: soft delete for every entity unless one overrides it." },
+    "softDelete.enabled": { type: "boolean", default: "true", description: "forFeature: turn soft delete on or off for this entity." },
+    "softDelete.column": { type: "string", default: '"deleted_at"', description: "forFeature: the key of the column in your Drizzle table object, not the SQL name." },
+  }}
+/>
+
+<Callout type="warn" title="A table without the column">
+  If a table has no soft delete column, set `config: { softDelete: { enabled: false } }` for that
+  entity (or `defaults: { softDelete: false }` for the project). Otherwise the service refuses to
+  start and names the missing key.
+</Callout>
+
+## What do the soft delete methods return?
+
+| Method | Returns | When it fails |
+| --- | --- | --- |
+| `softDelete(id, options?)` | `Promise<boolean>`, `true` when the row was marked | `EntityNotFoundException` (404) when the row does not exist or is already in the trash |
+| `restore(id, options?)` | `Promise<T>`, the restored row | `EntityNotFoundException` (404) when no row has that id |
+| `massSoftDelete(ids, options?)` | `Promise<boolean>` | `BulkOperationException` listing the ids that are missing or already in the trash; nothing changes |
+| `massRestore(ids, options?)` | `Promise<T[]>`, in the order of `ids` | `BulkOperationException` listing the ids that do not exist; nothing changes |
+| `forceDelete(id, options?)` | `Promise<boolean>` | `EntityNotFoundException` (404) when no row has that id |
+| `massForceDelete(ids, options?)` | `Promise<boolean>` | `BulkOperationException` listing the ids that do not exist |
+
+The mass methods run in a transaction: one `SELECT` checks the ids exist, then one
+`UPDATE ... WHERE id IN (...)` (or `DELETE`) writes them all. Calling any soft delete or restore
+method on an entity with soft delete turned off throws a plain `Error`, which Nest returns as a 500.
+
+<Callout title="restore does not check the trash">
+  `restore` clears the column on any row with that id, so restoring a live row succeeds and changes
+  nothing but `updated_at`. To ask whether a row is in the trash, use
+  `usersService.exists(42, { onlyDeleted: true })`.
+</Callout>
+
+## Which reads hide soft-deleted rows?
+
+All of them. `find`, `findOne`, `findAll`, `findByCursor`, `count`, `countBy`, `exists` and
+`fullTextSearch` add `deleted_at IS NULL` to their WHERE.
+
+```ts title="users/users.reads.ts"
+// each of these excludes rows where deleted_at IS NOT NULL
+await usersService.find(42);
+await usersService.findOne({ email: 'ada@example.com' });
+await usersService.findAll({});
+await usersService.count({});
+```
+
+Related tables follow the same rule when they have a column under the same key. A soft-deleted
+belongs-to parent comes back as `null` on an eager load, deleted children are left out of a has-many
+or many-to-many collection, and a relation filter such as `{ author: { name: 'Bob' } }` does not
+match a deleted author.
+
+A filter on the column itself, such as `{ deleted_at: { isNotNull: true } }`, still returns nothing,
+because the default `deleted_at IS NULL` is ANDed with it. Use the flags below instead.
+
+## How do I list soft-deleted rows?
+
+Pass `onlyDeleted: true` for the trash, or `withDeleted: true` for live and deleted rows together.
+Both work on every read listed above.
+
+```ts title="users/users.trash.ts"
+// The trash, most recently deleted first
+const trash = await usersService.findAll({}, { sortBy: '-deleted_at' }, { onlyDeleted: true });
+
+// Everything, deleted or not
+const all = await usersService.count({}, { withDeleted: true });
+
+// Is this row in the trash?
+const inTrash = await usersService.exists(42, { onlyDeleted: true });
+```
+
+The flags only change the service's own table. Related tables keep hiding their deleted rows, so an
+eager-loaded parent that is in the trash is still `null`. `onlyDeleted` on an entity without soft
+delete is a 400.
+
+Over HTTP, [`parseQuery`](/docs/query-parsing) reads `?onlyDeleted=true` and `?withDeleted=true`
+only when you opt in with `allowTrash: true`. Without it they are unknown filter columns, so a client
+cannot open the trash on a route that is not meant to show it.
+
+```ts accent=nest title="users/users.controller.ts"
+@Get('trash')
+trash(@Query() query: Record<string, unknown>) {
+  const q = this.users.parseQuery({ ...query, onlyDeleted: 'true' }, { allowTrash: true });
+  return this.users.findAll(q.filters, q.pagination, q.options);
+}
+```
+
+## How do I purge a soft-deleted row?
+
+Call `forceDelete(id)`. It hard-deletes the row whether it is in the trash or not, and runs the
+delete hooks. `massForceDelete(ids)` does the same for a set of ids in one statement.
+
+```ts title="users/users.trash.ts"
+await usersService.forceDelete(42);           // gone, even if it was soft-deleted
+await usersService.massForceDelete([7, 8, 9]); // one DELETE ... WHERE id IN (...)
+```
+
+`delete(id)` only sees live rows, so it answers 404 for a row that is already in the trash, and so
+does `massDelete`. Because `delete` takes the same read options, `delete(id, { withDeleted: true })`
+is the long way of writing `forceDelete(id)`.
+
+## Soft delete or hard delete?
+
+| Method | Behaviour |
+| --- | --- |
+| `softDelete(id, options?)` | Sets `deleted_at` to now. Reads exclude the row afterwards. |
+| `massSoftDelete(ids, options?)` | Soft delete of a set, one statement, in a transaction. |
+| `delete(id, options?)` | Removes the row. Answers 404 for a row already in the trash. |
+| `massDelete(ids, options?)` | Removes live rows, one statement, in a transaction. |
+| `forceDelete(id, options?)` | Removes the row whether it is in the trash or not. |
+| `massForceDelete(ids, options?)` | Removes live and trashed rows, one statement, in a transaction. |
+
+Use `softDelete` when you want the action to be reversible or auditable. Use `delete` or
+`forceDelete` when the row has to be gone, for example a right-to-erasure request.
+
+## What else changes when a row is soft-deleted?
+
+- **`updated_at` moves.** With [timestamps](/docs/timestamps) on, `softDelete` and `restore` set
+  `updated_at` to now as well.
+- **The version moves.** With [optimistic locking](/docs/optimistic-locking), both bump the version
+  column, and both accept `expectedVersion`.
+- **Bodies cannot touch the column.** A create or update body that sets `deleted_at` has the key
+  dropped, so a client cannot hide or resurrect a row by accident. Name the column in
+  `writableColumns` if you really want it writable.
+- **Hooks and events fire.** `beforeSoftDelete` / `afterSoftDelete` and `beforeRestore` /
+  `afterRestore` run around the write. With `hooks.enableGlobalHooks` on, the module also raises
+  `softDelete` and `restore` [events](/docs/events).
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Is soft delete on by default?">
+    Yes. Every entity uses a `deleted_at` key unless you set `defaults.softDelete: false` in `forRoot` or `softDelete: { enabled: false }` for the entity.
+  </Accordion>
+  <Accordion title="What does softDelete return when the row does not exist?">
+    It throws `EntityNotFoundException`, which Nest returns as a 404. The same happens when the row is already in the trash.
+  </Accordion>
+  <Accordion title="How do I show soft-deleted rows?">
+    Pass `onlyDeleted: true` for the trash or `withDeleted: true` for everything. Over HTTP, `parseQuery` accepts them only with `allowTrash: true`.
+  </Accordion>
+  <Accordion title="How do I permanently delete a soft-deleted row?">
+    Call `forceDelete(id)`, or `massForceDelete(ids)` for a set. Plain `delete` answers 404 for a row that is already in the trash.
+  </Accordion>
+  <Accordion title="Does soft delete hide related rows too?">
+    Yes, when the related table has a column under the same key. A deleted parent loads as `null` and deleted children are left out of collections.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Timer />} title="Timestamps" href="/docs/timestamps" description="created_at and updated_at, set by the package or by the database." />
+  <Card icon={<ShieldCheck />} title="Hooks and validation" href="/docs/hooks-validation" description="beforeSoftDelete, afterRestore and the other hooks." />
+  <Card icon={<SearchX />} title="Errors" href="/docs/errors" description="EntityNotFoundException and how each exception maps to HTTP." />
+  <Card icon={<Database />} title="Bulk operations" href="/docs/bulk-operations" description="massSoftDelete, massRestore and per-item failures." />
+</Cards>

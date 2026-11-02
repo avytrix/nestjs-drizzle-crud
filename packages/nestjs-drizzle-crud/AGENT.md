@@ -11,7 +11,7 @@
 > # Gemini CLI reads ./GEMINI.md, Aider reads ./CONVENTIONS.md
 > ```
 >
-> Or let the agent read these docs on demand: `npx nestjs-drizzle-crud-mcp` is an
+> Or let the agent read these docs on demand: `npx -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp` is an
 > MCP server shipped with the package. See
 > [crud.avytrix.dev/docs/ai-agents](https://crud.avytrix.dev/docs/ai-agents).
 >
@@ -56,7 +56,7 @@ service, stop and check the API reference first.
 # Installation
 
 ```bash
-pnpm add nestjs-drizzle-crud
+pnpm add @avytrix/nestjs-drizzle-crud
 pnpm add @nestjs/common @nestjs/core drizzle-orm reflect-metadata   # peers, always
 pnpm add postgres                                                   # PostgreSQL
 pnpm add mysql2                                                     # MySQL

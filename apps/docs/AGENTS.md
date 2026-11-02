@@ -36,7 +36,9 @@ lib/
   seo.ts                   siteConfig (version, URLs, brand, git paths) + createMetadata
   source.ts                Loader, lucide icon resolver, llms helpers, markdown/OG URL builders
   structured-data.ts       One JSON-LD @graph per page (Organization, WebSite, SoftwareSourceCode,
-                           WebPage, TechArticle, BreadcrumbList)
+                           SoftwareApplication, WebPage or AboutPage, TechArticle, BreadcrumbList,
+                           HowTo and FAQPage when the page renders them)
+  page-schema.ts           Extracts FAQ (Common questions accordions) and HowTo (Steps) from MDX
   page-tree.ts             firstUrl / pageUrls / folderPath helpers
   doc-history.ts           Last-modified dates and recent doc commits from git
   og.tsx                   Sharing card renderer (Avytrix mark + "Nestjs Drizzle")
@@ -82,6 +84,25 @@ name fails the build.
 4. **Refresh the search index after content changes** (`search:index`, see README). The build
    warns when it is stale and still deploys.
 
+## Page template and SEO gate
+
+Every page follows the handbook pattern: frontmatter `title` (at most 43 characters, because the
+tag appends " | Nestjs Drizzle"), `description` (120 to 160 characters, at most 990px in Arial
+14px) and `icon`; then a 40 to 80 word answer, a `Callout`, `Steps` or question-shaped `##`
+sections, a `PropsTable` per option set, titled code blocks, `## Common questions` as
+`Accordions` (the page's FAQPage schema is extracted from them by `lib/page-schema.ts`, so only
+write questions the page answers) and `## Next steps` as `Cards`.
+
+- URLs: use `absoluteUrl()` from `lib/seo.ts` for anything absolute. It returns the trailing-slash
+  form the export serves; a URL without the slash is a 301 on GitHub Pages.
+- Links to avytrix.dev go through `avytrixUrl(path, campaign)` in code, or carry
+  `?utm_source=nestjs-drizzle-crud&utm_medium=docs&utm_campaign=<page-slug>` in MDX.
+- `scripts/seo_check.py` (ported from avytrix.dev) runs on `out/` in CI and before every deploy:
+  title and description limits, uniqueness, one H1, no skipped heading level, one JSON-LD
+  `@graph`, FAQ and HowTo text visible on the page, canonical equal to the sitemap entry, no
+  redirecting URL anywhere, image alt and size, no em or en dash in rendered text. Run it locally
+  with `python3 scripts/seo_check.py` after `pnpm build`.
+
 ## Code-fence accent convention
 
 Append `accent=nest` or `accent=drizzle` to ```ts fence meta:
@@ -110,7 +131,7 @@ The `accent-meta` transformer in `source.config.ts` puts `data-accent` on the re
 
 `lib/layout.shared.tsx::baseOptions()` is the single header config for both layouts: logo
 (Avytrix mark + `siteConfig.displayName`), Documentation, Changelog, npm, and icon links for
-Sponsor and Avytrix Technologies, plus GitHub. **Never add a second `<header>`.** The docs use
+Sponsor, Avytrix Technologies and GitHub (our own labelled mark, not `githubUrl`). **Never add a second `<header>`.** The docs use
 the notebook layout with `nav.mode: "top"`; spread `baseOptions()` first, then override `nav`,
 or the mode is silently lost.
 

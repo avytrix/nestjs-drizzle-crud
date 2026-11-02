@@ -1,0 +1,164 @@
+---
+title: NestJS Drizzle filter and column allowlists
+description: A NestJS Drizzle filter allowlist limits the columns a client may filter, sort, select, search and write. Anything outside a set list is a 400.
+icon: ShieldCheck
+---
+
+A NestJS Drizzle filter allowlist is a per-entity list of the columns a client may filter on. `nestjs-drizzle-crud` has one for each part of a request: filtering, sorting, selecting, searching, loading relations and writing columns. You set them in `forFeature`, and a request that names anything outside a set list is a 400 Bad Request, both in the service and in [`parseQuery`](/docs/query-parsing). An unset list allows everything.
+
+<Callout title="Set these on every entity a client can reach">
+  Without allowlists, a list endpoint that forwards the query string lets a client filter, sort and select on every column of the table, secrets included.
+</Callout>
+
+## How do I set the allowlists?
+
+Add the keys to the entity's `config` in `forFeature`. Each one is a plain array of strings:
+
+```ts accent=nest title="users.module.ts"
+DrizzleCrudModule.forFeature([
+  {
+    service: UsersService,
+    table: users,
+    config: {
+      filterableColumns: ["status", "role", "created_at", "team.name"],
+      sortableColumns: ["name", "created_at", "team.name"],
+      selectableColumns: ["id", "name", "email", "team.name"],
+      searchableColumns: ["name", "email"],
+      loadableRelations: ["team", "projects.tasks"],
+      writableColumns: ["name", "email", "role", "team_id"],
+    },
+  },
+]);
+```
+
+<PropsTable
+  props={{
+    filterableColumns: { type: "string[]", description: "Columns a filter may use, and \"relation.column\" paths for relation filters. Checked on findAll, findByCursor, count and countBy filters, groups included." },
+    sortableColumns: { type: "string[]", description: "Columns a caller sortBy may name, and \"relation.column\" for a belongs-to. The primary key is always allowed." },
+    selectableColumns: { type: "string[]", description: "Columns options.select may name, with dotted paths at any depth (\"states.cities.name\"). The primary key is always allowed." },
+    searchableColumns: { type: "string[]", description: "Columns options.search.columns and fullTextSearch may search. parseQuery also uses it as the default search columns." },
+    loadableRelations: { type: "string[]", description: "Relation paths options.relations and options.counts may name. Listing \"states.cities\" allows \"states\" too." },
+    writableColumns: { type: "string[]", description: "Columns create, update, upsert and the mass versions may write. Any other column in a body is a 400." },
+    writableRelations: { type: "string[]", description: "Relations a nested create body may write, and that attach, detach and sync may change. Unset means nested writes are off and the link methods work on any many-to-many relation." },
+  }}
+/>
+
+## Why should I set them?
+
+Because every column you leave open is one a client can read or probe. Three examples:
+
+| Missing list | What a client can do |
+| --- | --- |
+| `selectableColumns` | `?fields=password_hash` returns the hashes. |
+| `filterableColumns` | `?password_hash[startsWith]=a` guesses a hash one character at a time. |
+| `writableColumns` | A body with `role: "admin"` sets it, unless every DTO strips it. |
+
+`filterableColumns` also takes full dotted paths for [deeper relation filters](/docs/relation-filters) (`state.country.code`) and governs [`countBy`](/docs/aggregates). For nested writes, see [Relations on writes](/docs/relations-on-writes).
+
+## What does an unset or empty list mean?
+
+An unset list allows everything, which is how 3.3 behaved. An empty list (`[]`) allows nothing. The one exception is `writableRelations`: unset, nested writes are off.
+
+## What does a rejected request return?
+
+A 400 whose message names the list and the path. The service throws a Nest `BadRequestException` for the read lists and a `ValidationFailedException` for `writableColumns`:
+
+| List | Message |
+| --- | --- |
+| `filterableColumns` | `Filtering on "password_hash" is not allowed` |
+| `sortableColumns` | `Sorting by "email" is not allowed` |
+| `selectableColumns` | `Selecting "password_hash" is not allowed` |
+| `searchableColumns` | `Searching "email" is not allowed` |
+| `loadableRelations` | `Loading the relation "sessions" is not allowed` |
+| `writableColumns` | `Validation failed: the column "role" is not writable` |
+
+See [Error handling in NestJS with Drizzle](/docs/errors) for the full response shape.
+
+## What is not checked?
+
+`findOne(where)` keys are not checked against `filterableColumns`, because `findOne` is usually a server-side lookup (`findOne({ email })` during login). Its `select` and `relations` options are checked. The configured `defaultSort` is not checked either.
+
+For any other trusted, server-side call, pass `skipAllowlists: true`:
+
+```ts accent=nest title="auth.service.ts"
+await this.users.count(
+  { password_reset_token: token },
+  { skipAllowlists: true },
+);
+```
+
+## Which columns can a body write by default?
+
+Everything except the columns the package manages itself. Without `writableColumns`:
+
+- the soft delete column is ignored on create and update,
+- the [optimistic locking](/docs/optimistic-locking) version column is ignored on create and update,
+- the primary key and the `createdAt` timestamp are ignored on update.
+
+Ignored means dropped silently, so a `PATCH` body that echoes `id` back still works. An update that has nothing left to set is a 400 (`Validation failed: there are no columns to update`).
+
+With `writableColumns` set, any column outside the list is a 400, the managed columns included. List the primary key there if your create path takes client supplied keys, such as uuids or natural keys. Keys that are not columns at all are ignored. The version column is never written from a body either way.
+
+## What is the recommended setup?
+
+<Steps>
+
+<Step>
+
+### Validate bodies with DTOs
+
+Keep `ValidationPipe({ whitelist: true })` and real DTOs for request bodies. The allowlists are a second line, not a replacement.
+
+</Step>
+
+<Step>
+
+### Lock down writes
+
+Set `writableColumns` on every entity with a public create or update route.
+
+</Step>
+
+<Step>
+
+### Lock down reads
+
+Set `selectableColumns` and `filterableColumns` on every entity behind a list route, and leave secrets out of both.
+
+</Step>
+
+<Step>
+
+### Guard sensitive relations
+
+Set `loadableRelations` when a related table holds data some callers must not see.
+
+</Step>
+
+</Steps>
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Is the primary key always allowed?">
+    For sorting and selecting, yes: every page sorts on it anyway. For filtering and writing, only when you list it.
+  </Accordion>
+  <Accordion title="Does an empty allowlist allow everything?">
+    No. An unset list allows everything, but an empty array allows nothing, so `filterableColumns: []` turns filtering off for that entity.
+  </Accordion>
+  <Accordion title="How do I bypass the allowlists for a server-side query?">
+    Pass `skipAllowlists: true` in the call options. Use it only for trusted calls your own code builds, never for input from a request.
+  </Accordion>
+  <Accordion title="Does parseQuery use the same allowlists?">
+    Yes. `parseQuery` rejects anything outside a set list with the same 400, and uses `searchableColumns` as the default search columns.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Filter />} title="NestJS query string filters for Drizzle" href="/docs/query-parsing" description="Turn a request query string into service options, checked against these lists." />
+  <Card icon={<Table />} title="Select columns with Drizzle in NestJS" href="/docs/column-selection" description="Return only the columns a client asks for, relations included." />
+  <Card icon={<Users />} title="Multi-tenancy with Drizzle in NestJS" href="/docs/multi-tenancy" description="Scope every read and write to the tenant of the request." />
+  <Card icon={<Shield />} title="Error handling in NestJS with Drizzle" href="/docs/errors" description="What each 400, 404 and 409 looks like." />
+</Cards>

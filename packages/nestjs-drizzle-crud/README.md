@@ -1,11 +1,38 @@
 # nestjs-drizzle-crud
 
 [![docs](https://img.shields.io/badge/docs-crud.avytrix.dev-E0234E)](https://crud.avytrix.dev)
-[![npm](https://img.shields.io/npm/v/nestjs-drizzle-crud?color=E0234E)](https://www.npmjs.com/package/nestjs-drizzle-crud)
-[![license](https://img.shields.io/npm/l/nestjs-drizzle-crud)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@avytrix/nestjs-drizzle-crud?color=E0234E)](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud)
+[![license](https://img.shields.io/npm/l/@avytrix/nestjs-drizzle-crud)](./LICENSE)
 [![Sponsor @avytrix](https://img.shields.io/badge/Sponsor-%40avytrix-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/avytrix)
 
-Built and maintained by **[Avytrix Technologies](https://avytrix.dev)**.
+**nestjs-drizzle-crud is a NestJS + Drizzle ORM CRUD library: extend one base class and every table gets type-safe find, create, update, delete, filtering, pagination, relations and soft delete, on PostgreSQL or MySQL.**
+
+```bash
+pnpm add @avytrix/nestjs-drizzle-crud drizzle-orm
+```
+
+> **Renamed.** From 3.5.1 the package is `@avytrix/nestjs-drizzle-crud`; the unscoped `nestjs-drizzle-crud` is deprecated. Change the dependency and the imports, nothing else changes.
+
+```typescript
+// app.module.ts: configure the connection once
+DrizzleCrudModule.forRoot({
+  dialect: 'postgresql',
+  connectionString: process.env.DATABASE_URL,
+  schema,
+});
+
+// users.service.ts: a full CRUD service is an empty subclass
+export class UsersService extends SqlBaseCrudService<
+  User, CreateUserDto, UpdateUserDto, CrudFilter
+> {}
+
+// users.module.ts: bind it to a table
+DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
+```
+
+**[Read the docs at crud.avytrix.dev](https://crud.avytrix.dev)**, starting with the [quick start](https://crud.avytrix.dev/docs/quick-start/). Also on [npm](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud) and [GitHub](https://github.com/avytrix/nestjs-drizzle-crud).
+
+Built and maintained by **[Avytrix Technologies](https://avytrix.dev/?utm_source=nestjs-drizzle-crud&utm_medium=docs&utm_campaign=readme)**. Need help shipping? [Hire the team behind the library](https://crud.avytrix.dev/docs/commercial-support/).
 
 ## ❤️ Sponsoring is what keeps this package free
 
@@ -19,33 +46,10 @@ sponsors are what make keeping it free sustainable.
 
 **Even $1 a month helps.** It funds bug fixes, new guides, and the next release.
 
-> Sponsors get a spot on the [sponsor page](https://crud.avytrix.dev/docs/sponsor)
+> Sponsors get a spot on the [sponsor page](https://crud.avytrix.dev/docs/sponsor/)
 > and our thanks.
 
 ### 👉 [Sponsor on GitHub →](https://github.com/sponsors/avytrix) &nbsp;·&nbsp; thank you 🙏
-
----
-
-A type-safe CRUD layer for [Drizzle ORM](https://orm.drizzle.team/) in [NestJS](https://nestjs.com/) applications.
-
-**[Documentation](https://crud.avytrix.dev)** · **[npm](https://www.npmjs.com/package/nestjs-drizzle-crud)** · **[GitHub](https://github.com/avytrix/nestjs-drizzle-crud)** · **[Sponsor](https://github.com/sponsors/avytrix)**
-
-Configure the database connection **once**, then every entity gets full CRUD (find / create / update / delete / soft-delete / bulk / pagination / filtering / full-text search) by extending one base class. No per-service connection wiring.
-
-```typescript
-// 1. configure once (app.module.ts)
-DrizzleCrudModule.forRoot({
-  dialect: 'postgresql',
-  connectionString: process.env.DATABASE_URL,
-  schema,
-});
-
-// 2. a fully-featured CRUD service is just:
-export class UsersService extends SqlBaseCrudService<User> {}
-
-// 3. bind it to a table (users.module.ts)
-DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
-```
 
 ---
 
@@ -116,11 +120,11 @@ DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
 ## Installation
 
 ```bash
-pnpm add nestjs-drizzle-crud
+pnpm add @avytrix/nestjs-drizzle-crud
 # or
-npm install nestjs-drizzle-crud
+npm install @avytrix/nestjs-drizzle-crud
 # or
-yarn add nestjs-drizzle-crud
+yarn add @avytrix/nestjs-drizzle-crud
 ```
 
 Peer dependencies (install the ones you use):
@@ -141,9 +145,10 @@ pnpm add @nestjs/swagger
 
 > Using npm or yarn? Swap `pnpm add` for `npm install` / `yarn add`.
 
-> **pnpm note:** `postgres`/`mysql2` are optional peer dependencies. pnpm enforces
-> peer deps strictly, so if you build the connection from a `connectionString`
-> make sure the matching driver is installed in your app.
+> **pnpm note:** `postgres` is an optional peer dependency and `mysql2` is not a peer
+> at all. pnpm enforces peer deps strictly, so if you build the connection from a
+> `connectionString` make sure `postgres` is installed in your app; for MySQL you
+> install `mysql2` yourself and pass the `db` you build with it.
 
 > `postgres` is an **optional** peer dependency. It's only needed when you let the
 > module build the connection from a `connectionString` for the `postgresql` dialect.
@@ -174,7 +179,7 @@ export type User = typeof users.$inferSelect;
 ```typescript
 // app.module.ts
 import { Module } from '@nestjs/common';
-import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
 import { schema } from './db/schema';
 import { UsersModule } from './users/users.module';
 
@@ -198,7 +203,7 @@ application shutdown (when the module built it from a `connectionString`).
 
 ```typescript
 // users/users.service.ts
-import { SqlBaseCrudService } from 'nestjs-drizzle-crud';
+import { SqlBaseCrudService } from '@avytrix/nestjs-drizzle-crud';
 import type { User } from '../db/schema';
 
 export interface CreateUserDto { name: string; email: string }
@@ -218,7 +223,7 @@ export class UsersService extends SqlBaseCrudService<
 ```typescript
 // users/users.module.ts
 import { Module } from '@nestjs/common';
-import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
 import { users } from '../db/schema';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
@@ -362,7 +367,9 @@ The minimal service is an empty class. Connection, dialect and defaults are
 injected by the module:
 
 ```typescript
-export class UsersService extends SqlBaseCrudService<User> {}
+export class UsersService extends SqlBaseCrudService<
+  User, CreateUserDto, UpdateUserDto, CrudFilter
+> {}
 ```
 
 Add custom behaviour by overriding hooks (see [Lifecycle hooks](#lifecycle-hooks--validation))
@@ -1144,7 +1151,7 @@ service stamps `created_at`/`updated_at` automatically.
 ## Testing
 
 ```typescript
-import { TestCrudFactory } from 'nestjs-drizzle-crud';
+import { TestCrudFactory } from '@avytrix/nestjs-drizzle-crud';
 
 const mockDb = TestCrudFactory.createMockDb();
 const mockTable = TestCrudFactory.createMockTable();
@@ -1164,18 +1171,18 @@ const service = TestCrudFactory.createTestService(UsersService, mockDb, mockTabl
 when they use it. Copy the pointer template to the filename your tool reads:
 
 ```bash
-cp node_modules/nestjs-drizzle-crud/AGENTS.template.md ./AGENTS.md   # Codex, Cursor, Copilot, Zed, Cline, Windsurf
-cp node_modules/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md   # Claude Code
+cp node_modules/@avytrix/nestjs-drizzle-crud/AGENTS.template.md ./AGENTS.md   # Codex, Cursor, Copilot, Zed, Cline, Windsurf
+cp node_modules/@avytrix/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md   # Claude Code
 # Gemini CLI reads ./GEMINI.md, Aider reads ./CONVENTIONS.md
 ```
 
-Each template is one `@node_modules/nestjs-drizzle-crud/AGENT.md` line, so an
+Each template is one `@node_modules/@avytrix/nestjs-drizzle-crud/AGENT.md` line, so an
 upgrade updates the rules with it and you never hold a stale copy.
 
 ### Or run the MCP server
 
 ```bash
-npx nestjs-drizzle-crud-mcp
+npx -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp
 ```
 
 A stdio MCP server, zero dependencies, that serves this package's docs to any MCP
@@ -1187,7 +1194,7 @@ client through three tools: `list_docs`, `get_doc` (`agent-guide` / `readme` /
   "mcpServers": {
     "nestjs-drizzle-crud": {
       "command": "npx",
-      "args": ["-y", "nestjs-drizzle-crud-mcp"]
+      "args": ["-y", "-p", "@avytrix/nestjs-drizzle-crud", "nestjs-drizzle-crud-mcp"]
     }
   }
 }
@@ -1204,7 +1211,7 @@ read-only and never touches your database. Full setup:
 
 Use these facts instead of guessing.
 
-**Package:** `nestjs-drizzle-crud` · **Peers:** `@nestjs/common`, `@nestjs/core`, `drizzle-orm`, `reflect-metadata`; optional `postgres` (PG) / `mysql2` (MySQL) / `@nestjs/swagger` (for `ApiCrudList`).
+**Package:** `nestjs-drizzle-crud` · **Peers:** `@nestjs/common`, `@nestjs/core`, `drizzle-orm`, `reflect-metadata`; optional `postgres` (PG) / `@nestjs/swagger` (for `ApiCrudList`); `mysql2` is installed by you for MySQL, not a peer.
 
 **Setup is two steps and no per-service connection wiring:**
 1. `DrizzleCrudModule.forRoot({ dialect, connectionString | db, schema, defaults })` once in `AppModule`.

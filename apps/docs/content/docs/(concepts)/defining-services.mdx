@@ -1,0 +1,265 @@
+---
+title: Define a NestJS Drizzle CRUD service
+description: A NestJS Drizzle CRUD service is an empty subclass of SqlBaseCrudService. forFeature injects the db and table, and you add custom methods.
+icon: Boxes
+---
+
+A NestJS Drizzle CRUD service is a class that extends `SqlBaseCrudService` and declares four generics: the row type, the create DTO, the update DTO and the filter type. The class body is usually empty. `DrizzleCrudModule.forFeature` builds it with the Drizzle instance, the table, the dialect and the per-entity config, so every CRUD method works without code in the service.
+
+<Callout type="warn" title="No constructor, no @Injectable()">
+  `forFeature` registers the service with a factory that calls `new UsersService(config)`. A
+  constructor with other parameters breaks that call. Leave the constructor out and reach the
+  database through `this.config.db`.
+</Callout>
+
+## How do I define a CRUD service?
+
+<Steps>
+
+<Step>
+
+### Describe the table in Drizzle
+
+```ts accent=drizzle title="db/schema.ts"
+import { integer, pgTable, serial, timestamp, varchar } from 'drizzle-orm/pg-core';
+
+export const users = pgTable('users', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 100 }).notNull(),
+  email: varchar('email', { length: 255 }).notNull().unique(),
+  created_at: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { withTimezone: true }),
+});
+
+export const posts = pgTable('posts', {
+  id: serial('id').primaryKey(),
+  title: varchar('title', { length: 200 }).notNull(),
+  author_id: integer('author_id').notNull().references(() => users.id),
+});
+
+export type User = typeof users.$inferSelect;
+```
+
+The keys `created_at`, `updated_at` and `deleted_at` match the package defaults for
+[timestamps](/docs/timestamps) and [soft delete](/docs/soft-delete), so `users` needs no extra
+config.
+
+</Step>
+
+<Step>
+
+### Extend SqlBaseCrudService
+
+```ts title="users/users.dto.ts"
+export interface CreateUserDto { name: string; email: string }
+export interface UpdateUserDto { name?: string; email?: string }
+```
+
+```ts title="users/users.service.ts"
+import { type CrudFilter, SqlBaseCrudService } from '@avytrix/nestjs-drizzle-crud';
+import type { User } from '../db/schema';
+import type { CreateUserDto, UpdateUserDto } from './users.dto';
+
+export class UsersService extends SqlBaseCrudService<
+  User,
+  CreateUserDto,
+  UpdateUserDto,
+  CrudFilter
+> {}
+```
+
+This is the same shape as `CountriesService` in the example app
+(`apps/api/src/countries/countries.service.ts`).
+
+</Step>
+
+<Step>
+
+### Register it with forFeature
+
+```ts accent=nest title="users/users.module.ts"
+import { Module } from '@nestjs/common';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
+import { users } from '../db/schema';
+import { UsersController } from './users.controller';
+import { UsersService } from './users.service';
+
+@Module({
+  imports: [DrizzleCrudModule.forFeature([{ service: UsersService, table: users }])],
+  controllers: [UsersController],
+})
+export class UsersModule {}
+```
+
+`forFeature` needs `DrizzleCrudModule.forRoot` (or `forRootAsync`) in your root module. Per-entity
+settings go in the optional `config` object; [forFeature](/docs/for-feature) lists them all.
+
+</Step>
+
+<Step>
+
+### Inject it like any provider
+
+```ts accent=nest title="users/users.controller.ts"
+import { Controller, Get, Param, ParseIntPipe } from '@nestjs/common';
+import { UsersService } from './users.service';
+
+@Controller('users')
+export class UsersController {
+  constructor(private readonly users: UsersService) {}
+
+  @Get(':id')
+  find(@Param('id', ParseIntPipe) id: number) {
+    return this.users.find(id);
+  }
+}
+```
+
+The provider token is the class itself, so constructor injection works as usual.
+
+</Step>
+
+</Steps>
+
+## What do the four generics mean?
+
+All four are required: `SqlBaseCrudService` declares no defaults for them. Pass `CrudFilter` as the
+filter type unless you want a narrower one.
+
+<PropsTable
+  props={{
+    T: { type: "Record<string, any>", required: true, description: "The row type the methods return, usually typeof table.$inferSelect." },
+    CreateDto: { type: "type", required: true, description: "The body create(), massCreate() and upsert() accept." },
+    UpdateDto: { type: "type", required: true, description: "The body update() and massUpdate() accept." },
+    FilterDto: { type: "type", required: true, description: "The type of the filters argument of findAll() and count(). CrudFilter allows every operator." },
+  }}
+/>
+
+`FilterDto` is only a type. It does not build a query, and it does not stop a key at runtime. Use
+the `filterableColumns` [allowlist](/docs/allowlists) for that, and see [Filtering](/docs/filtering)
+for the filter syntax.
+
+## How do I add custom methods?
+
+Add them to the class. Inside a method you have every CRUD method on `this`, the resolved config on
+`this.config`, and the Drizzle instance on `this.config.db`.
+
+```ts title="users/users.service.ts"
+import { eq, isNull, sql } from 'drizzle-orm';
+import { type CrudFilter, SqlBaseCrudService } from '@avytrix/nestjs-drizzle-crud';
+import { posts, type User, users } from '../db/schema';
+import type { CreateUserDto, UpdateUserDto } from './users.dto';
+
+export class UsersService extends SqlBaseCrudService<
+  User,
+  CreateUserDto,
+  UpdateUserDto,
+  CrudFilter
+> {
+  findByEmail(email: string) {
+    return this.findOne({ email });
+  }
+
+  newest(limit = 10) {
+    return this.findAll({}, { limit, sortBy: '-created_at' });
+  }
+
+  // Raw Drizzle for a query the CRUD methods do not cover.
+  withPostCount() {
+    return this.config.db
+      .select({
+        id: users.id,
+        name: users.name,
+        postCount: sql<number>`count(${posts.id})`.as('post_count'),
+      })
+      .from(users)
+      .leftJoin(posts, eq(posts.author_id, users.id))
+      .where(isNull(users.deleted_at))
+      .groupBy(users.id);
+  }
+}
+```
+
+A raw Drizzle query skips everything the CRUD methods add: the soft delete predicate, the
+[tenant scope](/docs/multi-tenancy), the allowlists and the hooks. That is why `withPostCount`
+filters `deleted_at` itself.
+
+## Which methods can I override?
+
+The protected hooks are there to be overridden. Each has a no-op or pass-through default, so
+override only the ones you need.
+
+| Hook | Runs |
+| --- | --- |
+| `validateCreate(data)`, `validateUpdate(id, data)` | Before the write, to reject bad input |
+| `beforeCreate(data)`, `beforeUpdate(id, data)` | Before the write; return the data to write |
+| `mapCreateDtoToEntity(data)`, `mapUpdateDtoToEntity(data)` | To turn a DTO into column values |
+| `afterCreate(entity)`, `afterUpdate(entity)` | After the write |
+| `beforeDelete(id)`, `afterDelete(id)` | Around a hard delete |
+| `beforeSoftDelete(id)`, `afterSoftDelete(id)` | Around a soft delete |
+| `beforeRestore(id)`, `afterRestore(entity)` | Around a restore |
+
+See [Hooks and validation](/docs/hooks-validation) for the order they run in and how to skip them.
+
+## Why not inject the database in a constructor?
+
+Because the module already did. This is the pattern to avoid:
+
+```ts accent=nest title="users.service.ts (do not do this)"
+export class UsersService extends SqlBaseCrudService<User, CreateUserDto, UpdateUserDto, CrudFilter> {
+  constructor(@Inject(DRIZZLE_DB) private readonly db: any) {
+    super({ /* the table and config do not belong here */ });
+  }
+}
+```
+
+`forFeature` passes one argument, the merged config, to the constructor. A constructor that expects
+something else gets the config in the wrong parameter, and the service never sees its table or
+settings. If a custom method needs Drizzle, `this.config.db` is the same instance `DRIZZLE_DB`
+holds.
+
+The same goes for `@Injectable()`: `forFeature` already registers the class as a provider, so
+leave the decorator off.
+
+## Do I need to open the connection myself?
+
+No. `DrizzleCrudModule` owns the connection. It uses the `db` you pass to `forRoot` as is, or builds
+a PostgreSQL connection from `connectionString` and closes it when the module is destroyed. You do
+not need `OnModuleInit` to warm anything up.
+
+## When is the empty subclass not enough?
+
+- **A query across several tables.** Write a plain Nest service that injects `DRIZZLE_DB` and uses
+  Drizzle directly, rather than bending a CRUD service around it.
+- **Very large result sets.** `findAll` loads a page into memory. Walk the table with
+  [cursor pagination](/docs/cursor-pagination), or inject `DRIZZLE_DB` and use your driver's
+  streaming.
+- **GraphQL.** The service methods are plain async functions, so a resolver calls them the same way
+  a controller does.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Do the generics of SqlBaseCrudService have defaults?">
+    No. All four are required: the row type, the create DTO, the update DTO and the filter type. Pass `CrudFilter` for the filter type if you do not need a narrower one.
+  </Accordion>
+  <Accordion title="Should a CRUD service have @Injectable()?">
+    No. `forFeature` registers the class as a provider with a factory that passes the config to the constructor, so the decorator adds nothing.
+  </Accordion>
+  <Accordion title="How do I use Drizzle directly inside a CRUD service?">
+    Use `this.config.db`, the same Drizzle instance the module provides as `DRIZZLE_DB`. Raw queries do not add the soft delete or tenant predicates, so add them yourself.
+  </Accordion>
+  <Accordion title="Can I add my own methods to the service?">
+    Yes. Add them to the class body and call `this.find`, `this.findAll` or any other CRUD method from them, or use `this.config.db` for raw Drizzle.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Package />} title="forFeature" href="/docs/for-feature" description="Every per-entity option and the order configs merge in." />
+  <Card icon={<ShieldCheck />} title="Hooks and validation" href="/docs/hooks-validation" description="Override beforeCreate, validateUpdate and the rest." />
+  <Card icon={<Filter />} title="Filtering" href="/docs/filtering" description="The filter object findAll and count accept." />
+  <Card icon={<Layers />} title="Drizzle relations in NestJS" href="/docs/relations" description="Declare relations and eager-load them without N+1 queries." />
+</Cards>

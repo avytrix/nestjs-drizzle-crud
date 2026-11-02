@@ -1,0 +1,157 @@
+---
+title: Cursor pagination with Drizzle
+description: "Drizzle cursor pagination with findByCursor: pass each nextCursor back for the next page. Deep pages cost the same as page 1 and stay stable under inserts."
+icon: ListOrdered
+---
+
+For Drizzle cursor pagination, call `findByCursor(filters, { limit, sortBy, cursor })`. It returns `{ data, limit, nextCursor }`; pass `nextCursor` back as `cursor` to get the next page, until it is `null`. Each page is a `WHERE` on the sort columns of the last row instead of an `OFFSET`, so page 500 costs the same as page 1, and a row inserted on an earlier page does not shift the next one. This is also called keyset pagination.
+
+<Callout title="When to pick it">
+  Use `findByCursor` for infinite scroll, exports, sync jobs and lists that grow while people read them. Use [offset pagination with findAll](/docs/pagination-sorting) when the UI shows page numbers or jumps to page 7.
+</Callout>
+
+## How do I walk a list with findByCursor?
+
+Start without a cursor, then pass each page's `nextCursor` until it comes back `null`.
+
+```ts title="posts-export.service.ts"
+let cursor: string | null = null;
+do {
+  const page = await this.postsService.findByCursor(
+    { status: 'published' },
+    { sortBy: ['-published_at'], limit: 50, cursor },
+  );
+  await handle(page.data);
+  cursor = page.nextCursor;
+} while (cursor);
+```
+
+Filters, `options.search`, `select`, `relations`, `counts`, the tenant scope, soft delete and row locks all work as they do in [`findAll`](/docs/pagination-sorting).
+
+## What does findByCursor return?
+
+The rows, the limit that was used, and the cursor of the next page.
+
+```ts title="query.interface.ts"
+interface CursorPage<T> {
+  data: T[];
+  limit: number;
+  nextCursor: string | null; // null on the last page
+  total?: number;            // only with count: true
+}
+```
+
+There is no `page` number: a cursor is a position, not an index. The count query is skipped unless you pass `count: true`, because counting is the slow part of a large list. With `count: true`, `total` is the number of rows that match the filters, not the number left after the cursor.
+
+## Which options does findByCursor take?
+
+The second argument takes these fields, all optional.
+
+<PropsTable
+  props={{
+    cursor: { type: "string | null", default: "none", description: "The nextCursor of the previous page. Absent, null or an empty string means the first page." },
+    after: { type: "string | null", default: "none", description: "Alias of cursor. cursor wins when both are set." },
+    limit: { type: "number", default: "pagination.defaultLimit (20)", description: "Rows per page, clamped to 1 to pagination.maxLimit (100 by default)." },
+    sortBy: { type: "string | Array<string | { column: string; order?: 'asc' | 'desc' }>", default: "defaultSort, then the primary key", description: "Same shapes as findAll, belongs-to relation columns included." },
+    sortOrder: { type: "'asc' | 'desc'", default: "'desc'", description: "Direction for a single sortBy string without a - or + prefix." },
+    count: { type: "boolean", default: "false", description: "Also run the count query and return total." },
+  }}
+/>
+
+## How does the cursor work?
+
+The cursor holds the sort values of the last row on the page, primary key last, plus the sort it was made for. The next query asks for rows that come after that position. With `sortBy: ['views']` on a not-null column:
+
+```sql title="keyset query"
+WHERE (views > $1) OR (views = $1 AND id > $2)
+ORDER BY views ASC, id ASC
+LIMIT 51
+```
+
+How each part keeps pages correct:
+
+| Part | Why |
+| --- | --- |
+| Primary key as the last sort column | It makes every position unique, so no row is repeated or skipped. |
+| `LIMIT limit + 1` | The extra row says whether there is a next page. It is dropped from `data`. |
+| NULL handling | NULLs follow the database's own order: last ascending and first descending on Postgres, the other way round on MySQL. The comparison follows the same rule. |
+| Timestamps read as text | A JavaScript `Date` keeps milliseconds and Postgres keeps microseconds. Reading the value as text keeps the microseconds, so a row is never shown twice. |
+| `bigint` values | JSON cannot hold a `bigint`, so it travels as `{ "$b": "123" }` and comes back as a `bigint`. |
+
+The cursor itself is base64url JSON, built in [`src/core/utils/cursor.ts`](https://github.com/avytrix/nestjs-drizzle-crud/blob/main/packages/nestjs-drizzle-crud/src/core/utils/cursor.ts). The cursor `eyJzIjoibmFtZTphc2MsaWQ6YXNjIiwidiI6WyJDaGFkIiw1MF19` decodes to `{"s":"name:asc,id:asc","v":["Chad",50]}`: the sort signature and the last row's `name` and `id`.
+
+<Callout type="warn" title="Opaque, not secret">
+  Anyone can decode a cursor, so it only ever holds values the rows already show. Do not sort by a column you would not return to the caller.
+</Callout>
+
+## What happens with a bad cursor?
+
+It is a 400 (`BadRequestException`). These all fail:
+
+| Cursor | Message |
+| --- | --- |
+| Not a string, not base64url JSON, or the wrong number of values | `Invalid cursor` |
+| Made for a different `sortBy` or `sortOrder` | `The cursor was made for a different sort; start again without one` |
+
+Changing the sort mid-walk breaks the position, so start again from the first page.
+
+## How do I use cursor pagination over HTTP?
+
+With [`parseQuery`](/docs/query-parsing), a `cursor` (or `after`) key in the query string starts a keyset walk and sets `isCursor`. An empty `?cursor=` means the first page.
+
+```txt title="requests"
+GET /countries?limit=20&cursor=
+GET /countries?limit=20&cursor=eyJzIjoibmFtZTphc2MsaWQ6YXNjIiwidiI6WyJDaGFkIiw1MF19
+GET /countries?limit=20&cursor=&count=true
+```
+
+One controller method can serve both kinds of list:
+
+```ts accent=nest title="countries.controller.ts"
+@Get()
+findAll(@Query() query: Record<string, unknown>) {
+  const q = this.countries.parseQuery(query);
+  return q.isCursor
+    ? this.countries.findByCursor(q.filters, q.pagination, q.options)
+    : this.countries.findAll(q.filters, q.pagination, q.options);
+}
+```
+
+## When should I use offset pagination instead?
+
+When the UI shows page numbers or jumps to a given page. Keyset pages only go forward from a known position. For infinite scroll, exports, sync jobs and any list that grows while people read it, use the cursor.
+
+| | `findAll` (offset) | `findByCursor` (keyset) |
+| --- | --- | --- |
+| Jump to page N | Yes | No |
+| Cost of a deep page | Grows with the offset | Same as page 1 |
+| Rows inserted while paging | Can shift pages | No effect on later pages |
+| Count query | On by default (`withCount`) | Off by default (`count`) |
+
+## Common questions
+
+<Accordions>
+  <Accordion title="How do I know I reached the last page?">
+    `nextCursor` is `null`. The service fetches one row past the limit, and when that row is missing there is no next page.
+  </Accordion>
+  <Accordion title="Can I change sortBy while paging with a cursor?">
+    No. The cursor records the sort it was made for, and a cursor used with a different sort is a 400. Start again without a cursor.
+  </Accordion>
+  <Accordion title="Does findByCursor return a total?">
+    Only when you pass `count: true` (or `?count=true`). The total counts every row matching the filters, not the rows left after the cursor.
+  </Accordion>
+  <Accordion title="Can I go back a page with a cursor?">
+    Not with `nextCursor` alone. Keep the cursors you already used on the client if you need a back button, or use offset pagination with `findAll`.
+  </Accordion>
+  <Accordion title="Is the cursor encrypted?">
+    No. It is base64url JSON that anyone can decode, holding the sort values of the last row and the sort signature.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<ListOrdered />} title="Pagination and sorting with Drizzle" href="/docs/pagination-sorting" description="Offset pages with findAll, multi-column and relation sorts." />
+  <Card icon={<Terminal />} title="Parse query strings into filters" href="/docs/query-parsing" description="Read ?cursor=, ?limit= and ?sortBy= from the request." />
+  <Card icon={<Filter />} title="Filtering with Drizzle in NestJS" href="/docs/filtering" description="Narrow the rows a cursor walks over." />
+</Cards>

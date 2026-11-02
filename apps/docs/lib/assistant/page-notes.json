@@ -1,285 +1,357 @@
 {
 	"/docs": {
-		"title": "Introduction",
-		"summary": "A complete, type-safe CRUD abstraction for Drizzle ORM in NestJS: configure the connection once, extend one base class per entity, and inherit full CRUD.",
+		"title": "NestJS Drizzle CRUD library",
+		"summary": "nestjs-drizzle-crud is a NestJS Drizzle library. Extend one base class per table and get typed CRUD, filters, pagination and relations.",
 		"topics": [
 			{
-				"heading": "What it is",
-				"anchor": "what-it-is"
+				"heading": "What does it do?",
+				"anchor": "what-does-it-do"
 			},
 			{
-				"heading": "The two-step mental model",
-				"anchor": "the-two-step-mental-model"
+				"heading": "What does it do?",
+				"anchor": "what-does-it-do"
 			},
 			{
-				"heading": "Configure the database connection once",
-				"anchor": "configure-the-database-connection-once"
+				"heading": "What does the journey look like?",
+				"anchor": "what-does-the-journey-look-like"
 			}
 		]
 	},
 	"/docs/aggregates": {
-		"title": "Aggregates, relation counts and countBy",
-		"summary": "Add _count to rows with options.counts, one GROUP BY per relation and no N+1, and get grouped counts per column value with countBy(column, filters). Soft delete, scope and allowlists apply.",
+		"title": "Count, group by and aggregates in Drizzle",
+		"summary": "Drizzle aggregates in NestJS: count() rows, group by a column with countBy, and relation counts per row with options.counts. SUM needs a custom method.",
 		"topics": [
 			{
-				"heading": "How are relation counts loaded?",
-				"anchor": "how-are-relation-counts-loaded"
+				"heading": "Which aggregates are there?",
+				"anchor": "which-aggregates-are-there"
 			},
 			{
-				"heading": "Can I count only some related rows?",
-				"anchor": "can-i-count-only-some-related-rows"
+				"heading": "How do I count rows?",
+				"anchor": "how-do-i-count-rows"
 			},
 			{
-				"heading": "What can be counted?",
-				"anchor": "what-can-be-counted"
+				"heading": "How do I count rows per column value?",
+				"anchor": "how-do-i-count-rows-per-column-value"
 			}
 		]
 	},
 	"/docs/ai-agents": {
-		"title": "AI agents and MCP",
-		"summary": "Set up nestjs-drizzle-crud rules for Claude Code, Codex, Cursor, Copilot, Gemini CLI and other agents, and run the package MCP server.",
+		"title": "NestJS Drizzle MCP server for AI agents",
+		"summary": "Run the NestJS Drizzle MCP server with npx so Claude Code, Cursor or Copilot can read the package docs, and add the AGENT.md rules file to your repo.",
 		"topics": [
 			{
-				"heading": "Which file does my agent read?",
-				"anchor": "which-file-does-my-agent-read"
+				"heading": "What are the server's stable facts?",
+				"anchor": "what-are-the-servers-stable-facts"
 			},
 			{
-				"heading": "What is in the rules file?",
-				"anchor": "what-is-in-the-rules-file"
+				"heading": "How do I run the MCP server?",
+				"anchor": "how-do-i-run-the-mcp-server"
 			},
 			{
-				"heading": "Running the MCP server",
-				"anchor": "running-the-mcp-server"
+				"heading": "How do I add it to my agent?",
+				"anchor": "how-do-i-add-it-to-my-agent"
 			}
 		]
 	},
 	"/docs/allowlists": {
-		"title": "Allowlists and secure defaults",
-		"summary": "Limit which columns a client may filter, sort, select and search, which relations it may load, and which columns create and update may write. Anything else is a 400.",
+		"title": "NestJS Drizzle filter and column allowlists",
+		"summary": "A NestJS Drizzle filter allowlist limits the columns a client may filter, sort, select, search and write. Anything outside a set list is a 400.",
 		"topics": [
+			{
+				"heading": "How do I set the allowlists?",
+				"anchor": "how-do-i-set-the-allowlists"
+			},
 			{
 				"heading": "Why should I set them?",
 				"anchor": "why-should-i-set-them"
 			},
 			{
-				"heading": "What does each list cover?",
-				"anchor": "what-does-each-list-cover"
-			},
-			{
-				"heading": "What does each list cover?",
-				"anchor": "what-does-each-list-cover"
+				"heading": "What does an unset or empty list mean?",
+				"anchor": "what-does-an-unset-or-empty-list-mean"
 			}
 		]
 	},
 	"/docs/api": {
-		"title": "API reference",
-		"summary": "Every method on SqlBaseCrudService, with full signatures and return types.",
+		"title": "SqlBaseCrudService API reference",
+		"summary": "Every public method on SqlBaseCrudService in nestjs-drizzle-crud, with its signature, return type, the errors it throws and the options it takes.",
 		"topics": [
 			{
-				"heading": "Read",
-				"anchor": "read"
+				"heading": "What does the class signature look like?",
+				"anchor": "what-does-the-class-signature-look-like"
 			},
 			{
 				"heading": "Read",
 				"anchor": "read"
 			},
 			{
-				"heading": "Write",
-				"anchor": "write"
+				"heading": "Read",
+				"anchor": "read"
+			}
+		]
+	},
+	"/docs/built-by-avytrix": {
+		"title": "Built by Avytrix Technologies",
+		"summary": "Avytrix Technologies builds and maintains nestjs-drizzle-crud. Hire the NestJS development company behind it for APIs, AI features and MCP servers.",
+		"topics": [
+			{
+				"heading": "Who builds nestjs-drizzle-crud?",
+				"anchor": "who-builds-nestjs-drizzle-crud"
+			},
+			{
+				"heading": "What does Avytrix Technologies build?",
+				"anchor": "what-does-avytrix-technologies-build"
+			},
+			{
+				"heading": "What does Avytrix Technologies build?",
+				"anchor": "what-does-avytrix-technologies-build"
 			}
 		]
 	},
 	"/docs/bulk-operations": {
-		"title": "Bulk operations",
-		"summary": "massCreate, massUpdate, massSoftDelete, massRestore, massDelete and massForceDelete: one statement for the whole set, in a transaction, with a 400 body that lists every failed item.",
+		"title": "Bulk insert and update with Drizzle",
+		"summary": "Bulk insert, update and delete with Drizzle in NestJS. Each mass method is one statement in a transaction, and a failure lists every failed item.",
 		"topics": [
 			{
-				"heading": "The methods",
-				"anchor": "the-methods"
+				"heading": "Which bulk methods are there?",
+				"anchor": "which-bulk-methods-are-there"
 			},
 			{
 				"heading": "How many queries does a bulk call cost?",
 				"anchor": "how-many-queries-does-a-bulk-call-cost"
 			},
 			{
-				"heading": "Transactional semantics",
-				"anchor": "transactional-semantics"
+				"heading": "What does a bulk call options object take?",
+				"anchor": "what-does-a-bulk-call-options-object-take"
 			}
 		]
 	},
 	"/docs/changelog": {
 		"title": "Changelog",
-		"summary": "Release-by-release behavior changes for nestjs-drizzle-crud. Mirrors CHANGELOG.md shipped in the npm tarball.",
+		"summary": "The nestjs-drizzle-crud changelog, every release since 3.0.0 with what was added, changed, fixed and deprecated, newest first, mirroring CHANGELOG.md.",
 		"topics": [
 			{
-				"heading": "[3.5.0] - 2026-11-02",
-				"anchor": "350---2026-11-02"
-			},
-			{
-				"heading": "Added",
-				"anchor": "added"
+				"heading": "[3.5.1] - 2026-11-02",
+				"anchor": "351---2026-11-02"
 			},
 			{
 				"heading": "Changed",
 				"anchor": "changed"
+			},
+			{
+				"heading": "[3.5.0] - 2026-11-02",
+				"anchor": "350---2026-11-02"
 			}
 		]
 	},
 	"/docs/column-selection": {
-		"title": "Column selection",
-		"summary": "Return only the columns you need with options.select, including dotted paths that narrow eager-loaded and nested relations.",
+		"title": "Select columns with Drizzle in NestJS",
+		"summary": "Select columns in NestJS with Drizzle: pass options.select to return only the columns you need, and use dotted paths to narrow eager-loaded relations.",
 		"topics": [
+			{
+				"heading": "How do I return only some columns?",
+				"anchor": "how-do-i-return-only-some-columns"
+			},
 			{
 				"heading": "Which columns can I ask for?",
 				"anchor": "which-columns-can-i-ask-for"
 			},
 			{
-				"heading": "Narrowing a relation",
-				"anchor": "narrowing-a-relation"
+				"heading": "What happens with a name that is not a column?",
+				"anchor": "what-happens-with-a-name-that-is-not-a-column"
+			}
+		]
+	},
+	"/docs/commercial-support": {
+		"title": "Commercial support and custom development",
+		"summary": "Hire NestJS and Drizzle consultants from Avytrix Technologies, the team that maintains nestjs-drizzle-crud, to integrate, migrate, extend or review your API.",
+		"topics": [
+			{
+				"heading": "What can the team do for a project that uses nestjs-drizzle-crud?",
+				"anchor": "what-can-the-team-do-for-a-project-that-uses-nestjs-drizzle-crud"
 			},
 			{
-				"heading": "Listing only relation columns keeps the parent whole",
-				"anchor": "listing-only-relation-columns-keeps-the-parent-whole"
+				"heading": "How do I engage Avytrix Technologies?",
+				"anchor": "how-do-i-engage-avytrix-technologies"
+			},
+			{
+				"heading": "Send a short brief",
+				"anchor": "send-a-short-brief"
 			}
 		]
 	},
 	"/docs/config-types": {
-		"title": "Config types",
-		"summary": "SqlCrudConfig and DrizzleCrudConfig: the two interfaces that drive the module.",
+		"title": "Config types reference",
+		"summary": "The nestjs-drizzle-crud config types, DrizzleCrudConfig for forRoot and SqlCrudConfig per entity, with every option, default and type the methods take.",
 		"topics": [
 			{
 				"heading": "`DrizzleCrudConfig`",
 				"anchor": "drizzlecrudconfig"
 			},
 			{
-				"heading": "Defaults",
-				"anchor": "defaults"
+				"heading": "`DrizzleCrudConfig`",
+				"anchor": "drizzlecrudconfig"
 			},
 			{
-				"heading": "`SqlCrudConfig`",
-				"anchor": "sqlcrudconfig"
+				"heading": "`DrizzleCrudConfig`",
+				"anchor": "drizzlecrudconfig"
 			}
 		]
 	},
 	"/docs/controller-factory": {
-		"title": "CRUD controller factory",
-		"summary": "createCrudController builds a NestJS controller with list, cursor, get, create, update, delete, soft delete, restore, trash and bulk routes from a service, with the right id pipe.",
+		"title": "NestJS CRUD controller generator",
+		"summary": "createCrudController is a NestJS CRUD generator for Drizzle. One call builds list, get, create, update, delete, trash and bulk routes from your service.",
 		"topics": [
 			{
-				"heading": "Which routes does it register?",
-				"anchor": "which-routes-does-it-register"
+				"heading": "How do I generate a controller?",
+				"anchor": "how-do-i-generate-a-controller"
 			},
 			{
-				"heading": "How is the id parsed?",
-				"anchor": "how-is-the-id-parsed"
+				"heading": "Which routes does it generate?",
+				"anchor": "which-routes-does-it-generate"
 			},
 			{
-				"heading": "How do I validate request bodies?",
-				"anchor": "how-do-i-validate-request-bodies"
+				"heading": "Which routes does it generate?",
+				"anchor": "which-routes-does-it-generate"
+			}
+		]
+	},
+	"/docs/crud-operations": {
+		"title": "CRUD operations with Drizzle in NestJS",
+		"summary": "The Drizzle ORM NestJS CRUD methods every service inherits, from find and findAll to create, update, softDelete and mass writes, with errors.",
+		"topics": [
+			{
+				"heading": "Which methods does a service have?",
+				"anchor": "which-methods-does-a-service-have"
+			},
+			{
+				"heading": "Reads",
+				"anchor": "reads"
+			},
+			{
+				"heading": "Writes",
+				"anchor": "writes"
 			}
 		]
 	},
 	"/docs/cursor-pagination": {
-		"title": "Cursor (keyset) pagination",
-		"summary": "findByCursor pages with WHERE (sort columns) > (last row) instead of OFFSET: constant cost on deep pages, stable under inserts, with an opaque nextCursor.",
+		"title": "Cursor pagination with Drizzle",
+		"summary": "Drizzle cursor pagination with findByCursor: pass each nextCursor back for the next page. Deep pages cost the same as page 1 and stay stable under inserts.",
 		"topics": [
 			{
-				"heading": "What does a page look like?",
-				"anchor": "what-does-a-page-look-like"
+				"heading": "How do I walk a list with findByCursor?",
+				"anchor": "how-do-i-walk-a-list-with-findbycursor"
 			},
 			{
-				"heading": "Options",
-				"anchor": "options"
+				"heading": "What does findByCursor return?",
+				"anchor": "what-does-findbycursor-return"
 			},
 			{
-				"heading": "How does the cursor work?",
-				"anchor": "how-does-the-cursor-work"
+				"heading": "Which options does findByCursor take?",
+				"anchor": "which-options-does-findbycursor-take"
 			}
 		]
 	},
 	"/docs/defining-services": {
-		"title": "Defining services",
-		"summary": "The empty-subclass pattern, generics, and how to add custom methods without breaking the framework wiring.",
+		"title": "Define a NestJS Drizzle CRUD service",
+		"summary": "A NestJS Drizzle CRUD service is an empty subclass of SqlBaseCrudService. forFeature injects the db and table, and you add custom methods.",
 		"topics": [
 			{
-				"heading": "The minimum",
-				"anchor": "the-minimum"
+				"heading": "How do I define a CRUD service?",
+				"anchor": "how-do-i-define-a-crud-service"
 			},
 			{
-				"heading": "With explicit DTOs",
-				"anchor": "with-explicit-dtos"
+				"heading": "Describe the table in Drizzle",
+				"anchor": "describe-the-table-in-drizzle"
 			},
 			{
-				"heading": "Adding custom methods",
-				"anchor": "adding-custom-methods"
+				"heading": "Extend SqlBaseCrudService",
+				"anchor": "extend-sqlbasecrudservice"
+			}
+		]
+	},
+	"/docs/drizzle-vs-typeorm-prisma": {
+		"title": "Drizzle vs TypeORM vs Prisma for NestJS",
+		"summary": "Drizzle vs TypeORM vs Prisma for NestJS CRUD. How each defines the schema, queries, migrates and plugs into Nest, and which CRUD layers fit each.",
+		"topics": [
+			{
+				"heading": "How do the three ORMs compare?",
+				"anchor": "how-do-the-three-orms-compare"
+			},
+			{
+				"heading": "How do the three ORMs compare?",
+				"anchor": "how-do-the-three-orms-compare"
+			},
+			{
+				"heading": "What does the same table look like in each?",
+				"anchor": "what-does-the-same-table-look-like-in-each"
 			}
 		]
 	},
 	"/docs/errors": {
-		"title": "Errors",
-		"summary": "HTTP status code mapping for every exception thrown by SqlBaseCrudService, with the per-method reference.",
+		"title": "Error handling in NestJS with Drizzle",
+		"summary": "NestJS Drizzle error handling without a custom filter. Each exception extends a Nest HTTP exception, so a missing row is a 404 and a duplicate a 409.",
 		"topics": [
 			{
-				"heading": "Status code table",
-				"anchor": "status-code-table"
+				"heading": "Which status does each exception return?",
+				"anchor": "which-status-does-each-exception-return"
 			},
 			{
-				"heading": "Status code table",
-				"anchor": "status-code-table"
+				"heading": "Which status does each exception return?",
+				"anchor": "which-status-does-each-exception-return"
 			},
 			{
-				"heading": "Per-method reference",
-				"anchor": "per-method-reference"
+				"heading": "What does the response body look like?",
+				"anchor": "what-does-the-response-body-look-like"
 			}
 		]
 	},
 	"/docs/events": {
-		"title": "Global hooks and write events",
-		"summary": "Turn on hooks.enableGlobalHooks and subscribe to CrudEventBus for before and after events on every write, bulk and upsert included. For audit trails and cache busting.",
+		"title": "NestJS Drizzle CRUD events and audit logs",
+		"summary": "NestJS Drizzle CRUD events fire before and after every write on one CrudEventBus, once per call, bulk included. Use them for audit logs and cache busting.",
 		"topics": [
 			{
-				"heading": "How do I subscribe from a provider?",
-				"anchor": "how-do-i-subscribe-from-a-provider"
+				"heading": "How do I turn on CRUD events?",
+				"anchor": "how-do-i-turn-on-crud-events"
 			},
 			{
-				"heading": "What does a subscriber look like?",
-				"anchor": "what-does-a-subscriber-look-like"
+				"heading": "Enable global hooks in `forRoot`",
+				"anchor": "enable-global-hooks-in-forroot"
 			},
 			{
-				"heading": "How do bulk writes raise events?",
-				"anchor": "how-do-bulk-writes-raise-events"
+				"heading": "Subscribe from a provider",
+				"anchor": "subscribe-from-a-provider"
 			}
 		]
 	},
 	"/docs/exports": {
-		"title": "Exports",
-		"summary": "The full public API surface of nestjs-drizzle-crud, grouped by category.",
+		"title": "Package exports reference",
+		"summary": "Every export of nestjs-drizzle-crud, the classes, functions, decorators, DI tokens, exceptions, types and Drizzle helpers you can import from the package root.",
 		"topics": [
 			{
 				"heading": "Core",
 				"anchor": "core"
 			},
 			{
-				"heading": "OpenAPI",
-				"anchor": "openapi"
+				"heading": "DI tokens and connection",
+				"anchor": "di-tokens-and-connection"
 			},
 			{
-				"heading": "Module & DI tokens",
-				"anchor": "module--di-tokens"
+				"heading": "OpenAPI",
+				"anchor": "openapi"
 			}
 		]
 	},
 	"/docs/filtering": {
-		"title": "Filtering",
-		"summary": "Build filter objects for findAll() and count(): bare values, arrays, operators such as gte, between, notIn and contains, or / and / not groups, and relation filters.",
+		"title": "Filtering with Drizzle in NestJS",
+		"summary": "Drizzle filtering in NestJS with findAll and count. Pass exact values, arrays, operators such as gte, between and contains, and or, and, not groups.",
 		"topics": [
 			{
-				"heading": "Bare values",
-				"anchor": "bare-values"
+				"heading": "How do I filter by a column value?",
+				"anchor": "how-do-i-filter-by-a-column-value"
 			},
 			{
-				"heading": "Bare values",
-				"anchor": "bare-values"
+				"heading": "Can I pass query string values as strings?",
+				"anchor": "can-i-pass-query-string-values-as-strings"
 			},
 			{
 				"heading": "Can I pass query string values as strings?",
@@ -288,214 +360,232 @@
 		]
 	},
 	"/docs/for-feature": {
-		"title": "forFeature",
-		"summary": "Bind a service to its table, and override per-entity configuration.",
+		"title": "Drizzle forFeature in NestJS",
+		"summary": "Drizzle forFeature in NestJS binds each CRUD service to its table and merges per-entity config over the project defaults from forRoot, one level deep.",
 		"topics": [
 			{
-				"heading": "Basic usage",
-				"anchor": "basic-usage"
+				"heading": "How do I register a service?",
+				"anchor": "how-do-i-register-a-service"
 			},
 			{
-				"heading": "Per-entity overrides",
-				"anchor": "per-entity-overrides"
+				"heading": "In what order do the config layers merge?",
+				"anchor": "in-what-order-do-the-config-layers-merge"
 			},
 			{
-				"heading": "What you can override",
-				"anchor": "what-you-can-override"
+				"heading": "What can I override per entity?",
+				"anchor": "what-can-i-override-per-entity"
 			}
 		]
 	},
 	"/docs/for-root": {
-		"title": "forRoot",
-		"summary": "Configure the database connection once in AppModule via DrizzleCrudModule.forRoot.",
+		"title": "NestJS Drizzle module forRoot options",
+		"summary": "Configure the NestJS Drizzle module with forRoot. Set the connection, dialect, soft delete, timestamps, pagination and SQL defaults once in AppModule.",
 		"topics": [
 			{
-				"heading": "Options",
-				"anchor": "options"
+				"heading": "What does forRoot take?",
+				"anchor": "what-does-forroot-take"
 			},
 			{
-				"heading": "Options",
-				"anchor": "options"
+				"heading": "What does forRoot take?",
+				"anchor": "what-does-forroot-take"
 			},
 			{
-				"heading": "PostgreSQL: let the module build the connection",
-				"anchor": "postgresql-let-the-module-build-the-connection"
+				"heading": "How do I connect to PostgreSQL?",
+				"anchor": "how-do-i-connect-to-postgresql"
 			}
 		]
 	},
 	"/docs/for-root-async": {
-		"title": "forRootAsync",
-		"summary": "Configure the database connection asynchronously, e.g. from ConfigService.",
+		"title": "Drizzle forRootAsync with ConfigService",
+		"summary": "NestJS Drizzle forRootAsync with ConfigService builds the database config at startup from env, secrets or any provider you inject into useFactory.",
 		"topics": [
 			{
-				"heading": "Example: with `@nestjs/config`",
-				"anchor": "example-with-nestjsconfig"
+				"heading": "What does forRootAsync take?",
+				"anchor": "what-does-forrootasync-take"
 			},
 			{
-				"heading": "`useClass` / `useExisting`",
-				"anchor": "useclass--useexisting"
+				"heading": "How do I read the config from ConfigService?",
+				"anchor": "how-do-i-read-the-config-from-configservice"
 			},
 			{
-				"heading": "When to use `forRoot` vs `forRootAsync`",
-				"anchor": "when-to-use-forroot-vs-forrootasync"
+				"heading": "Inject ConfigService into the factory",
+				"anchor": "inject-configservice-into-the-factory"
 			}
 		]
 	},
 	"/docs/full-text-search": {
-		"title": "Full-text search",
-		"summary": "PostgreSQL tsvector / tsquery via fullTextSearch(): ranked, paginated, with a clean result envelope.",
+		"title": "Full-text search in PostgreSQL with Drizzle",
+		"summary": "Drizzle full text search on Postgres in NestJS: fullTextSearch() matches with tsvector, orders by ts_rank, paginates and skips soft-deleted rows.",
 		"topics": [
 			{
-				"heading": "Do I need to enable it?",
-				"anchor": "do-i-need-to-enable-it"
+				"heading": "How do I run a full-text search?",
+				"anchor": "how-do-i-run-a-full-text-search"
 			},
 			{
-				"heading": "Usage",
-				"anchor": "usage"
+				"heading": "What SQL does it generate?",
+				"anchor": "what-sql-does-it-generate"
 			},
 			{
-				"heading": "Full-text search inside list endpoints",
-				"anchor": "full-text-search-inside-list-endpoints"
+				"heading": "Do I need to enable it or add an index?",
+				"anchor": "do-i-need-to-enable-it-or-add-an-index"
 			}
 		]
 	},
 	"/docs/getting-help": {
-		"title": "Getting help",
-		"summary": "Where to ask questions about nestjs-drizzle-crud, how to report a bug, how to report a security issue, and answers to the questions that come up most.",
+		"title": "Getting help with nestjs-drizzle-crud",
+		"summary": "Get help with nestjs-drizzle-crud. Ask in GitHub Discussions, report bugs as issues, report security issues privately, and include what to send.",
 		"topics": [
 			{
-				"heading": "Where to ask",
-				"anchor": "where-to-ask"
+				"heading": "Where do I ask?",
+				"anchor": "where-do-i-ask"
 			},
 			{
-				"heading": "Reporting a bug well",
-				"anchor": "reporting-a-bug-well"
+				"heading": "What should a bug report include?",
+				"anchor": "what-should-a-bug-report-include"
 			},
 			{
-				"heading": "Frequently asked questions",
-				"anchor": "frequently-asked-questions"
+				"heading": "How do I report a security vulnerability?",
+				"anchor": "how-do-i-report-a-security-vulnerability"
 			}
 		]
 	},
 	"/docs/hooks-validation": {
-		"title": "Lifecycle hooks & validation",
-		"summary": "before/after hooks, validateCreate/validateUpdate, and DTO-to-entity mappers: all optional overrides.",
+		"title": "Drizzle hooks and validation in NestJS",
+		"summary": "Add Drizzle hooks and validation to a NestJS service by overriding validateCreate, beforeCreate, afterUpdate and the DTO mappers on SqlBaseCrudService.",
 		"topics": [
 			{
-				"heading": "Validation",
-				"anchor": "validation"
+				"heading": "In what order do the hooks run?",
+				"anchor": "in-what-order-do-the-hooks-run"
 			},
 			{
-				"heading": "DTO → entity mapping",
-				"anchor": "dto--entity-mapping"
+				"heading": "How do I validate input?",
+				"anchor": "how-do-i-validate-input"
 			},
 			{
-				"heading": "before / after hooks",
-				"anchor": "before--after-hooks"
+				"heading": "How do I map a DTO to a row?",
+				"anchor": "how-do-i-map-a-dto-to-a-row"
 			}
 		]
 	},
 	"/docs/installation": {
-		"title": "Installation",
-		"summary": "Install nestjs-drizzle-crud and the required peer dependencies for your database.",
+		"title": "Install NestJS with Drizzle ORM",
+		"summary": "Set up NestJS with Drizzle ORM. Install nestjs-drizzle-crud with its four peers, then the postgres driver or your own MySQL connection.",
 		"topics": [
 			{
-				"heading": "Package",
-				"anchor": "package"
+				"heading": "How do I install it?",
+				"anchor": "how-do-i-install-it"
 			},
 			{
-				"heading": "Peer dependencies",
-				"anchor": "peer-dependencies"
+				"heading": "Install the package and its required peers",
+				"anchor": "install-the-package-and-its-required-peers"
 			},
 			{
-				"heading": "PostgreSQL: required **only** if you use `connectionString`",
-				"anchor": "postgresql-required-only-if-you-use-connectionstring"
+				"heading": "Add the driver for your database",
+				"anchor": "add-the-driver-for-your-database"
 			}
 		]
 	},
 	"/docs/llm-notes": {
-		"title": "For AI agents",
-		"summary": "Condensed, accurate package facts for code generation. Prefer these over guessing.",
+		"title": "nestjs-drizzle-crud facts for AI agents",
+		"summary": "A condensed fact sheet of nestjs-drizzle-crud for AI coding agents, with setup, generics, return shapes, filters, relations, errors and anti-patterns.",
 		"topics": [
 			{
-				"heading": "Package",
-				"anchor": "package"
+				"heading": "Package facts",
+				"anchor": "package-facts"
 			},
 			{
-				"heading": "Setup is two steps and no per-service connection wiring",
-				"anchor": "setup-is-two-steps-and-no-per-service-connection-wiring"
+				"heading": "How do I set it up?",
+				"anchor": "how-do-i-set-it-up"
 			},
 			{
-				"heading": "Rules / gotchas",
-				"anchor": "rules--gotchas"
+				"heading": "Rules for generated code",
+				"anchor": "rules-for-generated-code"
+			}
+		]
+	},
+	"/docs/migrate-from-nestjsx-crud": {
+		"title": "Migrating from @nestjsx/crud",
+		"summary": "Migrating from @nestjsx/crud to Drizzle ORM in NestJS. Convert entities to tables, services and @Crud controllers, and map every filter operator.",
+		"topics": [
+			{
+				"heading": "What changes, piece by piece?",
+				"anchor": "what-changes-piece-by-piece"
+			},
+			{
+				"heading": "How do I migrate one entity?",
+				"anchor": "how-do-i-migrate-one-entity"
+			},
+			{
+				"heading": "How do I migrate one entity?",
+				"anchor": "how-do-i-migrate-one-entity"
 			}
 		]
 	},
 	"/docs/multi-tenancy": {
-		"title": "Multi-tenancy and ownership scoping",
-		"summary": "Scope every read, count and write to a tenant or owner with one config key: scope: (ctx) => ({ tenant_id: ctx.tenantId }). Another tenant's id is a 404, and a missing tenant is a 403.",
+		"title": "Multi-tenancy with Drizzle in NestJS",
+		"summary": "Build a NestJS multi tenant API on Drizzle with one scope key. Every read and write is limited to the caller's tenant; a missing tenant is a 403.",
 		"topics": [
 			{
-				"heading": "What does a scope look like?",
-				"anchor": "what-does-a-scope-look-like"
+				"heading": "How do I scope an entity to a tenant?",
+				"anchor": "how-do-i-scope-an-entity-to-a-tenant"
 			},
 			{
-				"heading": "Where does the context come from?",
-				"anchor": "where-does-the-context-come-from"
+				"heading": "Add `scope` to the entity config",
+				"anchor": "add-scope-to-the-entity-config"
 			},
 			{
-				"heading": "What happens without a tenant?",
-				"anchor": "what-happens-without-a-tenant"
+				"heading": "Put the tenant in the request context",
+				"anchor": "put-the-tenant-in-the-request-context"
 			}
 		]
 	},
 	"/docs/openapi": {
-		"title": "OpenAPI (Swagger) docs for list queries",
-		"summary": "ApiCrudQuery and ApiCrudList document page, limit, sortBy, cursor, withCount, search, fields, with, counts and every filterable column in Swagger, from the entity's allowlists.",
+		"title": "NestJS Drizzle Swagger docs for lists",
+		"summary": "ApiCrudList documents NestJS Drizzle list routes in Swagger. It covers paging, sort, cursor, search, relations and every filter column from your allowlists.",
 		"topics": [
 			{
-				"heading": "Do I need @nestjs/swagger?",
-				"anchor": "do-i-need-nestjsswagger"
+				"heading": "How do I document a list route?",
+				"anchor": "how-do-i-document-a-list-route"
 			},
 			{
-				"heading": "What do I pass as the source?",
-				"anchor": "what-do-i-pass-as-the-source"
+				"heading": "Share the entity config",
+				"anchor": "share-the-entity-config"
 			},
 			{
-				"heading": "What gets documented?",
-				"anchor": "what-gets-documented"
+				"heading": "Serve the document",
+				"anchor": "serve-the-document"
 			}
 		]
 	},
 	"/docs/optimistic-locking": {
-		"title": "Optimistic locking with a version column",
-		"summary": "Set versionColumn and a write that names a stale version is a 409 StaleVersionException. The version starts at 1 and goes up on every update, soft delete, restore, upsert and bulk write.",
+		"title": "Drizzle optimistic locking with versions",
+		"summary": "Drizzle optimistic locking with a version column in NestJS. Set versionColumn, send the version you read, and a stale write is a 409 conflict.",
 		"topics": [
+			{
+				"heading": "How do I turn on optimistic locking?",
+				"anchor": "how-do-i-turn-on-optimistic-locking"
+			},
+			{
+				"heading": "Send the version back on every write",
+				"anchor": "send-the-version-back-on-every-write"
+			},
 			{
 				"heading": "How does the version change?",
 				"anchor": "how-does-the-version-change"
-			},
-			{
-				"heading": "How do I send the version I read?",
-				"anchor": "how-do-i-send-the-version-i-read"
-			},
-			{
-				"heading": "What does a stale write return?",
-				"anchor": "what-does-a-stale-write-return"
 			}
 		]
 	},
 	"/docs/pagination-sorting": {
-		"title": "Pagination & sorting",
-		"summary": "The findAll() return shape, withCount: false to skip COUNT(*), default sort, and sortBy: one column, several columns, or a belongs-to relation column such as region.name.",
+		"title": "Pagination and sorting with Drizzle",
+		"summary": "Drizzle pagination in NestJS with findAll: page and limit (20 rows by default, at most 100), withCount: false to skip COUNT(*), and multi-column sorts.",
 		"topics": [
 			{
-				"heading": "Return shape",
-				"anchor": "return-shape"
+				"heading": "What does findAll return?",
+				"anchor": "what-does-findall-return"
 			},
 			{
-				"heading": "Pagination options",
-				"anchor": "pagination-options"
+				"heading": "Which pagination options are there?",
+				"anchor": "which-pagination-options-are-there"
 			},
 			{
 				"heading": "How do I skip the count query?",
@@ -504,34 +594,34 @@
 		]
 	},
 	"/docs/primary-keys": {
-		"title": "Primary keys",
-		"summary": "serial, int, bigint, bigserial, and uuid: RETURNING vs insertId, and the ParseIntPipe warning.",
+		"title": "Drizzle UUID primary keys in NestJS",
+		"summary": "Use a Drizzle uuid primary key in NestJS, or serial and bigint. The key type comes from the column; on MySQL you send the uuid on create.",
 		"topics": [
 			{
-				"heading": "auto-increment (serial / int / bigint / bigserial)",
-				"anchor": "auto-increment-serial--int--bigint--bigserial"
+				"heading": "How do I use a uuid primary key?",
+				"anchor": "how-do-i-use-a-uuid-primary-key"
 			},
 			{
-				"heading": "uuid",
-				"anchor": "uuid"
+				"heading": "Register the service",
+				"anchor": "register-the-service"
 			},
 			{
-				"heading": "PostgreSQL",
-				"anchor": "postgresql"
+				"heading": "On PostgreSQL",
+				"anchor": "on-postgresql"
 			}
 		]
 	},
 	"/docs/query-parsing": {
-		"title": "Parse query strings into filters",
-		"summary": "parseCrudQuery and service.parseQuery turn ?age[gte]=18&status=active&sortBy=-name&page=2 into typed filters, pagination and options, coerced by Drizzle column type.",
+		"title": "NestJS query string filters for Drizzle",
+		"summary": "Parse NestJS query string filters for Drizzle with parseQuery. It turns ?age[gte]=18&status=active into typed filters, pagination and options.",
 		"topics": [
 			{
 				"heading": "What does the query string look like?",
 				"anchor": "what-does-the-query-string-look-like"
 			},
 			{
-				"heading": "Which parameters are not filters?",
-				"anchor": "which-parameters-are-not-filters"
+				"heading": "How do operators and lists work in brackets?",
+				"anchor": "how-do-operators-and-lists-work-in-brackets"
 			},
 			{
 				"heading": "Which parameters are not filters?",
@@ -540,26 +630,26 @@
 		]
 	},
 	"/docs/quick-start": {
-		"title": "Quick start",
-		"summary": "A five-step walkthrough that takes a fresh Drizzle schema to a working CRUD controller in under five minutes.",
+		"title": "NestJS Drizzle CRUD quick start",
+		"summary": "Build NestJS Drizzle CRUD endpoints for one table. Define the schema, configure the module, add an empty service and call it from a controller.",
 		"topics": [
 			{
-				"heading": "Define your Drizzle schema",
-				"anchor": "define-your-drizzle-schema"
+				"heading": "How do I go from an empty project to CRUD endpoints?",
+				"anchor": "how-do-i-go-from-an-empty-project-to-crud-endpoints"
 			},
 			{
-				"heading": "Configure the module once",
-				"anchor": "configure-the-module-once"
+				"heading": "How do I go from an empty project to CRUD endpoints?",
+				"anchor": "how-do-i-go-from-an-empty-project-to-crud-endpoints"
 			},
 			{
-				"heading": "Create an empty service",
-				"anchor": "create-an-empty-service"
+				"heading": "Install the package and the PostgreSQL driver",
+				"anchor": "install-the-package-and-the-postgresql-driver"
 			}
 		]
 	},
 	"/docs/relation-filters": {
-		"title": "Relation filters, paths and some, none, every",
-		"summary": "Filter through relations at any depth (state.country.code) and quantify collections with some, none and every. Compiled to EXISTS and NOT EXISTS subqueries, so rows are never multiplied.",
+		"title": "Filter by relation in Drizzle ORM",
+		"summary": "Drizzle filter by relation in NestJS: paths at any depth and some, none, every on collections, compiled to EXISTS subqueries that never multiply rows.",
 		"topics": [
 			{
 				"heading": "How do I filter through more than one relation?",
@@ -570,32 +660,32 @@
 				"anchor": "how-do-i-use-some-none-and-every"
 			},
 			{
-				"heading": "What does every mean for a parent with no rows?",
-				"anchor": "what-does-every-mean-for-a-parent-with-no-rows"
+				"heading": "How do I use some, none and every?",
+				"anchor": "how-do-i-use-some-none-and-every"
 			}
 		]
 	},
 	"/docs/relations": {
-		"title": "Relations",
-		"summary": "Eager-load belongs-to, has-many, many-to-many and nested relations in Drizzle CRUD without N+1 queries, and filter by related columns.",
+		"title": "Drizzle relations in NestJS",
+		"summary": "Declare Drizzle relations in NestJS and eager-load belongs-to, has-many, many-to-many and nested relations without N+1 queries.",
 		"topics": [
 			{
 				"heading": "How do I avoid N+1 queries?",
 				"anchor": "how-do-i-avoid-n1-queries"
 			},
 			{
-				"heading": "Declaring a belongs-to relation",
-				"anchor": "declaring-a-belongs-to-relation"
+				"heading": "How do I declare a belongs-to relation?",
+				"anchor": "how-do-i-declare-a-belongs-to-relation"
 			},
 			{
-				"heading": "Declaring a has-many relation",
-				"anchor": "declaring-a-has-many-relation"
+				"heading": "How do I declare a has-many relation?",
+				"anchor": "how-do-i-declare-a-has-many-relation"
 			}
 		]
 	},
 	"/docs/relations-on-writes": {
-		"title": "Relations on writes, nested create, attach and detach",
-		"summary": "Return created and updated rows with their relations loaded, create has-many and belongs-to children in one transaction, and attach, detach or sync many-to-many links.",
+		"title": "Nested create with Drizzle relations",
+		"summary": "Drizzle nested create in NestJS. Write a row and its related rows in one transaction, return writes with relations, and attach or sync links.",
 		"topics": [
 			{
 				"heading": "How do I get a created row back with its relations?",
@@ -606,134 +696,170 @@
 				"anchor": "how-do-i-create-a-row-with-its-children-in-one-call"
 			},
 			{
-				"heading": "What shapes does a nested body take?",
-				"anchor": "what-shapes-does-a-nested-body-take"
+				"heading": "Declare the relation and allow writing it",
+				"anchor": "declare-the-relation-and-allow-writing-it"
 			}
 		]
 	},
 	"/docs/row-locks": {
-		"title": "Row-level locks",
-		"summary": "PostgreSQL SELECT ... FOR UPDATE / SHARE / NO KEY UPDATE on find, findOne, and findAll via SqlOperationOptions.",
+		"title": "Row locks with SELECT FOR UPDATE",
+		"summary": "Drizzle SELECT FOR UPDATE in NestJS. Pass lock or forNoKeyUpdate to find, findOne or findAll inside a transaction to lock rows on PostgreSQL.",
 		"topics": [
 			{
-				"heading": "When to use",
-				"anchor": "when-to-use"
+				"heading": "How do I lock a row before updating it?",
+				"anchor": "how-do-i-lock-a-row-before-updating-it"
 			},
 			{
-				"heading": "Options",
-				"anchor": "options"
+				"heading": "What lock options are there?",
+				"anchor": "what-lock-options-are-there"
 			},
 			{
-				"heading": "Examples",
-				"anchor": "examples"
+				"heading": "When should I use FOR NO KEY UPDATE?",
+				"anchor": "when-should-i-use-for-no-key-update"
 			}
 		]
 	},
 	"/docs/soft-delete": {
-		"title": "Soft delete",
-		"summary": "Enable soft delete with a deleted_at column, restore rows, list the trash with onlyDeleted or withDeleted, and purge rows for good with forceDelete.",
+		"title": "Soft delete in Drizzle ORM",
+		"summary": "Soft delete rows in NestJS with Drizzle ORM. A deleted_at column hides them from reads, restore brings them back and forceDelete purges.",
 		"topics": [
 			{
-				"heading": "Enabling",
-				"anchor": "enabling"
+				"heading": "How do I enable soft delete?",
+				"anchor": "how-do-i-enable-soft-delete"
 			},
 			{
-				"heading": "Globally (default for all entities)",
-				"anchor": "globally-default-for-all-entities"
+				"heading": "Add a nullable timestamp column",
+				"anchor": "add-a-nullable-timestamp-column"
 			},
 			{
-				"heading": "Per-entity (different column name or disable for one entity)",
-				"anchor": "per-entity-different-column-name-or-disable-for-one-entity"
+				"heading": "Keep the project default, or set it per entity",
+				"anchor": "keep-the-project-default-or-set-it-per-entity"
 			}
 		]
 	},
 	"/docs/sponsor": {
-		"title": "Sponsor",
-		"summary": "nestjs-drizzle-crud is free and MIT licensed. Sponsoring on GitHub funds the fixes, the docs, and the next release.",
+		"title": "Sponsor nestjs-drizzle-crud",
+		"summary": "Sponsor nestjs-drizzle-crud on GitHub Sponsors. The package is free and MIT licensed, and sponsorship funds its fixes, its docs and the next release.",
 		"topics": [
 			{
-				"heading": "Why sponsor",
+				"heading": "Why sponsor?",
 				"anchor": "why-sponsor"
 			},
 			{
-				"heading": "How to sponsor",
-				"anchor": "how-to-sponsor"
+				"heading": "How do I sponsor?",
+				"anchor": "how-do-i-sponsor"
 			},
 			{
-				"heading": "Open the GitHub Sponsors page",
-				"anchor": "open-the-github-sponsors-page"
+				"heading": "Pick a monthly or one-time amount",
+				"anchor": "pick-a-monthly-or-one-time-amount"
 			}
 		]
 	},
 	"/docs/testing": {
-		"title": "Testing",
-		"summary": "TestCrudFactory builds mock db, table, and entity instances for fast unit tests: no real database required.",
+		"title": "Test a NestJS Drizzle CRUD service",
+		"summary": "Test a NestJS Drizzle CRUD service against real SQL in memory with PGlite, or unit test it with TestCrudFactory and a Jest mock database.",
 		"topics": [
 			{
-				"heading": "The four helpers",
-				"anchor": "the-four-helpers"
+				"heading": "How do I test against a real database?",
+				"anchor": "how-do-i-test-against-a-real-database"
 			},
 			{
-				"heading": "When you need real Nest DI",
-				"anchor": "when-you-need-real-nest-di"
+				"heading": "Create the tables in memory",
+				"anchor": "create-the-tables-in-memory"
 			},
 			{
-				"heading": "Testing hooks",
-				"anchor": "testing-hooks"
+				"heading": "Build the service through the module",
+				"anchor": "build-the-service-through-the-module"
 			}
 		]
 	},
 	"/docs/timestamps": {
-		"title": "Timestamps",
-		"summary": "Package-managed vs schema and DB-managed created_at and updated_at, and why DB-managed is recommended.",
+		"title": "Drizzle createdAt and updatedAt timestamps",
+		"summary": "Set Drizzle createdAt and updatedAt columns in NestJS. The package stamps them on every write, or the database owns them with defaultNow.",
 		"topics": [
 			{
-				"heading": "Package-managed (convenient)",
-				"anchor": "package-managed-convenient"
+				"heading": "What does the package write, and when?",
+				"anchor": "what-does-the-package-write-and-when"
 			},
 			{
-				"heading": "Why does my service fail at startup with a timestamps error?",
-				"anchor": "why-does-my-service-fail-at-startup-with-a-timestamps-error"
+				"heading": "How do I set it up with package-managed timestamps?",
+				"anchor": "how-do-i-set-it-up-with-package-managed-timestamps"
 			},
 			{
-				"heading": "Schema/DB-managed (recommended)",
-				"anchor": "schemadb-managed-recommended"
+				"heading": "Point camelCase keys at the right columns",
+				"anchor": "point-camelcase-keys-at-the-right-columns"
 			}
 		]
 	},
 	"/docs/transactions": {
-		"title": "Transactions",
-		"summary": "Use executeSqlTransaction() to span multiple service calls in one atomic unit.",
+		"title": "Drizzle transactions in NestJS",
+		"summary": "Run Drizzle transactions in NestJS across several service calls. Open one with executeSqlTransaction or db.transaction and pass the handle to each call.",
 		"topics": [
 			{
-				"heading": "The helper",
-				"anchor": "the-helper"
+				"heading": "How do I run several writes in one transaction?",
+				"anchor": "how-do-i-run-several-writes-in-one-transaction"
 			},
 			{
-				"heading": "Passing `{ transaction: tx }` to methods",
-				"anchor": "passing--transaction-tx--to-methods"
+				"heading": "How do I start a transaction outside a service?",
+				"anchor": "how-do-i-start-a-transaction-outside-a-service"
 			},
 			{
-				"heading": "Mixing package methods with raw Drizzle",
-				"anchor": "mixing-package-methods-with-raw-drizzle"
+				"heading": "Which methods accept a transaction?",
+				"anchor": "which-methods-accept-a-transaction"
 			}
 		]
 	},
 	"/docs/upsert": {
-		"title": "Upsert",
-		"summary": "upsert and massUpsert insert a row or update the one that already holds its unique key, in one statement: ON CONFLICT DO UPDATE on Postgres, ON DUPLICATE KEY UPDATE on MySQL.",
+		"title": "Upsert with Drizzle in NestJS",
+		"summary": "Upsert rows with Drizzle in NestJS in one statement. upsert and massUpsert insert a row or update the one that holds its unique key.",
 		"topics": [
 			{
-				"heading": "Options",
-				"anchor": "options"
+				"heading": "How do I upsert a row?",
+				"anchor": "how-do-i-upsert-a-row"
 			},
 			{
-				"heading": "Which hooks run?",
-				"anchor": "which-hooks-run"
+				"heading": "What options does upsert take?",
+				"anchor": "what-options-does-upsert-take"
 			},
 			{
-				"heading": "Does upsert work with scope, versions and relations?",
-				"anchor": "does-upsert-work-with-scope-versions-and-relations"
+				"heading": "How do I get or create a row without changing it?",
+				"anchor": "how-do-i-get-or-create-a-row-without-changing-it"
+			}
+		]
+	},
+	"/docs/vs-nestjs-paginate": {
+		"title": "nestjs-drizzle-crud vs nestjs-paginate",
+		"summary": "nestjs-drizzle-crud vs nestjs-paginate compared. One is a CRUD layer for Drizzle ORM, the other a TypeORM helper for paginated, filtered lists.",
+		"topics": [
+			{
+				"heading": "How do the two libraries differ at a glance?",
+				"anchor": "how-do-the-two-libraries-differ-at-a-glance"
+			},
+			{
+				"heading": "How do the two libraries differ at a glance?",
+				"anchor": "how-do-the-two-libraries-differ-at-a-glance"
+			},
+			{
+				"heading": "What does nestjs-paginate do better?",
+				"anchor": "what-does-nestjs-paginate-do-better"
+			}
+		]
+	},
+	"/docs/vs-nestjsx-crud": {
+		"title": "nestjs-drizzle-crud vs @nestjsx/crud",
+		"summary": "nestjs-drizzle-crud vs @nestjsx/crud compared. One builds CRUD on Drizzle ORM, the other on TypeORM, with a different query syntax and release history.",
+		"topics": [
+			{
+				"heading": "How do the two libraries differ at a glance?",
+				"anchor": "how-do-the-two-libraries-differ-at-a-glance"
+			},
+			{
+				"heading": "How do the two libraries differ at a glance?",
+				"anchor": "how-do-the-two-libraries-differ-at-a-glance"
+			},
+			{
+				"heading": "How do the two libraries differ at a glance?",
+				"anchor": "how-do-the-two-libraries-differ-at-a-glance"
 			}
 		]
 	}

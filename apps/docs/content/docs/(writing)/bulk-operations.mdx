@@ -1,0 +1,215 @@
+---
+title: Bulk insert and update with Drizzle
+description: Bulk insert, update and delete with Drizzle in NestJS. Each mass method is one statement in a transaction, and a failure lists every failed item.
+icon: Layers
+---
+
+For a Drizzle bulk insert or update in NestJS, call `massCreate`, `massUpdate`, `massSoftDelete`, `massRestore`, `massDelete`, `massForceDelete` or `massUpsert` on your service. Each one writes the whole set with one statement inside a single transaction. If any item fails, nothing is written and the call throws a `BulkOperationException`, a 400 whose body lists every failed item with its own status and message.
+
+<Callout title="All or nothing">
+  A bulk call that returns has written every row. A bulk call that throws has written none of them. You never have to clean up a half-finished batch.
+</Callout>
+
+## Which bulk methods are there?
+
+Seven, one per single-row write:
+
+```ts title="users.bulk.ts"
+await users.massCreate([dto1, dto2, dto3]);
+await users.massUpdate([1, 2, 3], { status: 'archived' });
+await users.massSoftDelete([1, 2, 3]);
+await users.massRestore([1, 2, 3]);
+await users.massDelete([1, 2, 3]);
+await users.massForceDelete([1, 2, 3]); // soft-deleted rows too
+await users.massUpsert(rows, { conflictTarget: 'email' });
+```
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `massCreate(data[], options?)` | `Promise<T[]>` | One multi-row insert. |
+| `massUpdate(ids[], data, options?)` | `Promise<T[]>` | The same changes applied to every id. |
+| `massSoftDelete(ids[], options?)` | `Promise<boolean>` | Needs [soft delete](/docs/soft-delete) on the entity. |
+| `massRestore(ids[], options?)` | `Promise<T[]>` | Needs soft delete on the entity. |
+| `massDelete(ids[], options?)` | `Promise<boolean>` | Hard delete. With soft delete on, an id already in the trash is a 404 entry. |
+| `massForceDelete(ids[], options?)` | `Promise<boolean>` | Hard delete, including rows that are in the trash. |
+| `massUpsert(data[], upsert?, options?)` | `Promise<T[]>` | See [Upsert](/docs/upsert). |
+
+Duplicate ids are written once. The rows come back in the order of the ids you passed. `massSoftDelete` and `massRestore` throw a plain `Error` when soft delete is not enabled for the entity, because that is a configuration mistake, not bad input.
+
+## How many queries does a bulk call cost?
+
+A fixed number, whatever the number of ids:
+
+| Method | Statements |
+| --- | --- |
+| `massCreate` | one multi-row `INSERT ... RETURNING` |
+| `massUpdate` | one `SELECT` to check every id exists, one `UPDATE ... WHERE id IN (...)` |
+| `massSoftDelete`, `massRestore` | one `SELECT`, one `UPDATE ... WHERE id IN (...)` |
+| `massDelete`, `massForceDelete` | one `SELECT`, one `DELETE ... WHERE id IN (...)` |
+| `massUpsert` | one `INSERT ... ON CONFLICT DO UPDATE` |
+
+So `massUpdate` over 100 ids is two queries, not two hundred.
+
+Two exceptions on MySQL, which has no `RETURNING`: one more `SELECT` reads the written rows back, and `massCreate` of rows with auto-increment keys inserts row by row, because MySQL only reports the first id of a multi-row insert. If every row carries its own primary key, `massCreate` stays one `INSERT` plus one `SELECT`.
+
+## What does a bulk call options object take?
+
+Every bulk method takes the same `SqlOperationOptions` as its single-row counterpart. These are the ones that matter most for bulk writes:
+
+<PropsTable
+  props={{
+    transaction: { type: "Drizzle transaction", description: "Run inside your own transaction instead of opening a new one. See Transactions." },
+    bulkMode: { type: '"set" | "perItem"', default: '"set"', description: "One statement for the whole set, or the single-row method once per item in its own savepoint. massUpsert always uses one statement." },
+    relations: { type: "string[]", description: "Relations to load onto the returned rows, one query per relation for the whole batch." },
+    counts: { type: "string[]", description: "Relation counts to put on each returned row under _count." },
+    expectedVersions: { type: "Record<string, number>", description: "With a version column: the expected version per id, keyed by the id as a string. An id at another version is a 409 entry." },
+    "hooks.skipBefore": { type: "boolean", default: "false", description: "Skip the before hooks for every item." },
+    "hooks.skipAfter": { type: "boolean", default: "false", description: "Skip the after hooks for every item." },
+    skipEvents: { type: "boolean", default: "false", description: "Do not raise module-level events for this call." },
+  }}
+/>
+
+## What happens when one item fails?
+
+The whole call is rolled back and throws `BulkOperationException`. Every bulk method runs in one transaction, so no partial write is ever visible to a later read.
+
+When the set statement fails, the package still needs to know which items caused it. It replays the batch one item at a time, each in its own savepoint, all inside an outer savepoint that is rolled back at the end, and reports the items that fail on their own. That replay only runs on the failure path, and it leaves nothing behind, even inside your own transaction.
+
+Two cases are worth knowing:
+
+- Two rows of the same batch that clash only with each other (the same unique email, say) show up as the second of the pair, because the replay has already written the first.
+- When no single item fails on its own, the statement's own error is thrown instead of a `BulkOperationException`.
+
+## What does a failed bulk call return over HTTP?
+
+A 400 whose body names every failed item. `massCreate` and `massUpsert` identify an item by its `index` in the input array; the other methods use the `id` you passed:
+
+```json title="400 response"
+{
+  "statusCode": 400,
+  "error": "Bad Request",
+  "message": "Mass create errors. 1 error(s) occurred.",
+  "errors": [
+    { "index": 1, "status": 409, "message": "users with email 'ann@x.io' already exists" }
+  ]
+}
+```
+
+Each entry is a `BulkOperationItemError`:
+
+<PropsTable
+  props={{
+    index: { type: "number", description: "The position of the item in the input array. Set by massCreate and massUpsert." },
+    id: { type: "unknown", description: "The id you passed. Set by the methods that take ids." },
+    status: { type: "number", required: true, description: "The HTTP status that item alone would have produced: 409 for a duplicate, 404 for a missing id, 400 for bad input." },
+    message: { type: "string", required: true, description: "The message that item alone would have produced." },
+  }}
+/>
+
+An error that is not an HTTP exception (a driver fault, say) appears as `status: 500` with the message `Internal server error`, so SQL and parameters never reach the client. `BulkOperationException` extends Nest's `BadRequestException`, so if you let it propagate, Nest's default filter sends this body as is.
+
+## How do I handle BulkOperationException in code?
+
+Catch it and read `errors`, which keeps the original `Error` per failed item:
+
+```ts title="users.import.ts"
+import { BulkOperationException } from '@avytrix/nestjs-drizzle-crud';
+
+try {
+  await users.massCreate([
+    { name: 'a', email: 'a@x.io' },
+    { name: 'b', email: 'taken@x.io' },
+  ]);
+} catch (err) {
+  if (err instanceof BulkOperationException) {
+    // The original errors, one per failed item
+    for (const { index, id, error } of err.errors) {
+      console.error(`Item ${index ?? id} failed:`, error);
+    }
+    // The response body shown above
+    console.log(err.getResponse());
+  }
+  throw err;
+}
+```
+
+The `errors` property is for logging. The response body carries the safe summary.
+
+## Do hooks run once per row in a bulk call?
+
+Yes. The per-service hooks run once per item, in array order; only the SQL is shared:
+
+| Method | Per item, before the statement | Per item, after the statement |
+| --- | --- | --- |
+| `massCreate` | `validateCreate`, `beforeCreate` | `afterCreate` |
+| `massUpdate` | `validateUpdate`, `beforeUpdate` (after the existence check) | `afterUpdate` |
+| `massSoftDelete` | `beforeSoftDelete` | `afterSoftDelete` |
+| `massRestore` | `beforeRestore` | `afterRestore` |
+| `massDelete`, `massForceDelete` | `beforeDelete` | `afterDelete` |
+| `massUpsert` | `validateCreate`, `beforeCreate` | none |
+
+So `massCreate([a, b, c])` calls `validateCreate` and `beforeCreate` three times, runs one insert, then calls `afterCreate` three times.
+
+If a before hook throws for one item, that item is recorded as failed, the rest still run so every failure is reported, and nothing is written. If `beforeUpdate` returns different data for different ids, one `SET` cannot express it, so `massUpdate` writes those rows with one `UPDATE` each.
+
+Module-level [events](/docs/events) fire once for the whole call instead, with `bulk: true` and every id, before and after the statement and inside the transaction.
+
+## Can I still run one query per item?
+
+Yes, with `bulkMode: 'perItem'`. Each item then goes through the single-row method (`create`, `update`, `delete` and so on) in its own savepoint, as in 3.3. Use it when a per-item hook must see the rows written before it.
+
+```ts title="users.bulk.ts"
+await users.massUpdate(ids, { status: 'archived' }, { bulkMode: 'perItem' });
+```
+
+## How do I run a bulk call inside my own transaction?
+
+Pass `{ transaction: tx }`. The bulk method then joins your transaction instead of opening its own, and its savepoints nest inside it:
+
+```ts title="users.service.ts"
+async setRoles(adminIds: number[], memberIds: number[]) {
+  return this.executeSqlTransaction(async (tx) => {
+    await this.massUpdate(adminIds, { role: 'admin' }, { transaction: tx });
+    await this.massUpdate(memberIds, { role: 'member' }, { transaction: tx });
+  });
+}
+```
+
+`executeSqlTransaction` is protected, so call it from a method on your service. [Transactions](/docs/transactions) covers the cross-service pattern.
+
+## Do bulk writes work with relations, scope and versions?
+
+Yes:
+
+- **Relations.** `relations` and `counts` load onto the returned rows with one query per relation for the whole batch. See [Relations on writes](/docs/relations-on-writes).
+- **Tenant scope.** On a [scoped entity](/docs/multi-tenancy), an id of another tenant is a 404 entry and nothing is written.
+- **Versions.** With [optimistic locking](/docs/optimistic-locking), every written row's version goes up by one, and `expectedVersions: { '1': 4 }` turns an id at another version into a 409 entry.
+
+## How large can a bulk call be?
+
+There is no limit in the package: the bulk methods take the whole array in memory and write it in one transaction. The limit is the database. A very large multi-row statement can hit the driver's parameter limit, and one transaction holding thousands of row locks can block other connections. For thousands of rows, split the array into chunks of a few hundred and call the bulk method once per chunk, accepting that each chunk commits on its own.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Is a bulk insert atomic?">
+    Yes. Every bulk method runs in one transaction, so a failure rolls back the whole batch and nothing is written.
+  </Accordion>
+  <Accordion title="How do I know which row failed?">
+    Catch `BulkOperationException`. Its response body lists each failed item by `index` (for `massCreate` and `massUpsert`) or by `id`, with the status and message that item alone would have produced.
+  </Accordion>
+  <Accordion title="Does massUpdate run one query per id?">
+    No. It runs one `SELECT` to check the ids and one `UPDATE ... WHERE id IN (...)`, whatever the number of ids. Pass `bulkMode: 'perItem'` if you want the single-row method per item.
+  </Accordion>
+  <Accordion title="What HTTP status does a failed bulk call return?">
+    A 400. Each entry in its `errors` array carries the item's own status, such as 409 for a duplicate or 404 for a missing id.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Workflow />} title="Transactions" href="/docs/transactions" description="Run several service calls in one transaction with executeSqlTransaction." />
+  <Card icon={<ShieldCheck />} title="Errors" href="/docs/errors" description="How BulkOperationException and the other exceptions map to HTTP statuses." />
+  <Card icon={<ClipboardCheck />} title="Drizzle hooks and validation in NestJS" href="/docs/hooks-validation" description="The before and after hooks that run once per item in a bulk call." />
+</Cards>

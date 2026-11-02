@@ -1,0 +1,191 @@
+---
+title: NestJS CRUD controller generator
+description: createCrudController is a NestJS CRUD generator for Drizzle. One call builds list, get, create, update, delete, trash and bulk routes from your service.
+icon: Route
+---
+
+`createCrudController(Service, options)` is the NestJS CRUD generator for Drizzle in this package: it returns a controller class whose routes call your service. You get offset and cursor lists, get, create, update, delete, soft delete, restore, a trash list and four opt-in bulk routes. The id pipe follows the primary key column, so you stop copying the same controller for every table.
+
+<Callout title="Before you start">
+  You need a service registered with [`forFeature`](/docs/for-feature). Every route goes through
+  that service, so [allowlists](/docs/allowlists), [scope](/docs/multi-tenancy), soft delete,
+  [optimistic locking](/docs/optimistic-locking) and [events](/docs/events) apply exactly as they
+  do when you call the service in code.
+</Callout>
+
+## How do I generate a controller?
+
+Extend the class the factory returns and put `@Controller` on your subclass:
+
+```ts accent=nest title="projects.controller.ts"
+import { Controller } from '@nestjs/common';
+import { createCrudController } from '@avytrix/nestjs-drizzle-crud';
+import { CreateProjectDto } from './dto/create-project.dto';
+import { UpdateProjectDto } from './dto/update-project.dto';
+import { ProjectsService } from './projects.service';
+
+@Controller('projects')
+export class ProjectsController extends createCrudController(ProjectsService, {
+  dto: { create: CreateProjectDto, update: UpdateProjectDto },
+  deleteMode: 'soft',
+  routes: { bulkCreate: true, bulkDelete: true },
+}) {}
+```
+
+Import the DTOs as values, not with `import type`. The factory hands the classes to Nest, and a type-only import is erased at build time.
+
+## Which routes does it generate?
+
+Eight routes are on by default. The four bulk routes stay off until you turn them on.
+
+| Route | Method and path | Calls | Status | Default |
+| --- | --- | --- | --- | --- |
+| `list` | `GET /` | `findAll`, or `findByCursor` when `?cursor=` (or `?after=`) is present | 200 | on |
+| `trash` | `GET /trash` | `findAll` or `findByCursor` with `onlyDeleted` | 200 | on |
+| `get` | `GET /:id` | `find`, 404 when the row is missing | 200 | on |
+| `create` | `POST /` | `create` | 201 | on |
+| `update` | `PATCH /:id` | `update` | 200 | on |
+| `delete` | `DELETE /:id` | `delete`, or `softDelete` with `deleteMode: 'soft'` | 200 | on |
+| `softDelete` | `POST /:id/soft-delete` | `softDelete` | 200 | on |
+| `restore` | `POST /:id/restore` | `restore` | 200 | on |
+| `bulkCreate` | `POST /bulk` | `massCreate`, body is an array | 201 | off |
+| `bulkUpdate` | `PATCH /bulk` | `massUpdate`, body is `{ ids, data }` | 200 | off |
+| `bulkDelete` | `POST /bulk-delete` | `massDelete`, or `massSoftDelete` with `deleteMode: 'soft'`, body is `{ ids }` | 200 | off |
+| `bulkRestore` | `POST /bulk-restore` | `massRestore`, body is `{ ids }` | 200 | off |
+
+A few rules hold across the table:
+
+- **Query strings.** `list` and `trash` run the whole query string through [`parseQuery`](/docs/query-parsing), so filters, `sortBy`, `fields`, `with`, `counts`, `withCount` and `cursor` all work. `get`, `create`, `update`, `restore` and the bulk writes read only `?with=`, `?fields=` and `?counts=` and ignore the rest.
+- **Trash.** On an entity without soft delete, `trash`, `softDelete`, `restore` and `bulkRestore` answer 404 with `This resource has no trash`. The trash route turns `allowTrash` off, so `?withDeleted=` cannot widen it.
+- **Bulk bodies.** `ids` must be a non-empty array and `data` must be an object. Anything else is a 400.
+- **Route order.** The static paths (`/trash`, `/bulk`, `/bulk-delete`, `/bulk-restore`) are registered before `/:id`, so they never match as an id.
+
+## How is the id parsed?
+
+From the primary key column at request time, the way the matching Nest pipe would parse it:
+
+| Primary key column | Parsing | Bad input |
+| --- | --- | --- |
+| integer, serial | `ParseIntPipe` | 400 `Validation failed (numeric string is expected)` |
+| uuid | `ParseUUIDPipe` | 400 |
+| bigint in bigint mode | digits (with an optional leading `-`), then `BigInt` | 400 |
+| anything else, including numeric and decimal | the string as is | none |
+
+The service exposes the same logic as `service.parseId(raw)` and `service.idKind()`, which you can call from your own controllers. Set `idType: 'int' | 'uuid' | 'string'` to fix the pipe when the class is built instead. It then shows on the route as a normal `@Param('id', ParseIntPipe)`.
+
+## Which options does createCrudController take?
+
+Every option is optional. The source is [`crud-controller.factory.ts`](https://github.com/avytrix/nestjs-drizzle-crud/blob/main/packages/nestjs-drizzle-crud/src/controller/crud-controller.factory.ts).
+
+<PropsTable
+  props={{
+    path: { type: "string", description: "Applies @Controller(path) to the generated class. Leave it out and decorate your subclass instead." },
+    idType: { type: '"int" | "uuid" | "string"', description: "Fixes the :id pipe when the class is built. Unset, the id follows the primary key column at request time." },
+    "dto.create": { type: "Type", description: "DTO class for POST /, and the ParseArrayPipe items type for POST /bulk. A global ValidationPipe validates it." },
+    "dto.update": { type: "Type", description: "DTO class for PATCH /:id." },
+    query: { type: "ParseCrudQueryOptions", default: "{}", description: "Options for parseQuery on every route, such as allowTrash or ignore." },
+    routes: { type: "{ [route: CrudRouteName]: boolean | CrudRouteOptions }", description: "Turns a route on or off. An object { enabled?, decorators? } can also give one route its own decorators." },
+    decorators: { type: "MethodDecorator[]", description: "Applied to every route, before the per-route decorators." },
+    classDecorators: { type: "ClassDecorator[]", description: "Applied to the generated class, for example ApiTags or UseGuards." },
+    deleteMode: { type: '"hard" | "soft"', default: '"hard"', description: '"soft" makes DELETE /:id and POST /bulk-delete move rows to the trash instead of deleting them.' },
+    openapi: { type: "true | ApiCrudSource", description: "Documents list and trash with ApiCrudList. Pass the entity config with its table, or true for a service decorated with @CrudService. Needs @nestjs/swagger." },
+  }}
+/>
+
+## How do I validate request bodies?
+
+Pass the DTO classes in `dto`. They become the parameter types of `create` and `update`, so a global `ValidationPipe` validates them the usual way. `bulkCreate` validates each array element with `ParseArrayPipe({ items: dto.create })`.
+
+```ts accent=nest title="main.ts"
+app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+```
+
+Without `dto`, bodies reach the service unvalidated. [`writableColumns`](/docs/allowlists) still applies, so a body cannot write a column you did not allow.
+
+## How do I turn routes on or off?
+
+Set a route to `true` or `false` in `routes`. An object turns it on and carries decorators for that route alone:
+
+```ts accent=nest title="tags.controller.ts"
+@Controller('tags')
+export class TagsController extends createCrudController(TagsService, {
+  routes: {
+    delete: false,                              // no DELETE /:id
+    bulkDelete: true,                           // POST /bulk-delete
+    update: { decorators: [Roles('admin')] },   // PATCH /:id, admins only
+  },
+}) {}
+```
+
+`Roles` stands for your own role decorator. `{ enabled: false }` works the same as `false`.
+
+## How do I add guards, interceptors or Swagger tags?
+
+`decorators` applies method decorators to every route, before the per-route ones. `classDecorators` decorates the generated class. You can also decorate your subclass directly, which reads like any other Nest controller:
+
+```ts accent=nest title="projects.controller.ts"
+@ApiTags('projects')
+@UseGuards(AuthGuard)
+@Controller('projects')
+export class ProjectsController extends createCrudController(ProjectsService, {
+  decorators: [UseInterceptors(AuditInterceptor)],
+}) {}
+```
+
+## How do I document the routes in Swagger?
+
+Pass `openapi`. The factory applies [`ApiCrudList`](/docs/openapi) to `list`, and `ApiCrudList(source, { trash: true })` to `trash`:
+
+```ts accent=nest title="projects.controller.ts"
+@Controller('projects')
+export class ProjectsController extends createCrudController(ProjectsService, {
+  openapi: { table: projects, ...projectsCrud },
+}) {}
+```
+
+Keep the entity config in one constant (`projectsCrud`) and spread it into both `forFeature` and `openapi`. The docs then list the same filterable and sortable columns the service accepts.
+
+## Can I add my own routes?
+
+Yes. The factory returns a class, so extend it and add methods. The service is on `this.service`:
+
+```ts accent=nest title="projects.controller.ts"
+@Controller('projects')
+export class ProjectsController extends createCrudController(ProjectsService) {
+  @Get('stats/by-name')
+  stats() {
+    return this.service.countBy('name');
+  }
+}
+```
+
+To replace a generated route, turn it off in `routes` and declare your own handler for the same path. Do not override a generated method by name: the route metadata sits on the generated handler, so Nest would not route your override.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Are the bulk routes on by default?">
+    No. `bulkCreate`, `bulkUpdate`, `bulkDelete` and `bulkRestore` are off until you set them to `true` in `routes`. The other eight routes are on.
+  </Accordion>
+  <Accordion title="What does DELETE /:id do on an entity with soft delete?">
+    It deletes the row unless you pass `deleteMode: 'soft'`, which makes it call `softDelete` instead. `POST /:id/soft-delete` always soft deletes.
+  </Accordion>
+  <Accordion title="Does the generated controller validate request bodies?">
+    Only when you pass `dto` and run a global `ValidationPipe`. Without DTOs the body goes straight to the service, where `writableColumns` still applies.
+  </Accordion>
+  <Accordion title="Why does GET /trash answer 404?">
+    The entity has soft delete turned off. The trash, soft delete and restore routes answer 404 with `This resource has no trash` in that case.
+  </Accordion>
+  <Accordion title="How do I add an endpoint the factory does not generate?">
+    Extend the generated class and add a decorated method. The service is available as `this.service`.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Code />} title="OpenAPI docs for list queries" href="/docs/openapi" description="Document every query parameter and the page envelope in Swagger." />
+  <Card icon={<Filter />} title="Parse query strings" href="/docs/query-parsing" description="What the list route accepts in its query string." />
+  <Card icon={<Shield />} title="Multi-tenancy" href="/docs/multi-tenancy" description="Scope every generated route to the tenant of the request." />
+  <Card icon={<Users />} title="Need a team?" href="/docs/commercial-support" description="Avytrix Technologies maintains this library and builds NestJS APIs for clients." />
+</Cards>

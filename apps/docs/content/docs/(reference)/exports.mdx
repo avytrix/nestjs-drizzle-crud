@@ -1,114 +1,119 @@
 ---
-title: Exports
-description: The full public API surface of nestjs-drizzle-crud, grouped by category.
+title: Package exports reference
+description: Every export of nestjs-drizzle-crud, the classes, functions, decorators, DI tokens, exceptions, types and Drizzle helpers you can import from the package root.
+icon: Package
 ---
 
-Every export below is available from the package root: `import { ... } from 'nestjs-drizzle-crud'`.
+nestjs-drizzle-crud exports 98 names from its package root: 79 of its own (classes, functions, decorators, DI tokens, exceptions, test helpers and types) and 19 Drizzle helpers re-exported unchanged. Import all of them with `import { ... } from "@avytrix/nestjs-drizzle-crud"`. Anything not listed here is internal and can change in any release.
+
+<Callout title="The root is the only public entry point">
+  `src/index.ts` is the public surface. Removing or renaming anything on this page is a major
+  version, so code that imports only from the root survives every minor and patch upgrade.
+</Callout>
 
 ## Core
 
 | Export | Kind | Description |
 | --- | --- | --- |
-| `SqlBaseCrudService` | class | The base class your services extend. See [API reference](/docs/api). |
-| `parseCrudQuery` | function | `parseCrudQuery(query, table, options?)` turns an HTTP query object into filters, pagination and options. Since 3.4.0. See [Parse query strings](/docs/query-parsing). |
-| `createCrudController` | function | `createCrudController(Service, options?)` returns a controller class with list, get, create, update, delete, soft delete, restore, trash and bulk routes. Since 3.5.0. See [CRUD controller factory](/docs/controller-factory). |
-| `CrudContext` | object | `run(context, fn)`, `current()` and `middleware(resolve)`: the per-request context a `scope` reads, in `AsyncLocalStorage`. Since 3.5.0. See [Multi-tenancy](/docs/multi-tenancy). |
-| `CrudEventBus` | class | The module-level event bus behind `hooks.enableGlobalHooks`. Inject it and call `subscribe`. Since 3.5.0. See [Global hooks and write events](/docs/events). |
+| `SqlBaseCrudService` | abstract class | The base class your services extend. See [SqlBaseCrudService API reference](/docs/api). |
+| `DrizzleCrudModule` | class | The Nest module, with `forRoot`, `forRootAsync` and `forFeature`. |
+| `CrudService` | decorator | `@CrudService(config)` stores per-entity config on a service class. The `forFeature` `config` wins over it. |
+| `parseCrudQuery` | function | `parseCrudQuery(query, table, options?)` turns an HTTP query object into filters, pagination and options. Since 3.4.0. See [NestJS query string filters for Drizzle](/docs/query-parsing). |
+| `createCrudController` | function | `createCrudController(Service, options?)` returns a controller class with list, trash, get, create, update, delete, soft delete, restore and bulk routes. Since 3.5.0. See [NestJS CRUD controller generator](/docs/controller-factory). |
+| `CrudContext` | object | `run(context, fn)`, `current()` and `middleware(resolve)`: the per-request context a `scope` reads, kept in `AsyncLocalStorage`. Since 3.5.0. See [Multi-tenancy](/docs/multi-tenancy). |
+| `CrudEventBus` | class | The module-level event bus behind `hooks.enableGlobalHooks`. `forRoot` and `forRootAsync` provide it globally; inject it and call `subscribe`. Since 3.5.0. See [Events](/docs/events). |
+
+## DI tokens and connection
+
+| Export | Kind | Description |
+| --- | --- | --- |
+| `DRIZZLE_DB` | `string` | Token for the resolved Drizzle instance. Inject it for hand-written queries outside a service. |
+| `DRIZZLE_CONNECTION` | `string` | Token for the `DrizzleConnection` wrapper. |
+| `DRIZZLE_CRUD_CONFIG` | `string` | Token for the normalized project config. |
+| `DrizzleConnection` | class | Holds `db`. Builds the PostgreSQL connection from a `connectionString`, or uses the `db` you passed, and closes only the connection it opened. |
 
 ## OpenAPI
 
-Both need the optional peer `@nestjs/swagger`, loaded only when a decorator runs. Since 3.5.0. See [OpenAPI docs for list queries](/docs/openapi).
+Both decorators need the optional peer `@nestjs/swagger`, loaded the first time one runs. Since 3.5.0. See [NestJS Drizzle Swagger docs for lists](/docs/openapi).
 
 | Export | Kind | Description |
 | --- | --- | --- |
-| `ApiCrudQuery` | decorator | Documents every list query parameter and each filterable column. |
+| `ApiCrudQuery` | decorator | `ApiCrudQuery(source, options?)` documents every list query parameter and each filterable column. |
 | `ApiCrudList` | decorator | `ApiCrudQuery` plus the 200 page envelope with the row schema. |
-| `ApiCrudSource`, `ApiCrudQueryOptions` | types | The decorators' source (`{ table, ...allowlists }` or a `@CrudService` class) and options (`{ cursor?, trash? }`). |
-
-## Module & DI tokens
-
-| Export | Kind | Description |
-| --- | --- | --- |
-| `DrizzleCrudModule` | class | The Nest module. Has `forRoot`, `forRootAsync`, `forFeature` static methods. |
-| `DRIZZLE_DB` | `string` | DI token for the resolved Drizzle instance. |
-| `DRIZZLE_CONNECTION` | `string` | DI token for the connection wrapper. |
-| `DRIZZLE_CRUD_CONFIG` | `string` | DI token for the normalized global config. |
-| `CrudEventBus` | class | Also a provider: `forRoot` / `forRootAsync` register and export it globally. |
-| `DrizzleConnection` | class | The internal connection wrapper. Exposed for advanced use. |
-
-## Decorators
-
-| Export | Kind | Description |
-| --- | --- | --- |
-| `CrudService` | decorator | Attach per-entity config to a service class. The `forFeature` `config` field still wins. |
 
 ## Exceptions
 
-All exceptions extend `@nestjs/common`'s `HttpException`, so Nest's default exception filter maps them to HTTP status codes automatically. They are real classes. Use `instanceof` checks in your exception filters. See [Errors](/docs/errors) for the per-method reference.
+Every exception extends a Nest `HttpException` subclass, so the default exception filter maps it to its status without a custom filter, and you can match it with `instanceof`. See [Error handling](/docs/errors).
 
-| Export | HTTP | Description |
+| Export | HTTP | When |
 | --- | --- | --- |
-| `EntityNotFoundException` | 404 | Thrown by `update`, `restore`, `massUpdate`, `massRestore` when the row doesn't exist. |
-| `DuplicateEntityException` | 409 | Thrown by `create` / `update` when a unique constraint is violated (Postgres SQLSTATE `23505`). |
-| `ForeignKeyViolationException` | 400 | Thrown by `create` / `update` when a supplied foreign key references no existing row (`23503`). Names the offending column. |
-| `StaleVersionException` | 409 | Optimistic locking: a write named a version the row is no longer at. Since 3.5.0. See [Optimistic locking](/docs/optimistic-locking). |
-| `MissingScopeException` | 403 | A scoped entity was used without the context value its scope needs. Since 3.5.0. See [Multi-tenancy](/docs/multi-tenancy). |
-| `EntityInUseException` | 409 | Thrown by `delete` when other rows still reference this one (`23503`, `ON DELETE RESTRICT` or `NO ACTION`). |
-| `ValidationFailedException` | 400 | Throw this from your `validateCreate` / `validateUpdate` hooks to reject bad input. |
-| `BulkOperationException` | 400 | Thrown by any bulk method when the transaction rolls back. The response body lists each failed item as `{ index \| id, status, message }`; `errors` keeps the original errors. |
-| `DatabaseConnectionException` | 500 | **Deprecated.** Nothing in the package throws it. Removed in the next major version. |
-| `TransactionException` | 500 | **Deprecated.** Nothing in the package throws it; a failed transaction rejects with its own error. Removed in the next major version. |
+| `EntityNotFoundException` | 404 | `update`, `softDelete`, `restore` or `delete` on a missing row, and per id in a mass write. |
+| `DuplicateEntityException` | 409 | A unique constraint is violated (Postgres `23505`). |
+| `StaleVersionException` | 409 | Optimistic locking: a write named a version the row is no longer at. Since 3.5.0. |
+| `EntityInUseException` | 409 | `delete` while other rows still reference the row (`23503`). |
+| `MissingScopeException` | 403 | A scoped entity was used without the context value its scope needs. Since 3.5.0. |
+| `ForeignKeyViolationException` | 400 | `create` or `update` references a parent row that does not exist (`23503`). Names the column. |
+| `ValidationFailedException` | 400 | Bad input: a value the column cannot take, an update with nothing to set, a column outside `writableColumns`. Throw it from your validation hooks too. |
+| `BulkOperationException` | 400 | A bulk method rolled back. The body lists each failed item as `{ index \| id, status, message }`; the `errors` property keeps the original errors. |
+| `DatabaseConnectionException` | 500 | **Deprecated.** Nothing throws it. Removed in the next major version. |
+| `TransactionException` | 500 | **Deprecated.** Nothing throws it; a failed transaction rejects with its own error. Removed in the next major version. |
+
+## Test utilities
+
+| Export | Kind | Description |
+| --- | --- | --- |
+| `TestCrudFactory` | class | Static `createTestService`, `createMockDb`, `createMockTable` and `createMockEntity`. The mocks use `jest.fn()`, so they need Jest globals. |
+| `BaseCrudSpecHelper` | class | Builds a service on a mock database and returns ready-made find, create, update, delete and list scenarios. |
+
+See [Testing](/docs/testing).
 
 ## Types
 
-| Export | Kind |
+All type-only exports. Import them with `import type`.
+
+| Export | Description |
 | --- | --- |
-| `ICrudService` | `interface`, the abstract shape `SqlBaseCrudService` implements. |
-| `CrudFeature` | `type`, the input to `forFeature`. |
-| `CrudFeatureConfig` | `type`, the per-entity `config` of `forFeature`. Since 3.3.1. |
-| `DrizzleCrudConfig` | `type`, input to `forRoot` / `forRootAsync`. |
-| `SqlCrudConfig` | `interface`, the per-entity merged config. |
-| `SqlOperationOptions` | `interface`, the third argument to most methods, including `search` for `findAll` and `count`. |
-| `OperationOptions` | `interface`, the options type used by `ICrudService`. Since 3.3.1. |
-| `PaginationOptions` | `interface`, the second argument of `findAll` and `fullTextSearch`: `{ page, limit, sortBy, sortOrder, withCount }`. Since 3.3.1; `withCount` since 3.5.0. |
-| `SqlSearchOptions` | `interface`, `options.search`: `{ term, columns, mode }`. Since 3.3.1. |
-| `SqlSearchMode` | `'ilike' \| 'fullText'`. Since 3.3.1. |
-| `BulkOperationResult` | `interface`, `{ success, data?, errors? }`. Since 3.3.1. |
-| `BulkOperationItemError` | `interface`, one entry of a `BulkOperationException` body: `{ index?, id?, status, message }`. Since 3.3.1. |
-| `RelationConfig` | `interface`, describes one relation in `relations`. |
-| `RelationsConfig` | `type`, a record of `RelationConfig`. |
-| `RelationType` | `'belongsTo' \| 'hasMany' \| 'manyToMany'`. |
-| `RelationNode` | `interface`, one resolved node in an eager-loading plan. |
-| `SelectTree` | `interface`, the parsed `options.select`. |
-| `SqlDialect` | `'postgresql' \| 'mysql'`. |
-| `PrimaryKeyType` | `'serial' \| 'bigserial' \| 'int' \| 'bigint' \| 'uuid'`. The `primaryKeyType` setting that uses it is deprecated. |
-| `SortColumn` | `{ column, order }`. |
-| `SortOrder` | `'asc' \| 'desc'`. |
+| `DrizzleCrudConfig` | The input to `forRoot` and `forRootAsync`. |
+| `SqlCrudConfig` | The merged per-entity config. |
+| `CrudFeature` | One entry of `forFeature`: `{ service, table, config? }`. |
+| `CrudFeatureConfig` | The per-entity `config` of `forFeature`. Since 3.3.1. |
+| `SqlOperationOptions` | The options argument of every method. |
+| `SqlSearchOptions`, `SqlSearchMode` | `options.search`: `{ term, columns, mode? }`, and `"ilike" \| "fullText"`. Since 3.3.1. |
+| `PaginationOptions` | The pagination argument of `findAll` and `fullTextSearch`: `{ page, limit, sortBy, sortOrder, withCount }`. Since 3.3.1. |
+| `ICrudService` | The interface `SqlBaseCrudService` implements. |
+| `OperationOptions` | The options type of `ICrudService`. Since 3.3.1. |
+| `BulkOperationResult` | `{ success, data?, errors? }`. Since 3.3.1. |
+| `BulkOperationItemError` | One entry of a `BulkOperationException` body: `{ index?, id?, status, message }`. Since 3.3.1. |
+| `RelationConfig`, `RelationsConfig`, `RelationType` | One relation, a record of them, and `"belongsTo" \| "hasMany" \| "manyToMany"`. |
+| `RelationNode`, `SelectTree` | The resolved eager-loading plan and the parsed `options.select`. |
+| `SqlDialect` | `"postgresql" \| "mysql"`. |
+| `PrimaryKeyType` | `"serial" \| "bigserial" \| "int" \| "bigint" \| "uuid"`. The setting that uses it is deprecated. |
+| `SortColumn`, `SortOrder` | `{ column, order? }` and `"asc" \| "desc"`. |
 | `SortInput` | `string \| Array<string \| SortColumn>`, the caller `sortBy`. Since 3.4.0. |
-| `CrudFilter` | the filter object of `findAll`, `findByCursor` and `count`, groups included. Since 3.4.0. |
-| `FilterGroup` | `{ and?, or?, not? }`. Since 3.4.0. |
-| `FilterOperators` | every filter operator and its operand. Since 3.4.0. |
-| `FilterOperator` | `keyof FilterOperators`. Since 3.4.0. |
-| `ColumnFilter`, `FilterScalar` | what one column accepts. Since 3.4.0. |
-| `CursorPaginationOptions` | the second argument of `findByCursor`. Since 3.4.0. |
-| `CursorPage` | `{ data, limit, nextCursor, total? }`. Since 3.4.0. |
-| `CrudAllowlists` | the allowlist keys of `SqlCrudConfig`. Since 3.4.0; `writableRelations` since 3.5.0. |
+| `CrudFilter`, `FilterGroup` | The filter object of `findAll`, `findByCursor` and `count`, and its `{ and?, or?, not? }` groups. Since 3.4.0. |
+| `FilterOperators`, `FilterOperator` | Every filter operator with its operand, and the operator names. Since 3.4.0. |
+| `ColumnFilter`, `FilterScalar` | What one column accepts. Since 3.4.0. |
+| `CursorPaginationOptions`, `CursorPage` | The input and result of `findByCursor`. Since 3.4.0. |
+| `CrudAllowlists` | The allowlist keys of `SqlCrudConfig`. Since 3.4.0; `writableRelations` since 3.5.0. |
 | `UpsertOptions` | `{ conflictTarget?, update? }`. Since 3.4.0. |
-| `BulkMode` | `'set' \| 'perItem'`. Since 3.4.0. |
-| `ParseCrudQueryOptions`, `ParsedCrudQuery` | input and output of `parseCrudQuery`. Since 3.4.0. |
+| `BulkMode` | `"set" \| "perItem"`. Since 3.4.0. |
+| `ParseCrudQueryOptions`, `ParsedCrudQuery` | The options and result of `parseCrudQuery` and `parseQuery`. Since 3.4.0. |
 | `CollectionFilter`, `CollectionQuantifier` | `{ some?, none?, every? }` on a collection filter, and its keys. Since 3.5.0. |
-| `CrudPage`, `UncountedCrudPage` | the `findAll` envelope; with `withCount: false`, `total: null` and `hasMore`. Since 3.5.0. |
-| `RelationCounts` | `string[] \| Record<string, true \| CrudFilter>`, `options.counts`. Since 3.5.0. |
+| `CrudPage`, `UncountedCrudPage` | The `findAll` envelope, and the one with `total: null` and `hasMore`. Since 3.5.0. |
+| `RelationCounts` | `options.counts`: `string[] \| Record<string, true \| CrudFilter>`. Since 3.5.0. |
 | `CountByRow` | `{ value, count }`, one group of `countBy`. Since 3.5.0. |
-| `CrudScope`, `CrudScopeValues`, `CrudContextValue` | the `scope` config, its `column: value` pairs, and the context it reads. Since 3.5.0. |
-| `CrudEvent`, `CrudEventPhase`, `CrudSubscriber`, `CrudWriteOperation` | write events and their subscribers. Since 3.5.0. |
-| `CrudControllerOptions`, `CrudControllerInstance`, `CrudRouteName`, `CrudRouteOptions` | the controller factory's options and result. Since 3.5.0. |
+| `CrudScope`, `CrudScopeValues`, `CrudContextValue` | The `scope` config, its `column: value` pairs, and the context it reads. Since 3.5.0. |
+| `CrudEvent`, `CrudEventPhase`, `CrudSubscriber`, `CrudWriteOperation` | Write events and their subscribers. Since 3.5.0. |
+| `CrudControllerOptions`, `CrudControllerInstance`, `CrudRouteName`, `CrudRouteOptions` | The controller factory's options and result. Since 3.5.0. |
+| `ApiCrudSource`, `ApiCrudQueryOptions` | What the OpenAPI decorators describe (`{ table, ...allowlists }` or a `@CrudService` class) and their options (`{ cursor?, trash? }`). Since 3.5.0. |
+
+The full definitions are on [Config types reference](/docs/config-types).
 
 ## Re-exported Drizzle helpers
 
-For convenience, the package re-exports the Drizzle helpers most commonly used in `mapCreateDtoToEntity`, custom methods, and filter construction:
+These are pass-throughs from `drizzle-orm`, re-exported so a custom method or `mapCreateDtoToEntity` override needs one import. The package does not wrap or change them.
 
-```ts
+```ts accent=drizzle title="users.service.ts"
 import {
   and,
   asc,
@@ -129,36 +134,34 @@ import {
   notInArray,
   or,
   sql,
-} from 'nestjs-drizzle-crud';
+} from "@avytrix/nestjs-drizzle-crud";
 ```
 
-All of these are pass-throughs to `drizzle-orm`. The package doesn't wrap or extend them.
+## What is not exported?
 
-## Test utilities
+The module's internal helpers (`normalizeConfig`, `buildEntityConfig`, `connectionProviders`), the `DRIZZLE_RAW_CONFIG` token, and the service's private methods are not part of the API. If you need one of them, open an issue on <Ext to="issues">the issue tracker</Ext>: the public API may need a hook.
 
-| Export | Description |
-| --- | --- |
-| `TestCrudFactory` | Class with `createMockDb`, `createMockTable`, `createMockEntity`, `createTestService`. |
-| `BaseCrudSpecHelper` | A higher-level helper that builds a full service + fixtures. |
+## Common questions
 
-See [Testing](/docs/testing) for usage.
+<Accordions>
+  <Accordion title="How many exports does nestjs-drizzle-crud have?">
+    98: 79 of its own and 19 Drizzle helpers. Of its own, 25 are runtime values (classes, functions, decorators, tokens, exceptions and test helpers) and 54 are types.
+  </Accordion>
+  <Accordion title="Is the MCP server an export?">
+    No. `nestjs-drizzle-crud-mcp` is a command-line binary in the package, not an import. Run it with `npx -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp`.
+  </Accordion>
+  <Accordion title="Can I import from a deep path such as dist/core?">
+    Deep paths are internal and can change in any release. Import from the package root only.
+  </Accordion>
+  <Accordion title="Why are the Drizzle helpers re-exported?">
+    So code that extends a service can build conditions with `eq`, `and` or `sql` from the same import. They are the `drizzle-orm` functions themselves, unchanged.
+  </Accordion>
+</Accordions>
 
-## Binaries
+## Next steps
 
-| Command | Description |
-| --- | --- |
-| `nestjs-drizzle-crud-mcp` | MCP server over stdio that serves the package docs to any AI agent. Run it with `npx nestjs-drizzle-crud-mcp`. See [AI agents and MCP](/docs/ai-agents). |
-
-## What's **not** exported
-
-The following are internal to the package and should not be imported directly:
-
-- `DrizzleCrudModule`'s internal `connectionProviders` / `buildEntityConfig` / `normalizeConfig` helpers.
-- The internal `DRIZZLE_RAW_CONFIG` token.
-
-If you find yourself reaching for these, open a feature request. The public API may need a hook.
-
-## Next
-
-- → [Config types, `SqlCrudConfig` and `DrizzleCrudConfig`](/docs/config-types)
-- → [For AI agents: condensed package facts for code generation](/docs/llm-notes)
+<Cards>
+  <Card icon={<Braces />} title="SqlBaseCrudService API reference" href="/docs/api" description="Every method, its signature and what it throws." />
+  <Card icon={<Layers />} title="Config types reference" href="/docs/config-types" description="The full definition of every exported type." />
+  <Card icon={<Bot />} title="For AI agents" href="/docs/llm-notes" description="The condensed fact sheet for code generation." />
+</Cards>

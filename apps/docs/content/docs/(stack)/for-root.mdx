@@ -1,0 +1,171 @@
+---
+title: NestJS Drizzle module forRoot options
+description: Configure the NestJS Drizzle module with forRoot. Set the connection, dialect, soft delete, timestamps, pagination and SQL defaults once in AppModule.
+icon: Settings2
+---
+
+`DrizzleCrudModule.forRoot(config)` sets up the NestJS Drizzle module once, in your `AppModule`. It takes the dialect and either a connection string or a Drizzle instance, plus project-wide defaults for soft delete, timestamps, pagination, SQL behaviour and write events. The module is global, so every feature module can inject the database and register services with `forFeature`.
+
+<Callout type="warn" title="Pass exactly one of connectionString or db">
+  With neither, startup fails. When both are set, `db` wins and `connectionString` is ignored.
+  `connectionString` works for PostgreSQL only; on MySQL, build the Drizzle instance yourself and
+  pass it as `db`.
+</Callout>
+
+## What does forRoot take?
+
+```ts accent=nest
+DrizzleCrudModule.forRoot(config: DrizzleCrudConfig): DynamicModule
+```
+
+Every option, with the default `normalizeConfig` fills in ([`drizzle-crud.module.ts`](https://github.com/avytrix/nestjs-drizzle-crud/blob/main/packages/nestjs-drizzle-crud/src/modules/drizzle-crud.module.ts), types in [`drizzle-crud-config.interface.ts`](https://github.com/avytrix/nestjs-drizzle-crud/blob/main/packages/nestjs-drizzle-crud/src/core/interfaces/drizzle-crud-config.interface.ts)):
+
+<PropsTable
+  props={{
+    dialect: { type: '"postgresql" | "mysql"', required: true, description: "The database dialect." },
+    connectionString: { type: "string", description: "The module builds the connection with the postgres driver and closes it on shutdown. PostgreSQL only." },
+    db: { type: "Drizzle instance", description: "A Drizzle instance you built yourself, any dialect. You own its lifecycle." },
+    schema: { type: "Record<string, unknown>", description: "Your Drizzle schema, passed to drizzle() when the module builds the connection from connectionString." },
+    "defaults.softDelete": { type: "boolean", default: "true", description: "Soft delete for every entity, on a deleted_at column. Turn it on or off per entity in forFeature." },
+    "defaults.timestamps": { type: "boolean", default: "true", description: "Stamp created_at and updated_at on writes. false turns them off unless an entity sets timestamps in forFeature." },
+    "defaults.pagination.defaultLimit": { type: "number", default: "20", description: "Rows per page when the caller sends no limit." },
+    "defaults.pagination.maxLimit": { type: "number", default: "100", description: "The highest limit a caller may ask for. Set one pagination key and the other keeps its default." },
+    "defaults.sortOrder": { type: '"asc" | "desc"', description: "Opt in. Entities without a defaultSort order findAll by their createdAt column in this direction. Unset, findAll orders by the primary key." },
+    "sql.caseSensitive": { type: "boolean", default: "false", description: "false compares a bare string filter on a text column with lower() on both sides." },
+    "sql.useReturning": { type: "boolean", default: "true on PostgreSQL, false on MySQL", description: "Read the written row back with RETURNING. MySQL has no RETURNING, so the service turns it off there and warns." },
+    "sql.jsonSupport": { type: "boolean", default: "true", description: "Deprecated, no effect. Removed in the next major version." },
+    "sql.enableFullTextSearch": { type: "boolean", default: "false", description: "Deprecated, no effect. Full-text search works on PostgreSQL whatever this is set to." },
+    "hooks.enableGlobalHooks": { type: "boolean", default: "false", description: "Every service raises a before and an after event for each write on the module's CrudEventBus." },
+    "hooks.subscribers": { type: "CrudSubscriber[]", default: "[]", description: "Subscribed to the bus when it is created. Called only with enableGlobalHooks: true; without it the module logs a warning." },
+  }}
+/>
+
+## How do I connect to PostgreSQL?
+
+Pass the connection string and your schema. The module imports the `postgres` driver, builds the Drizzle instance and closes the connection on shutdown:
+
+<InstallTabs pkg="postgres" />
+
+```ts accent=nest title="app.module.ts"
+import { Module } from '@nestjs/common';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
+import * as schema from './db/schema';
+
+@Module({
+  imports: [
+    DrizzleCrudModule.forRoot({
+      dialect: 'postgresql',
+      connectionString: process.env.DATABASE_URL!,
+      schema,
+      defaults: {
+        softDelete: true,
+        timestamps: true,
+        pagination: { defaultLimit: 20, maxLimit: 100 },
+      },
+      sql: { caseSensitive: false },
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+The module opens the client with `prepare: false`, which keeps it working behind a transaction pooler such as PgBouncer. Shutdown runs in `onModuleDestroy`, so call `app.enableShutdownHooks()` in `main.ts` if you want the connection closed when the process gets a signal such as `SIGTERM`.
+
+## How do I pass my own Drizzle instance?
+
+Build it yourself and pass it as `db`. Use this for MySQL, and on PostgreSQL when you want control over the pool, SSL or other driver options.
+
+<Tabs items={["PostgreSQL", "MySQL"]}>
+<Tab value="PostgreSQL">
+
+```ts accent=nest title="app.module.ts"
+import { Module } from '@nestjs/common';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
+import * as schema from './db/schema';
+
+const client = postgres(process.env.DATABASE_URL!, { max: 10 });
+const db = drizzle(client, { schema });
+
+@Module({
+  imports: [DrizzleCrudModule.forRoot({ dialect: 'postgresql', db })],
+})
+export class AppModule {}
+```
+
+</Tab>
+<Tab value="MySQL">
+
+```ts accent=nest title="app.module.ts"
+import { Module } from '@nestjs/common';
+import { drizzle } from 'drizzle-orm/mysql2';
+import mysql from 'mysql2/promise';
+import { DrizzleCrudModule } from '@avytrix/nestjs-drizzle-crud';
+import * as schema from './db/schema';
+
+const pool = mysql.createPool({ uri: process.env.DATABASE_URL, connectionLimit: 10 });
+const db = drizzle(pool, { schema, mode: 'default' });
+
+@Module({
+  imports: [DrizzleCrudModule.forRoot({ dialect: 'mysql', db })],
+})
+export class AppModule {}
+```
+
+</Tab>
+</Tabs>
+
+When you pass `db`, the module does not close it on shutdown. That is your job, and it lets you share the same pool with migrations, raw queries and other Drizzle code.
+
+## What does the module export?
+
+The module is global, so these tokens are injectable anywhere after `forRoot`:
+
+| Token | Value |
+| --- | --- |
+| `DRIZZLE_DB` | The Drizzle instance, built or passed in |
+| `DRIZZLE_CRUD_CONFIG` | The normalized project config: `dialect`, `defaults`, `sql` and `hooks.enableGlobalHooks`, defaults filled in |
+| `DRIZZLE_CONNECTION` | The connection manager that owns shutdown |
+| `CrudEventBus` | The bus for [write events](/docs/events); subscribe to it to react to writes |
+
+## Which defaults should I change first?
+
+Two settings trip people up, and both fail loudly at startup since 3.3.1:
+
+- **Tables without `created_at`, `updated_at` or `deleted_at`.** Set `defaults: { softDelete: false, timestamps: false }`, then turn them on per entity in [`forFeature`](/docs/for-feature) where the columns exist.
+- **camelCase schema keys** such as `deletedAt: timestamp('deleted_at')`. The settings name the key in your Drizzle table object, so set `softDelete.column` and the `timestamps` keys per entity. The startup error names the key to use.
+
+`caseSensitive: false` applies `lower()` only to text columns (`text`, `varchar`, `char`). A string filter on an integer, uuid or enum column stays a plain `=`, so a query string value such as `?author_id=1` works. For pattern matching, use the explicit `like` and `ilike` [operators](/docs/filtering).
+
+## When should I use forRootAsync instead?
+
+When the config depends on another provider, typically `ConfigService` after env validation, or a secret you fetch at startup. [`forRootAsync`](/docs/for-root-async) takes the same `DrizzleCrudConfig`, returned from a factory.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Can forRoot build a MySQL connection from a connection string?">
+    No. `connectionString` is PostgreSQL only. On MySQL, build the Drizzle instance with `mysql2` and pass it as `db`.
+  </Accordion>
+  <Accordion title="Does the module close the database connection on shutdown?">
+    Only when it built the connection from `connectionString`. A `db` you pass in is yours to close. Call `app.enableShutdownHooks()` so a signal triggers the shutdown.
+  </Accordion>
+  <Accordion title="What are the default page size and maximum limit?">
+    `defaultLimit` is 20 and `maxLimit` is 100. Setting one of them keeps the other at its default.
+  </Accordion>
+  <Accordion title="How does findAll sort when no sortBy is passed?">
+    By the entity's `defaultSort` if set, else by `createdAt` in the `defaults.sortOrder` direction if you set one, else by the primary key. The primary key is always the last tiebreaker.
+  </Accordion>
+  <Accordion title="Is hooks.enableGlobalHooks deprecated?">
+    No. Since 3.5.0 it turns on module-level write events on the `CrudEventBus`. Per-service hooks run whether it is on or off.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Workflow />} title="forRootAsync with ConfigService" href="/docs/for-root-async" description="Build the same config from injected providers." />
+  <Card icon={<Layers />} title="forFeature" href="/docs/for-feature" description="Bind each service to its table and override defaults per entity." />
+  <Card icon={<Braces />} title="Config types" href="/docs/config-types" description="The full DrizzleCrudConfig and SqlCrudConfig types." />
+</Cards>

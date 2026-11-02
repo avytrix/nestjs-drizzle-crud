@@ -1,206 +1,164 @@
 ---
-title: Config types
-description: "SqlCrudConfig and DrizzleCrudConfig: the two interfaces that drive the module."
+title: Config types reference
+description: The nestjs-drizzle-crud config types, DrizzleCrudConfig for forRoot and SqlCrudConfig per entity, with every option, default and type the methods take.
+icon: Settings2
 ---
 
-The package exposes two config types: `DrizzleCrudConfig` (the input to `forRoot` / `forRootAsync`) and `SqlCrudConfig` (the merged, per-entity config the base class actually uses).
+nestjs-drizzle-crud is configured through two types: `DrizzleCrudConfig`, the project config you pass to `forRoot` or `forRootAsync`, and `SqlCrudConfig`, the merged per-entity config each service runs on. The module builds the second from the first, then layers `@CrudService` metadata and the `forFeature` config on top, so an entity only names the settings it changes.
+
+<Callout title="Column settings take the table key">
+  `softDelete.column`, `timestamps.createdAt`, `timestamps.updatedAt`, `versionColumn` and the keys
+  of a fixed `scope` name the key in your Drizzle table object (`deletedAt` for
+  `deletedAt: timestamp("deleted_at")`), not the SQL name. A key the table lacks throws when the
+  service is built, with the key to use.
+</Callout>
 
 ## `DrizzleCrudConfig`
 
-The input to `DrizzleCrudModule.forRoot(config)` and `forRootAsync`. It describes the project-level configuration: the database connection, schema, and global defaults.
+The input to `DrizzleCrudModule.forRoot(config)`, and what the `forRootAsync` factory returns. It holds the connection and the project defaults.
 
-```ts twoslash
-// ---cut---
-interface DrizzleCrudConfig {
-  /** Required. */
-  dialect: 'postgresql' | 'mysql';
+<PropsTable
+  props={{
+    dialect: { type: '"postgresql" | "mysql"', required: true, description: "The SQL dialect." },
+    db: { type: "any", description: "A Drizzle instance you built. Required for MySQL. The module uses it as is and never closes it." },
+    connectionString: { type: "string", description: "PostgreSQL only. The module opens the connection with postgres and closes it on shutdown." },
+    schema: { type: "Record<string, unknown>", description: "Optional. Passed to drizzle() when the module builds the connection from connectionString." },
+    "defaults.softDelete": { type: "boolean", default: "true", description: "Soft delete on the deleted_at column for every entity." },
+    "defaults.timestamps": { type: "boolean", default: "true", description: "Set created_at and updated_at on every entity." },
+    "defaults.pagination.defaultLimit": { type: "number", default: "20", description: "Page size when the caller passes no limit." },
+    "defaults.pagination.maxLimit": { type: "number", default: "100", description: "The largest limit a caller gets. Larger values are clamped." },
+    "defaults.sortOrder": { type: '"asc" | "desc"', description: "Opt-in. Entities without a defaultSort sort by their createdAt column in this direction. Unset, there is no fallback sort." },
+    "sql.caseSensitive": { type: "boolean", default: "false", description: "Exact string matches and startsWith, endsWith, contains follow this." },
+    "sql.useReturning": { type: "boolean", default: "dialect === \"postgresql\"", description: "Read written rows back with RETURNING. Forced off on MySQL." },
+    "sql.jsonSupport": { type: "boolean", description: "Deprecated. Has no effect." },
+    "sql.enableFullTextSearch": { type: "boolean", description: "Deprecated. Has no effect: full-text search works on PostgreSQL either way." },
+    "hooks.enableGlobalHooks": { type: "boolean", default: "false", description: "Every service raises a before and an after event per write on the CrudEventBus." },
+    "hooks.subscribers": { type: "CrudSubscriber[]", description: "Subscribed when the bus is created. Without enableGlobalHooks they never fire, and the module logs a warning." },
+  }}
+/>
 
-  /** PostgreSQL: connection string. The module builds the connection. */
-  connectionString?: string;
+Provide one of `db` or `connectionString`; with neither, startup fails. A `connectionString` with `dialect: "mysql"` also fails, because only PostgreSQL connections are built for you. See [NestJS Drizzle module forRoot options](/docs/for-root) and [Drizzle forRootAsync with ConfigService](/docs/for-root-async).
 
-  /** Any dialect: pre-built Drizzle instance. Required for MySQL. */
-  db?: any;
+`sql.jsonSupport`, `sql.enableFullTextSearch` and `primaryKeyType` are deprecated and have no effect. They still compile so existing configs keep working, and they will be removed in the next major version. `hooks.enableGlobalHooks` was deprecated as a no-op in 3.3.1 and works again since 3.5.0: it turns on [write events](/docs/events).
 
-  /** Required when building from connectionString. */
-  schema?: Record<string, unknown>;
+## How is `SqlCrudConfig` built?
 
-  /** Per-project defaults applied to every entity unless overridden. */
-  defaults?: {
-    softDelete?: boolean;
-    timestamps?: boolean;
-    /** Either key alone keeps the other's default. */
-    pagination?: { defaultLimit?: number; maxLimit?: number };
-    sortOrder?: 'asc' | 'desc';
-  };
+Each entity's config is the project defaults with three layers on top, each overriding the one before:
 
-  /** Dialect tuning. */
-  sql?: {
-    caseSensitive?: boolean;
-    useReturning?: boolean;
-    /** @deprecated Has no effect. */
-    jsonSupport?: boolean;
-    /** @deprecated Has no effect. */
-    enableFullTextSearch?: boolean;
-  };
+| Layer | Source |
+| --- | --- |
+| 1 | `forRoot` / `forRootAsync` defaults, after the module fills in its own |
+| 2 | `@CrudService(config)` decorator metadata on the service class |
+| 3 | The `config` object in `forFeature` |
+| 4 | `db` and `table`, set by `forFeature` |
 
-  /** Module-level write events. See /docs/events. */
-  hooks?: {
-    enableGlobalHooks?: boolean;   // default false
-    subscribers?: Array<Record<string, unknown>>; // CrudSubscriber[]
-  };
-}
-```
-
-### Defaults
-
-```ts
-defaults: {
-  softDelete: true,
-  timestamps: true,
-  pagination: { defaultLimit: 20, maxLimit: 100 },
-  // sortOrder: opt-in (no fallback)
-}
-
-sql: {
-  caseSensitive: false,
-  useReturning: dialect === 'postgresql',
-}
-```
-
-`sql.jsonSupport`, `sql.enableFullTextSearch` and `primaryKeyType` are deprecated. Nothing reads them, so they have no effect. They are still accepted so existing configs compile, and will be removed in the next major version. `hooks.enableGlobalHooks` was deprecated in 3.3.1 and does something again since 3.5.0: it turns on [write events](/docs/events).
+`softDelete`, `timestamps`, `pagination` and `sql` merge one level deep at every layer, so `pagination: { defaultLimit: 5 }` keeps the project `maxLimit`. Every other key, the allowlist arrays included, replaces the value from the layer before. `timestamps: undefined` turns timestamps off for that entity.
 
 ## `SqlCrudConfig`
 
-The fully-resolved, per-entity configuration. The package constructs this by layering:
+The resolved per-entity config. It extends `CrudAllowlists`. In `forFeature` you pass the optional `CrudFeatureConfig` form of it, and the module fills in `dialect`, `db` and `table`.
 
-```
-global defaults (DrizzleCrudConfig)
-  → @CrudService decorator metadata
-    → forFeature { config }
-      → db, table (set by forFeature)
-```
+<PropsTable
+  props={{
+    dialect: { type: '"postgresql" | "mysql"', required: true, description: "Set by the module from forRoot." },
+    db: { type: "any", required: true, description: "The Drizzle instance. Set by the module." },
+    table: { type: "any", required: true, description: "The Drizzle table. Set by forFeature." },
+    primaryKey: { type: "string", default: '"id"', description: "The table key of the primary key column. Its type comes from the column." },
+    primaryKeyType: { type: "PrimaryKeyType", description: "Deprecated. Has no effect." },
+    "softDelete.enabled": { type: "boolean", default: "true", description: "Reads hide rows whose soft delete column is set, and softDelete sets it." },
+    "softDelete.column": { type: "string", default: '"deleted_at"', description: "The table key of the soft delete column." },
+    "timestamps.createdAt": { type: "string", default: '"created_at"', description: "Set on create." },
+    "timestamps.updatedAt": { type: "string", default: '"updated_at"', description: "Set on create and on every update." },
+    "pagination.defaultLimit": { type: "number", default: "20", description: "Page size when the caller passes no limit." },
+    "pagination.maxLimit": { type: "number", default: "100", description: "Upper bound for limit." },
+    defaultSort: { type: "SortColumn[]", description: "ORDER BY when the caller passes no sortBy, applied in order. An unknown column is skipped with a warning." },
+    "sql.caseSensitive": { type: "boolean", default: "false", description: "As in DrizzleCrudConfig." },
+    "sql.useReturning": { type: "boolean", default: "true on postgresql", description: "Forced off on MySQL when the service is built." },
+    relations: { type: "RelationsConfig", description: "Relations by name: belongs-to, has-many, many-to-many, nested. See RelationConfig below." },
+    filterableColumns: { type: "string[]", description: "Columns and \"relation.column\" paths a filter may use. Unset allows all." },
+    sortableColumns: { type: "string[]", description: "Columns and \"belongsTo.column\" paths a caller may sort by." },
+    selectableColumns: { type: "string[]", description: "Columns and dotted paths select may name." },
+    searchableColumns: { type: "string[]", description: "Columns search and fullTextSearch may use." },
+    loadableRelations: { type: "string[]", description: "Relation paths relations and counts may load. \"states.cities\" also allows \"states\"." },
+    writableColumns: { type: "string[]", description: "Columns create, update and upsert may write. Anything else is a 400." },
+    writableRelations: { type: "string[]", description: "Relations a create body may nest, and attach, detach and sync may change. Unset, nested create is off." },
+    scope: { type: "CrudScope", description: "column: value pairs ANDed into every read and write and set on create. A function reads the call's context." },
+    versionColumn: { type: "string", description: "An integer column for optimistic locking. Starts at 1, plus one on every write." },
+    events: { type: "CrudEventBus", description: "Set by the module when hooks.enableGlobalHooks is on. Pass your own when you build a service by hand." },
+  }}
+/>
 
-`softDelete`, `timestamps`, `pagination` and `sql` merge one level deep at every layer, so each layer only names the settings it changes. Any other key replaces the value from the layer before. When the service is built it checks that the `softDelete.column` and `timestamps` keys exist on the table, and throws with the key to use if one does not.
+An allowlist that is unset allows everything; a request that names something outside a set list is a 400. See [Allowlists](/docs/allowlists), [Multi-tenancy](/docs/multi-tenancy), [Optimistic locking](/docs/optimistic-locking) and [Global hooks and write events](/docs/events).
 
-```ts twoslash
-type RelationConfig = { table: any };
-// ---cut---
-interface SqlCrudConfig {
-  // ---- Set by the module ----
-  dialect: 'postgresql' | 'mysql';
-  db: any;
-  table: any;
+## `CrudFeature` and `CrudFeatureConfig`
 
-  // ---- Primary key ----
-  primaryKey: string;              // default 'id'
-  /** @deprecated Has no effect: the type comes from the column. */
-  primaryKeyType?:
-    | 'serial' | 'bigserial' | 'int' | 'bigint' | 'uuid';
+`forFeature` takes an array of `CrudFeature`, one per entity.
 
-  // ---- Soft delete ----
-  softDelete?: {
-    enabled: boolean;
-    column: string;               // the table key, e.g. 'deleted_at' or 'deletedAt'
-  };
-
-  // ---- Timestamps ----
-  timestamps?: {
-    createdAt: string;            // the table key, e.g. 'created_at'
-    updatedAt: string;            // the table key, e.g. 'updated_at'
-  };
-
-  // ---- Pagination ----
-  pagination?: {
-    defaultLimit: number;
-    maxLimit: number;
-  };
-
-  // ---- Default ORDER BY ----
-  defaultSort?: Array<{
-    column: string;
-    order: 'asc' | 'desc';
-  }>;
-
-  // ---- Dialect tuning ----
-  sql?: {
-    caseSensitive: boolean;
-    useReturning: boolean;
-    /** @deprecated Has no effect. */
-    jsonSupport: boolean;
-    /** @deprecated Has no effect. */
-    enableFullTextSearch: boolean;
-  };
-
-  // ---- Relations: belongs-to, has-many, many-to-many, nested ----
-  relations?: Record<string, RelationConfig>;
-
-  // ---- Allowlists (CrudAllowlists). Unset allows everything. ----
-  filterableColumns?: string[];   // columns and 'relation.column'
-  sortableColumns?: string[];     // columns and 'belongsTo.column'
-  selectableColumns?: string[];   // columns and dotted paths
-  searchableColumns?: string[];
-  loadableRelations?: string[];   // relation paths, also for counts
-  writableColumns?: string[];     // create, update, upsert
-  writableRelations?: string[];   // nested create, attach, detach, sync
-
-  // ---- Tenant scope: ANDed into every read and write, set on create ----
-  scope?:
-    | Record<string, unknown>
-    | ((ctx: Record<string, unknown>) => Record<string, unknown> | null);
-
-  // ---- Optimistic locking: integer column, +1 on every write ----
-  versionColumn?: string;
-
-  // ---- Event bus, set by the module when hooks.enableGlobalHooks is on ----
-  events?: { emit(event: unknown): Promise<void> }; // a CrudEventBus
-}
-```
-
-The allowlists are described in [Allowlists](/docs/allowlists). Arrays replace, they do not merge, across the config layers. `scope` is on [Multi-tenancy](/docs/multi-tenancy), `versionColumn` on [Optimistic locking](/docs/optimistic-locking) and `events` on [Global hooks and write events](/docs/events). A `versionColumn` or a fixed `scope` key that is not a column fails at startup.
-
-## `RelationConfig`, `RelationsConfig` and `RelationType`
-
-```ts twoslash
-type SortColumn = { column: string; order: 'asc' | 'desc' };
-// ---cut---
-type RelationType = 'belongsTo' | 'hasMany' | 'manyToMany';
-
-interface RelationConfig {
-  table: any;                  // the target Drizzle table
-  type?: RelationType;         // defaults to 'belongsTo'
-  // belongs-to
-  localKey?: string;           // the FK column on the *current* table (required)
-  references?: string;         // the target column (defaults to 'id')
-  // has-many
-  foreignKey?: string;         // the column on the *target* table pointing back here (required)
-  parentKey?: string;          // the column on the current table it matches (defaults to that table's primary key)
-  // many-to-many
-  through?: any;               // the join table (required)
-  throughLocalKey?: string;    // join column matching parentKey (required)
-  throughForeignKey?: string;  // join column matching references (required)
-  // collections only
-  orderBy?: SortColumn[];      // how to order the children, applied in SQL
-  // relations of the RELATED table, addressable as 'relName.childName'
-  relations?: Record<string, RelationConfig>;
+```ts title="drizzle-crud-config.interface.ts"
+interface CrudFeature {
+  service: new (...args: any[]) => any; // your SqlBaseCrudService subclass
+  table: any;                           // the Drizzle table
+  config?: CrudFeatureConfig;           // per-entity overrides
 }
 
-type RelationsConfig = Record<string, RelationConfig>;
+type CrudFeatureConfig = Partial<
+  Omit<SqlCrudConfig, "softDelete" | "timestamps" | "pagination" | "sql">
+> & {
+  softDelete?: Partial<NonNullable<SqlCrudConfig["softDelete"]>>;
+  timestamps?: Partial<NonNullable<SqlCrudConfig["timestamps"]>>;
+  pagination?: Partial<NonNullable<SqlCrudConfig["pagination"]>>;
+  sql?: Partial<NonNullable<SqlCrudConfig["sql"]>>;
+};
 ```
 
-A relation missing its required keys throws when the service is constructed, nested relations included, with the full path in the message. See [Relations](/docs/relations).
+Every key of `CrudFeatureConfig` is optional. Before 3.3.1, `config` was typed `Record<string, any>`, so a typo or a half-filled `pagination` compiled. See [forFeature](/docs/for-feature).
+
+```ts accent=nest title="users.module.ts"
+DrizzleCrudModule.forFeature([
+  {
+    service: UsersService,
+    table: users,
+    config: {
+      softDelete: { column: "deletedAt" },
+      pagination: { defaultLimit: 50 },
+      filterableColumns: ["name", "status", "state.name"],
+    },
+  },
+]);
+```
+
+## `RelationConfig`
+
+One entry of `relations`. `RelationsConfig` is `Record<string, RelationConfig>` and `RelationType` is `"belongsTo" | "hasMany" | "manyToMany"`.
+
+<PropsTable
+  props={{
+    table: { type: "any", required: true, description: "The related Drizzle table." },
+    type: { type: "RelationType", default: '"belongsTo"', description: "belongsTo resolves to an object or null; hasMany and manyToMany to an array." },
+    localKey: { type: "string", description: "belongsTo, required: the foreign key column on this table." },
+    references: { type: "string", default: '"id"', description: "belongsTo and manyToMany: the referenced column on the related table." },
+    foreignKey: { type: "string", description: "hasMany, required: the column on the related table that points back here." },
+    parentKey: { type: "string", description: "hasMany and manyToMany: the column on this table being pointed at. Defaults to the host table's primary key." },
+    through: { type: "any", description: "manyToMany, required: the join table." },
+    throughLocalKey: { type: "string", description: "manyToMany, required: the join column matching parentKey." },
+    throughForeignKey: { type: "string", description: "manyToMany, required: the join column matching references." },
+    orderBy: { type: "SortColumn[]", description: "hasMany and manyToMany: how to order the collection, in SQL." },
+    relations: { type: "RelationsConfig", description: "Relations of the related table, loadable as \"relName.childName\"." },
+  }}
+/>
+
+A relation missing its required keys throws when the service is built, nested relations included, with the full path in the message. See [Relations](/docs/relations).
 
 ## `RelationNode` and `SelectTree`
 
 The resolved eager-loading plan and the parsed `options.select`. Both are exported for subclasses that override the loader; normal use never touches them.
 
-```ts twoslash
-type RelationConfig = { table: any };
-// ---cut---
+```ts title="sql-crud-config.interface.ts"
 interface RelationNode {
   name: string;
   config: RelationConfig;
   children: RelationNode[];
-  joined?: boolean;   // folded into the main query as a LEFT JOIN
+  joined?: boolean; // folded into the main query as a LEFT JOIN
 }
 
 interface SelectTree {
@@ -209,38 +167,49 @@ interface SelectTree {
 }
 ```
 
-## `SqlSearchOptions`
+## `SqlOperationOptions` and `SqlSearchOptions`
 
-`SqlOperationOptions.search` is accepted by `findAll` and `count`.
+`SqlOperationOptions` is the last argument of every method; its keys are listed on the [API reference](/docs/api#sqloperationoptions). Its `search` key is a `SqlSearchOptions`:
 
-```ts twoslash
-// ---cut---
-type SqlSearchMode = 'ilike' | 'fullText';
+```ts title="sql-crud-config.interface.ts"
+type SqlSearchMode = "ilike" | "fullText";
 
 interface SqlSearchOptions {
   term: string;
   columns: string[];
-  mode?: SqlSearchMode;
+  mode?: SqlSearchMode; // default "ilike"
 }
 ```
 
-The default mode is `ilike`, which searches each configured column with a
-contains-style pattern and joins the column predicates with `OR`. `fullText` is
-PostgreSQL-only and compiles to `to_tsvector(...) @@ plainto_tsquery(...)`.
+`ilike` matches each column with an escaped contains pattern and joins them with `OR` (plain `LIKE` on MySQL). `fullText` is PostgreSQL only and compiles to `to_tsvector(...) @@ plainto_tsquery(...)`.
+
+## `PaginationOptions`
+
+The second argument of `findAll` and `fullTextSearch`.
+
+<PropsTable
+  props={{
+    page: { type: "number", default: "1", description: "1-based. Values below 1 are clamped to 1." },
+    limit: { type: "number", default: "pagination.defaultLimit", description: "Clamped to 1 to pagination.maxLimit." },
+    sortBy: { type: "SortInput", description: "One column, a list, or a comma separated string. A - prefix sorts descending." },
+    sortOrder: { type: '"asc" | "desc"', default: '"desc"', description: "Direction for a single unprefixed sortBy column." },
+    withCount: { type: "boolean", default: "true", description: "false skips the COUNT(*): total is null and hasMore is set." },
+  }}
+/>
 
 ## Filter, sort, cursor and upsert types
 
-Added in 3.4.0. See [Filtering](/docs/filtering), [Pagination & sorting](/docs/pagination-sorting), [Cursor pagination](/docs/cursor-pagination) and [Upsert](/docs/upsert).
+Added in 3.4.0. See [Filtering](/docs/filtering), [Pagination and sorting](/docs/pagination-sorting), [Cursor pagination](/docs/cursor-pagination) and [Upsert](/docs/upsert).
 
-```ts
+```ts title="query.interface.ts"
 type FilterScalar = string | number | boolean | bigint | Date;
 type ColumnFilter = FilterScalar | FilterScalar[] | FilterOperators | null | undefined;
 
 interface FilterOperators {
-  eq?; neq?; gt?; gte?; lt?; lte?;
+  eq?: unknown; neq?: unknown; gt?: unknown; gte?: unknown; lt?: unknown; lte?: unknown;
   like?: string; ilike?: string;
   in?: unknown[]; notIn?: unknown[]; between?: [unknown, unknown];
-  isNull?: boolean | 'true' | 'false'; isNotNull?: boolean | 'true' | 'false';
+  isNull?: boolean | "true" | "false"; isNotNull?: boolean | "true" | "false";
   startsWith?: string; endsWith?: string; contains?: string;
   iStartsWith?: string; iEndsWith?: string; iContains?: string;
   arrayContains?: unknown[]; arrayOverlaps?: unknown[]; jsonContains?: unknown;
@@ -248,29 +217,35 @@ interface FilterOperators {
 type FilterOperator = keyof FilterOperators;
 
 interface FilterGroup { and?: CrudFilter[]; or?: CrudFilter[]; not?: CrudFilter }
-type CrudFilter = FilterGroup & { [key: string]: ColumnFilter | CrudFilter | CrudFilter[] };
+type CrudFilter = FilterGroup & {
+  [key: string]: ColumnFilter | CrudFilter | CrudFilter[] | CollectionFilter;
+};
 
+type SortOrder = "asc" | "desc";
+interface SortColumn { column: string; order?: SortOrder } // order defaults to "asc"
 type SortInput = string | Array<string | SortColumn>;
 
 interface CursorPaginationOptions {
   cursor?: string | null;
-  after?: string | null;   // alias of cursor
+  after?: string | null; // alias of cursor
   limit?: number;
   sortBy?: SortInput;
-  sortOrder?: 'asc' | 'desc';
-  count?: boolean;         // default false
+  sortOrder?: SortOrder;
+  count?: boolean;       // default false
 }
 interface CursorPage<T> { data: T[]; limit: number; nextCursor: string | null; total?: number }
 
 interface UpsertOptions { conflictTarget?: string | string[]; update?: string[] }
-type BulkMode = 'set' | 'perItem';
+type BulkMode = "set" | "perItem";
 ```
 
-## 3.5.0 types
+`CrudAllowlists` is the seven allowlist keys of `SqlCrudConfig`, from `filterableColumns` to `writableColumns`. `ParseCrudQueryOptions` extends it with `relations`, `primaryKey`, `searchColumns`, `allowTrash` and `ignore`; it and `ParsedCrudQuery` are described on [Parse query strings into filters](/docs/query-parsing).
 
-See [Relation filters](/docs/relation-filters), [Aggregates](/docs/aggregates), [Pagination](/docs/pagination-sorting#how-do-i-skip-the-count-query), [Multi-tenancy](/docs/multi-tenancy), [Global hooks and write events](/docs/events) and [CRUD controller factory](/docs/controller-factory).
+## Page, count, scope, event and controller types
 
-```ts
+Added in 3.5.0. See [Relation filters](/docs/relation-filters), [Aggregates](/docs/aggregates), [Multi-tenancy](/docs/multi-tenancy), [Global hooks and write events](/docs/events), [CRUD controller factory](/docs/controller-factory) and [OpenAPI docs](/docs/openapi).
+
+```ts title="query.interface.ts"
 interface CollectionFilter { some?: CrudFilter; none?: CrudFilter; every?: CrudFilter }
 type CollectionQuantifier = keyof CollectionFilter;
 
@@ -286,9 +261,9 @@ type CrudContextValue = Record<string, unknown>;
 type CrudScopeValues = Record<string, unknown>;
 type CrudScope = CrudScopeValues | ((context: CrudContextValue) => CrudScopeValues | null);
 
-type CrudWriteOperation = 'create' | 'update' | 'upsert' | 'softDelete' | 'restore'
-  | 'delete' | 'attach' | 'detach' | 'sync';
-type CrudEventPhase = 'before' | 'after';
+type CrudWriteOperation = "create" | "update" | "upsert" | "softDelete" | "restore"
+  | "delete" | "attach" | "detach" | "sync";
+type CrudEventPhase = "before" | "after";
 interface CrudEvent<T = any> {
   entity: string; operation: CrudWriteOperation; phase: CrudEventPhase; bulk: boolean;
   ids: unknown[]; input?: unknown; rows: T[]; transaction?: unknown; context?: CrudContextValue;
@@ -297,69 +272,68 @@ interface CrudSubscriber<T = any> {
   entities?: string[];
   beforeWrite?(e: CrudEvent<T>): void | Promise<void>;
   afterWrite?(e: CrudEvent<T>): void | Promise<void>;
-  // plus before/after for Create, Update, Upsert, SoftDelete, Restore,
+  // plus before and after for Create, Update, Upsert, SoftDelete, Restore,
   // Delete, Attach, Detach and Sync: beforeCreate, afterCreate, ...
 }
 
-type CrudRouteName = 'list' | 'trash' | 'get' | 'create' | 'update' | 'delete'
-  | 'softDelete' | 'restore' | 'bulkCreate' | 'bulkUpdate' | 'bulkDelete' | 'bulkRestore';
+type CrudRouteName = "list" | "trash" | "get" | "create" | "update" | "delete"
+  | "softDelete" | "restore" | "bulkCreate" | "bulkUpdate" | "bulkDelete" | "bulkRestore";
 interface CrudRouteOptions { enabled?: boolean; decorators?: MethodDecorator[] }
 interface CrudControllerOptions {
   path?: string;
-  idType?: 'int' | 'uuid' | 'string';
+  idType?: "int" | "uuid" | "string";
   dto?: { create?: Type<unknown>; update?: Type<unknown> };
   query?: ParseCrudQueryOptions;
   routes?: Partial<Record<CrudRouteName, boolean | CrudRouteOptions>>;
   decorators?: MethodDecorator[];
   classDecorators?: ClassDecorator[];
-  deleteMode?: 'hard' | 'soft';
+  deleteMode?: "hard" | "soft"; // default "hard"
   openapi?: true | ApiCrudSource;
 }
+interface CrudControllerInstance<S> { readonly service: S }
 
-type ApiCrudSource = (ParseCrudQueryOptions & { table: any }) | (abstract new (...args: any[]) => unknown);
+type ApiCrudSource =
+  | (ParseCrudQueryOptions & { table: any })
+  | (abstract new (...args: any[]) => unknown);
 interface ApiCrudQueryOptions { cursor?: boolean; trash?: boolean }
 ```
 
-`PaginationOptions` gains `withCount?: boolean`, and `ParsedCrudQuery` gains `pagination.withCount` and `counts`.
+## Service interface types
 
-`ParseCrudQueryOptions` and `ParsedCrudQuery` are on [Parse query strings into filters](/docs/query-parsing#what-does-it-return).
+`ICrudService<T, CreateDto, UpdateDto, FilterDto>` is the interface `SqlBaseCrudService` implements: `find`, `findOne`, `findAll`, `create`, `update`, `softDelete`, `restore`, `delete`, the five mass methods, `exists` and `count`. It types options as `OperationOptions`, the older subset of `SqlOperationOptions` (`transaction`, `relations`, `select`, `search`, `hooks`).
 
-## `CrudFeature`
-
-The input to `forFeature`:
-
-```ts twoslash
-import { SqlBaseCrudService, type SqlCrudConfig } from 'nestjs-drizzle-crud';
-// ---cut---
-type CrudFeatureConfig = Partial<
-  Omit<SqlCrudConfig, 'softDelete' | 'timestamps' | 'pagination' | 'sql'>
-> & {
-  softDelete?: Partial<NonNullable<SqlCrudConfig['softDelete']>>;
-  timestamps?: Partial<NonNullable<SqlCrudConfig['timestamps']>>;
-  pagination?: Partial<NonNullable<SqlCrudConfig['pagination']>>;
-  sql?: Partial<NonNullable<SqlCrudConfig['sql']>>;
-};
-
-interface CrudFeature {
-  service: typeof SqlBaseCrudService;
-  table: any;                  // Drizzle table
-  config?: CrudFeatureConfig;  // per-entity overrides
+```ts title="crud-service.interface.ts"
+interface BulkOperationResult<T> {
+  success: boolean;
+  data?: T[];
+  errors?: Array<{ id?: any; index?: number; error: Error }>;
 }
+
+type SqlDialect = "postgresql" | "mysql";
+type PrimaryKeyType = "serial" | "bigserial" | "int" | "bigint" | "uuid"; // deprecated setting
 ```
 
-`CrudFeatureConfig` is exported. Every key is optional, `db`, `table` and `dialect` are set for you, and the four object settings merge with the project defaults. Before 3.3.1 `config` was typed `Record<string, any>`, so a typo or a half-filled `pagination` compiled.
+## Common questions
 
-## `SqlDialect`, `PrimaryKeyType`, `SortColumn`, `SortOrder`
+<Accordions>
+  <Accordion title="Is schema required when I pass a connectionString?">
+    No. `schema` is optional. When you give it, the module passes it to `drizzle()` as it builds the PostgreSQL connection.
+  </Accordion>
+  <Accordion title="Do allowlist arrays merge across the config layers?">
+    No. Only `softDelete`, `timestamps`, `pagination` and `sql` merge one level deep. An array set in `forFeature` replaces the one from `@CrudService`.
+  </Accordion>
+  <Accordion title="What happens if I set useReturning to true on MySQL?">
+    The service turns it off when it is built and logs a warning, because MySQL has no `RETURNING`. Written rows are read back with a `SELECT` instead.
+  </Accordion>
+  <Accordion title="What is the default sort of findAll?">
+    With no `sortBy` and no `defaultSort`, rows are ordered by the primary key, ascending. Set `defaultSort` per entity, or `defaults.sortOrder` in `forRoot` to sort by the `createdAt` column.
+  </Accordion>
+</Accordions>
 
-```ts twoslash
-// ---cut---
-type SqlDialect = 'postgresql' | 'mysql';
-type PrimaryKeyType = 'serial' | 'bigserial' | 'int' | 'bigint' | 'uuid';
-type SortOrder = 'asc' | 'desc';
-interface SortColumn { column: string; order: SortOrder }
-```
+## Next steps
 
-## Next
-
-- → [Exports: the full public API surface](/docs/exports)
-- → [API reference: every method's full signature](/docs/api)
+<Cards>
+  <Card icon={<Braces />} title="SqlBaseCrudService API reference" href="/docs/api" description="Every method, its signature and what it throws." />
+  <Card icon={<Package />} title="Exports" href="/docs/exports" description="Everything you can import from the package root." />
+  <Card icon={<Database />} title="NestJS Drizzle module forRoot options" href="/docs/for-root" description="Connect the module to PostgreSQL or MySQL." />
+</Cards>

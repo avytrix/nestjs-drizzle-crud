@@ -1,0 +1,117 @@
+---
+title: Row locks with SELECT FOR UPDATE
+description: Drizzle SELECT FOR UPDATE in NestJS. Pass lock or forNoKeyUpdate to find, findOne or findAll inside a transaction to lock rows on PostgreSQL.
+icon: Lock
+---
+
+For a Drizzle `SELECT ... FOR UPDATE` in NestJS, pass `lock: 'update'` (or `'share'`, or `forNoKeyUpdate: true`) to `find`, `findOne`, `findAll` or `findByCursor`, together with a transaction. The package adds Drizzle's `.for(...)` clause to the query, naming only the service's own table, and the rows stay locked until the transaction commits or rolls back. Row locks are PostgreSQL only; on MySQL the options are ignored.
+
+<Callout type="warn" title="A lock without a transaction does nothing useful">
+  Pass `{ transaction: tx }` with the lock. Without it the `SELECT` runs in its own implicit transaction, and the lock is released the moment the statement ends, before your write.
+</Callout>
+
+## How do I lock a row before updating it?
+
+Read it with `lock: 'update'` inside a transaction, then write in the same transaction:
+
+```ts title="accounts.service.ts"
+withdraw(id: number, amount: number) {
+  return this.executeSqlTransaction(async (tx) => {
+    const account = await this.find(id, { lock: 'update', transaction: tx });
+    // SELECT ... FROM accounts WHERE id = $1 LIMIT 1 FOR UPDATE OF "accounts"
+    if (!account || account.balance < amount) {
+      throw new BadRequestException('Insufficient funds');
+    }
+    return this.update(id, { balance: account.balance - amount }, { transaction: tx });
+  });
+}
+```
+
+A second transaction that runs the same `find` waits until the first one ends, so it reads the new balance instead of a stale one. That is the lost update this prevents. See [Transactions](/docs/transactions) for `executeSqlTransaction` and `db.transaction`.
+
+## What lock options are there?
+
+Two fields on `SqlOperationOptions`, both PostgreSQL only:
+
+<PropsTable
+  props={{
+    lock: { type: '"update" | "share" | "none"', default: '"none"', description: "FOR UPDATE or FOR SHARE on the selected rows. \"none\" adds no clause." },
+    forNoKeyUpdate: { type: "boolean", default: "false", description: "FOR NO KEY UPDATE on the selected rows. Wins over lock when both are set." },
+  }}
+/>
+
+| Option | SQL | Blocks |
+| --- | --- | --- |
+| `lock: 'update'` | `FOR UPDATE OF <table>` | Every other lock and every write to the rows. |
+| `forNoKeyUpdate: true` | `FOR NO KEY UPDATE OF <table>` | Other writes, but not foreign key checks. |
+| `lock: 'share'` | `FOR SHARE OF <table>` | Writes, but not other `FOR SHARE` readers. |
+| `lock: 'none'` or unset | none | Nothing. |
+
+## When should I use FOR NO KEY UPDATE?
+
+Use it when you lock a parent row but other transactions may still insert child rows that reference it. `FOR NO KEY UPDATE` is like `FOR UPDATE`, but it does not conflict with the key-share lock PostgreSQL takes when it checks a foreign key, so inserting a child row (an audit log entry, say) does not wait for your transaction.
+
+```ts title="posts.service.ts"
+const parent = await this.findOne({ slug }, { forNoKeyUpdate: true, transaction: tx });
+// SELECT ... FOR NO KEY UPDATE OF "posts"
+// other transactions can still INSERT rows that reference this post
+```
+
+## Which read methods accept a lock?
+
+`find`, `findOne`, `findAll` and `findByCursor`:
+
+```ts title="accounts.service.ts"
+const active = await this.findAll(
+  { status: 'active' },
+  { page: 1, limit: 50 },
+  { lock: 'share', transaction: tx },
+);
+// SELECT ... FROM accounts WHERE ... ORDER BY ... LIMIT 50 OFFSET 0 FOR SHARE OF "accounts"
+```
+
+On `findAll` and `findByCursor` the lock goes on the data query only. The `COUNT(*)` query is not locked. The write methods (`create`, `update`, `delete`, `softDelete`, `restore`) do not take a lock option: lock with a `find` first, in the same transaction, as above.
+
+## Can I lock a row and eager-load a belongs-to relation?
+
+Yes. The lock always names the base table (`FOR UPDATE OF <table>`), so only the service's own rows are locked and the LEFT JOINed relation is not:
+
+```ts title="posts.service.ts"
+const post = await this.find(id, { lock: 'update', relations: ['author'], transaction: tx });
+// SELECT ... FROM posts LEFT JOIN users ... FOR UPDATE OF "posts"
+```
+
+Before 3.3.1 the lock covered every table in the query, and PostgreSQL refused it with `FOR UPDATE cannot be applied to the nullable side of an outer join`.
+
+## Do row locks work on MySQL?
+
+No. On MySQL the `lock` and `forNoKeyUpdate` options are accepted and ignored, and no `FOR UPDATE` clause is generated. If you need a lock there, write the query with Drizzle directly on the transaction handle, for example `tx.select().from(accounts).where(eq(accounts.id, id)).for('update')`.
+
+## Can I use SKIP LOCKED or NOWAIT?
+
+Not through the package options: `lock` and `forNoKeyUpdate` only choose the lock strength. For a job queue that needs `SKIP LOCKED`, use Drizzle's own `.for('update', { skipLocked: true })` on `tx` inside the same transaction, and pass the same `tx` to the package calls that follow.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Does lock work without a transaction?">
+    The clause is added, but the lock ends with the statement because there is no surrounding transaction. Always pass `{ transaction: tx }` with a lock.
+  </Accordion>
+  <Accordion title="Which tables does the lock cover?">
+    Only the service's own table. The package always adds `OF <table>`, so joined belongs-to relations are not locked.
+  </Accordion>
+  <Accordion title="What happens if I set both lock and forNoKeyUpdate?">
+    `forNoKeyUpdate` wins and the query uses `FOR NO KEY UPDATE`.
+  </Accordion>
+  <Accordion title="Should I use a row lock or optimistic locking?">
+    Use a row lock when one transaction reads and writes a row in one go and others should wait. Use optimistic locking with a version column for a read, edit, save flow where the edit happens in a client.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Workflow />} title="Drizzle transactions in NestJS" href="/docs/transactions" description="Open the transaction a lock needs and pass it to every call." />
+  <Card icon={<KeyRound />} title="Drizzle optimistic locking with versions" href="/docs/optimistic-locking" description="A version column that turns a stale write into a 409 without holding a lock." />
+  <Card icon={<BookOpen />} title="SqlBaseCrudService API reference" href="/docs/api#sqloperationoptions" description="The full SqlOperationOptions type, including lock and forNoKeyUpdate." />
+</Cards>

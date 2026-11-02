@@ -2,6 +2,7 @@ import { docs } from "../.source/server";
 import { llms, loader } from "fumadocs-core/source";
 import { icons } from "lucide-react";
 import { createElement } from "react";
+import { absoluteUrl } from "./seo";
 
 /** A lucide icon by name, for frontmatter `icon:` (sidebar and page header) and meta.json. */
 export function lucideIcon(name: string | undefined) {
@@ -23,7 +24,7 @@ export const source = loader({
 
 /** Markdown for /llms-full.txt and the per-page `content.md` routes. */
 export const docsLlms = llms(source, {
-	renderPage: async (page) => `# ${page.data.title} (${page.url})
+	renderPage: async (page) => `# ${page.data.title} (${absoluteUrl(page.url)})
 
 ${await page.data.getText("processed")}`,
 });

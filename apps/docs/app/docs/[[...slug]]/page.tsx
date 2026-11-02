@@ -12,7 +12,8 @@ import { notFound } from "next/navigation";
 import { JsonLd } from "@/components/json-ld";
 import { getMDXComponents } from "@/components/mdx";
 import { PageHistory } from "@/components/page-history";
-import { sourceUrl } from "@/lib/doc-history";
+import { lastModified, sourceUrl } from "@/lib/doc-history";
+import { extractFaqs, extractSteps } from "@/lib/page-schema";
 import { createMetadata } from "@/lib/seo";
 import { imageUrl, lucideIcon, markdownUrl, source } from "@/lib/source";
 import { docPageLd } from "@/lib/structured-data";
@@ -27,6 +28,8 @@ export default async function Page(props: {
 	const MDX = page.data.body;
 	const md = markdownUrl(page);
 	const icon = lucideIcon(page.data.icon);
+	// FAQ and HowTo schema come from the page's own markup, so they cannot say what it does not.
+	const raw = await page.data.getText("raw");
 
 	return (
 		<DocsPage toc={page.data.toc} full={page.data.full}>
@@ -35,7 +38,10 @@ export default async function Page(props: {
 					title: page.data.title,
 					description: page.data.description,
 					url: page.url,
-					tree: source.getPageTree(),
+					faqs: extractFaqs(raw),
+					steps: extractSteps(raw),
+					about: page.url === "/docs/built-by-avytrix",
+					modified: lastModified(page.path) ?? undefined,
 				})}
 			/>
 			<DocsTitle className="flex items-center gap-3">

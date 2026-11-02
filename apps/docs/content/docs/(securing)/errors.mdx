@@ -1,0 +1,198 @@
+---
+title: Error handling in NestJS with Drizzle
+description: NestJS Drizzle error handling without a custom filter. Each exception extends a Nest HTTP exception, so a missing row is a 404 and a duplicate a 409.
+icon: TriangleAlert
+---
+
+NestJS Drizzle error handling in `nestjs-drizzle-crud` works out of the box: every exception the service throws extends a NestJS `HttpException` subclass, so Nest's default exception filter answers with the right status code and no custom filter. A missing row is a 404, a unique or version conflict is a 409, a missing tenant is a 403, and bad input is a 400. Postgres driver errors caused by bad input are translated at the service boundary instead of reaching the client as a 500.
+
+<Callout title="The exceptions carry a message, not fields">
+  The classes take an entity name, a field or an id in their constructor, but only to build the message. They have no `entity`, `field`, `value` or `id` property. Read `getStatus()`, `message` and `getResponse()` instead.
+</Callout>
+
+## Which status does each exception return?
+
+Each class extends the Nest exception that carries its status, and the constructor builds the message:
+
+| Exception | Extends | HTTP | Constructor | Message |
+| --- | --- | --- | --- | --- |
+| `EntityNotFoundException` | `NotFoundException` | 404 | `(entityName, id)` | `users with id 9 not found` |
+| `DuplicateEntityException` | `ConflictException` | 409 | `(entityName, field, value)` | `users with email 'a@b.co' already exists` |
+| `StaleVersionException` | `ConflictException` | 409 | `(entityName, id)` | `projects with id 4 was changed by someone else; read it again and retry` |
+| `EntityInUseException` | `ConflictException` | 409 | `(entityName)` | `teams is still referenced by other records and cannot be deleted` |
+| `MissingScopeException` | `ForbiddenException` | 403 | `(entityName, key)` | `projects is scoped by "tenant_id", but the context has no value for it` |
+| `ValidationFailedException` | `BadRequestException` | 400 | `(message)` | `Validation failed: <message>` |
+| `ForeignKeyViolationException` | `BadRequestException` | 400 | `(entityName, field)` | `Invalid reference for users: 'team_id' does not refer to an existing record` |
+| `BulkOperationException` | `BadRequestException` | 400 | `(message, errors)` | `Mass update errors. 2 error(s) occurred.` |
+
+The entity name is the table name Drizzle reports. Each class also sets `name` to its own class name, so `exception.name` is `"EntityNotFoundException"` and so on. Every class is exported from the package root; see [Exports](/docs/exports).
+
+`DatabaseConnectionException` and `TransactionException` (both 500, `InternalServerErrorException`) are still exported but deprecated: nothing in the package throws them, and they go in the next major version. A failed transaction rejects with the error that caused it.
+
+## What does the response body look like?
+
+Nest's standard body for an `HttpException` built from a message:
+
+```json title="404 response"
+{
+  "statusCode": 404,
+  "message": "users with id 9 not found",
+  "error": "Not Found"
+}
+```
+
+`BulkOperationException` is the one exception with a richer body. It lists every failed item, with `index` for `massCreate` and `massUpsert` (the position in the input array) and `id` for the rest:
+
+```json title="400 response from a bulk call"
+{
+  "statusCode": 400,
+  "error": "Bad Request",
+  "message": "Mass update errors. 2 error(s) occurred.",
+  "errors": [
+    { "id": 4, "status": 404, "message": "projects with id 4 not found" },
+    { "id": 7, "status": 409, "message": "projects with id 7 was changed by someone else; read it again and retry" }
+  ]
+}
+```
+
+An item that failed with an `HttpException` keeps its own status and message. Any other error is reported as `status: 500` with the message `Internal server error`, because a raw driver error can carry SQL and parameters. The original errors stay on the exception's public `errors` property (`Array<{ id?, index?, error }>`) for your logs. See [Bulk insert and update with Drizzle](/docs/bulk-operations#what-does-a-failed-bulk-call-return-over-http).
+
+## How are database errors translated?
+
+The service catches Postgres errors by SQLSTATE code (on the error or its Drizzle `cause`) and throws the matching exception:
+
+| SQLSTATE | Meaning | Becomes |
+| --- | --- | --- |
+| `23505` | unique violation | `DuplicateEntityException` (409), field and value parsed from the driver `detail` |
+| `23503` on create or update | the row references a parent that does not exist | `ForeignKeyViolationException` (400), column parsed from `detail` |
+| `23503` on delete | other rows still reference this one (`ON DELETE RESTRICT` or `NO ACTION`) | `EntityInUseException` (409) |
+| `22001` | value too long for its column | `ValidationFailedException` (400) |
+| `23514` | check constraint failed | `ValidationFailedException` (400) |
+| `22003` | numeric value out of range | `ValidationFailedException` (400) |
+| `22P02` | value does not match the column type (`"abc"` for an integer, an unknown enum label) | `ValidationFailedException` (400) |
+| `22007`, `22008` | date or time with an invalid format, or out of range | `ValidationFailedException` (400) |
+| `21000` | the same key twice in one `massUpsert` | `ValidationFailedException` (400) |
+
+Any other error passes through unchanged. That includes `NOT NULL` violations, which usually mean a programming or config mistake rather than a bad value, so they stay a 500. The codes are Postgres SQLSTATEs: MySQL driver errors are not translated.
+
+## Which other 400s does the service throw?
+
+Plain Nest `BadRequestException`s for input the service cannot use:
+
+- an unknown filter column or operator, an operator on the wrong column type, or an invalid date,
+- an invalid cursor, or a `findOne` with no condition,
+- an unknown `fullTextSearch` column,
+- anything outside an [allowlist](/docs/allowlists),
+- anything [`parseQuery`](/docs/query-parsing) cannot read.
+
+See [clamping and fail-fast input](/docs/pagination-sorting#clamping-fail-fast) for which pagination values are clamped and which throw. `ValidationFailedException` covers an `update` with no column left to set, a column outside `writableColumns`, a non-integer version, and whatever your `validateCreate` or `validateUpdate` hooks throw.
+
+## When does each method throw?
+
+### Reads return null instead of throwing
+
+`find`, `findOne`, `findAll`, `exists`, `count` and `fullTextSearch` return `null`, `false` or an empty page for missing rows, and never throw `EntityNotFoundException`. You decide how to respond. The [controller factory](/docs/controller-factory) does that for you: its `GET /:id` route answers a missing row with `EntityNotFoundException`, a 404.
+
+Bad input on a read is a 400, the same as on a write: `find("abc")` on an integer key, `findAll({ status: "archived" })` when the enum has no such label, or `{ createdAt: { gte: "garbage" } }`. A soft-deleted row counts as missing when soft delete is on.
+
+### Writes
+
+| Method | 404 | 409 | 400 |
+| --- | --- | --- | --- |
+| `create(dto)` |  | unique violation | hook rejection, missing FK target |
+| `upsert(dto, upsert)` | conflict with another tenant's row | unique violation on another key | hook rejection, missing FK target, unknown conflict target |
+| `update(id, dto)` | row missing, soft-deleted or outside the scope | unique violation, stale version | hook rejection, missing FK target, nothing to update |
+| `delete(id)` | row missing or soft-deleted | still referenced, stale version |  |
+| `forceDelete(id)` | row missing | still referenced |  |
+| `softDelete(id)` | row missing or already soft-deleted | stale version |  |
+| `restore(id)` | row missing | stale version |  |
+| `attach` / `detach` / `sync` | row missing |  | unknown target ids (404 entries), not a many-to-many |
+
+On a [scoped entity](/docs/multi-tenancy), a row of another tenant counts as missing everywhere, and a call without the tenant is a 403 `MissingScopeException`. `update` and `restore` return the written row.
+
+<Callout title="softDelete on an entity without soft delete is a 500" type="warn">
+  `softDelete` and `restore` throw a plain `Error` (`Soft delete is not enabled for this entity`) when soft delete is off. That is a configuration mistake, not bad input, so it is not mapped to a 4xx.
+</Callout>
+
+### Bulk methods
+
+`massCreate`, `massUpdate`, `massUpsert`, `massSoftDelete`, `massRestore`, `massDelete` and `massForceDelete` each run in one transaction. Any failure throws `BulkOperationException` (400) and rolls back the whole call, so there are no partial writes.
+
+### Transactions
+
+`executeSqlTransaction` wraps a callback in a transaction. On any throw inside the callback, the transaction rolls back and the same error propagates unchanged. Pass `{ transaction: tx }` in the options of any CRUD method to enlist it. See [Transactions](/docs/transactions).
+
+## How do I write a custom exception filter?
+
+You only need one to change the body shape. Catch the package's classes and read what an `HttpException` really has: `getStatus()`, `message`, `name` and `getResponse()`:
+
+```ts accent=nest title="crud-exception.filter.ts"
+import { type ArgumentsHost, Catch, type ExceptionFilter } from "@nestjs/common";
+import type { Response } from "express";
+import {
+  BulkOperationException,
+  DuplicateEntityException,
+  EntityNotFoundException,
+  StaleVersionException,
+} from "@avytrix/nestjs-drizzle-crud";
+
+@Catch(
+  EntityNotFoundException,
+  DuplicateEntityException,
+  StaleVersionException,
+  BulkOperationException,
+)
+export class CrudExceptionFilter implements ExceptionFilter {
+  catch(
+    exception:
+      | EntityNotFoundException
+      | DuplicateEntityException
+      | StaleVersionException
+      | BulkOperationException,
+    host: ArgumentsHost,
+  ) {
+    const res = host.switchToHttp().getResponse<Response>();
+    const status = exception.getStatus();
+
+    if (exception instanceof BulkOperationException) {
+      // getResponse() holds the per-item list: [{ index | id, status, message }].
+      const body = exception.getResponse() as { errors: unknown[] };
+      res.status(status).json({ code: exception.name, items: body.errors });
+      return;
+    }
+
+    res.status(status).json({ code: exception.name, message: exception.message });
+  }
+}
+```
+
+Register it with `app.useGlobalFilters(new CrudExceptionFilter())` or `@UseFilters` on a controller. Without a filter, Nest's default one already returns the status codes on this page.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Do I need an exception filter to get 404 and 409 responses?">
+    No. The exceptions extend `NotFoundException`, `ConflictException`, `ForbiddenException` and `BadRequestException`, so Nest's default filter returns the right status on its own.
+  </Accordion>
+  <Accordion title="Does find throw when the row does not exist?">
+    No. `find` and `findOne` return `null`, and `exists` returns `false`. Only writes throw `EntityNotFoundException`, as does the controller factory's `GET /:id` route.
+  </Accordion>
+  <Accordion title="Why does a duplicate email return 409 instead of 500?">
+    The service catches the Postgres unique violation (`23505`) and throws `DuplicateEntityException`, a `ConflictException`. The field and value in the message come from the driver's `detail` text.
+  </Accordion>
+  <Accordion title="How do I get the field name out of DuplicateEntityException?">
+    The class has no `field` property; the field only appears in its message, as in `users with email 'a@b.co' already exists`. If you need it structured, catch the driver error yourself in an override.
+  </Accordion>
+  <Accordion title="Are MySQL errors mapped to HTTP status codes?">
+    No. The translation reads Postgres SQLSTATE codes, so a MySQL duplicate key or foreign key error reaches Nest unchanged and becomes a 500.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<ListOrdered />} title="Pagination and sorting with Drizzle" href="/docs/pagination-sorting" description="Which pagination input is clamped and which is a 400." />
+  <Card icon={<Layers />} title="Soft delete" href="/docs/soft-delete" description="What find and update see, and what they throw, for deleted rows." />
+  <Card icon={<Lock />} title="Drizzle optimistic locking with versions" href="/docs/optimistic-locking" description="Where StaleVersionException and its 409 come from." />
+  <Card icon={<Package />} title="Exports" href="/docs/exports" description="Every exception class the package exports." />
+</Cards>

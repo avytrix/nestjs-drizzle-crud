@@ -1,98 +1,90 @@
 ---
-title: API reference
-description: Every method on SqlBaseCrudService, with full signatures and return types.
+title: SqlBaseCrudService API reference
+description: Every public method on SqlBaseCrudService in nestjs-drizzle-crud, with its signature, return type, the errors it throws and the options it takes.
+icon: Braces
 ---
 
-The class signature:
+`SqlBaseCrudService` is the abstract class every nestjs-drizzle-crud service extends, and its public methods are the whole CRUD API: reads, writes, bulk writes, search and three helpers for controllers. Each method takes an optional `SqlOperationOptions` object last, returns a promise of plain rows, and throws an `HttpException` subclass, so Nest answers with the right 4xx status.
 
-```ts twoslash
-// ---cut---
-class SqlBaseCrudService<
-  T,
-  CreateDto = Partial<T>,
-  UpdateDto = Partial<T>,
-  FilterDto = Partial<T>,
-> {}
+<Callout title="All four generics are required">
+  The class is `SqlBaseCrudService<T, CreateDto, UpdateDto, FilterDto>` and none of the four has a
+  default. Pass all of them, and use `CrudFilter` for `FilterDto` when the filters come from a query
+  string.
+</Callout>
+
+## What does the class signature look like?
+
+The class is generic over the row type and the three input shapes, and its constructor takes the merged entity config.
+
+```ts title="sql-base-crud.service.ts"
+abstract class SqlBaseCrudService<
+  T extends Record<string, any>,
+  CreateDto,
+  UpdateDto,
+  FilterDto,
+> implements ICrudService<T, CreateDto, UpdateDto, FilterDto> {
+  constructor(protected readonly config: SqlCrudConfig);
+}
 ```
 
-The four generics correspond to:
+| Generic | Used by |
+| --- | --- |
+| `T` | The row type, usually `typeof users.$inferSelect`. Every method returns it. |
+| `CreateDto` | `create`, `massCreate`, `upsert` and `massUpsert`. |
+| `UpdateDto` | `update` and `massUpdate`. |
+| `FilterDto` | `findAll`, `findByCursor`, `count` and `countBy`. Use [`CrudFilter`](/docs/config-types#filter-sort-cursor-and-upsert-types) when filters come from [`parseQuery`](/docs/query-parsing). |
 
-| Generic | Default | Use |
-| --- | --- | --- |
-| `T` |  | The entity row type (typically `typeof table.$inferSelect`). |
-| `CreateDto` | `Partial<T>` | The shape accepted by `create()` and `massCreate()`. |
-| `UpdateDto` | `Partial<T>` | The shape accepted by `update()` and `massUpdate()`. |
-| `FilterDto` | `Partial<T>` | The shape accepted by `findAll(filters)` and `count(filters)`. Use `CrudFilter` when filters come from [`parseQuery`](/docs/query-parsing). |
+You never call the constructor yourself. `DrizzleCrudModule.forFeature` builds the service and hands it the config, so a service is normally an empty subclass:
+
+```ts accent=nest title="users.service.ts"
+import { type CrudFilter, SqlBaseCrudService } from "@avytrix/nestjs-drizzle-crud";
+import type { users } from "../db/schema";
+import type { CreateUserDto, UpdateUserDto } from "./dto";
+
+export type User = typeof users.$inferSelect;
+
+export class UsersService extends SqlBaseCrudService<
+  User,
+  CreateUserDto,
+  UpdateUserDto,
+  CrudFilter
+> {}
+```
 
 ## Read
 
 | Method | Returns | Notes |
 | --- | --- | --- |
-| `find(id, options?)` | `Promise<T \| null>` | By primary key. Skips soft-deleted rows. |
-| `findOne(where, options?)` | `Promise<T \| null>` | `where` is a `Partial<T>`: exact, case-sensitive equality, `null` for `IS NULL`, or an operator object. `undefined` values are skipped; if nothing is left, or a key is not a column, it throws a 400 rather than returning an arbitrary row. |
-| `findAll(filters?, pagination?, options?)` | `Promise<CrudPage<T>>`: `{ data, total, page, limit }` | `withCount: false` skips the count: `total` is `null` and `hasMore` is set ([Pagination](/docs/pagination-sorting#how-do-i-skip-the-count-query)). Supports `options.search`, `and` / `or` / `not` groups and multi-column or relation `sortBy`. An unknown filter key is a 400. Always ends `ORDER BY` with the primary key. See [Filtering](/docs/filtering) and [Pagination](/docs/pagination-sorting). |
+| `find(id, options?)` | `Promise<T \| null>` | By primary key. `null` when the row is missing, soft-deleted or outside the scope. |
+| `findOne(where, options?)` | `Promise<T \| null>` | `where` is a `Partial<T>`: a value is an exact, case-sensitive match, `null` is `IS NULL`, and an operator object works as in `findAll`. `undefined` values are skipped. A key that is not a column, or no condition left at all, is a 400 rather than an arbitrary row. |
+| `findAll(filters?, pagination?, options?)` | `Promise<CrudPage<T>>` | `{ data, total, page, limit }`. With a literal `withCount: false` it returns `UncountedCrudPage<T>`: `total` is `null` and `hasMore` is set ([skip the count](/docs/pagination-sorting#how-do-i-skip-the-count-query)). `sortOrder` defaults to `"desc"`, and `ORDER BY` always ends with the primary key. An unknown filter key is a 400. |
 | `findByCursor(filters?, pagination?, options?)` | `Promise<CursorPage<T>>` | Keyset pagination: `{ data, limit, nextCursor, total? }`. `total` only with `count: true`. See [Cursor pagination](/docs/cursor-pagination). |
-| `exists(id, options?)` | `Promise<boolean>` | Cheaper than `find` when you only need a yes/no. |
-| `count(filters?, options?)` | `Promise<number>` | Total rows matching the filter and `options.search`, ignoring pagination. |
-| `countBy(column, filters?, options?)` | `Promise<CountByRow[]>` | `[{ value, count }]` per value of a column or a belongs-to `relation.column`, largest first. One `GROUP BY`. See [Aggregates](/docs/aggregates). |
-| `parseId(raw)` | `Promise<unknown>` | Parses a route id by the primary key column: `ParseIntPipe` for an integer, `ParseUUIDPipe` for a uuid, `BigInt` for a bigint, the string otherwise. Bad input is a 400. |
-| `idKind()` | `'int' \| 'bigint' \| 'uuid' \| 'string'` | What the primary key column holds. |
-| `parseQuery(query, options?)` | `ParsedCrudQuery` | Turns an HTTP query object into `{ filters, pagination, options, ... }` for this entity. See [Parse query strings](/docs/query-parsing). |
+| `exists(id, options?)` | `Promise<boolean>` | Runs `find` with only the primary key selected. |
+| `count(filters?, options?)` | `Promise<number>` | Rows matching the filters and `options.search`. No pagination. |
+| `countBy(column, filters?, options?)` | `Promise<CountByRow<V>[]>` | `[{ value, count }]` per value of a column or a belongs-to `relation.column`, largest group first. One `GROUP BY`. The column must be filterable. See [Aggregates](/docs/aggregates). |
 
-Every read takes `withDeleted` / `onlyDeleted` to include or only return soft-deleted rows. See [Soft delete](/docs/soft-delete#how-do-i-list-soft-deleted-rows). Every read also takes `counts` for `_count` on each row ([Aggregates](/docs/aggregates)), and on an entity with a [`scope`](/docs/multi-tenancy) every read only sees the caller's rows.
+Every read takes `withDeleted` or `onlyDeleted` to include or only return soft-deleted rows ([Soft delete](/docs/soft-delete)), and `counts` for `_count` on each row. On an entity with a [`scope`](/docs/multi-tenancy), a read only sees the caller's rows.
 
-### `find` signature
-
-```ts twoslash
-import { SqlBaseCrudService, type SqlOperationOptions } from 'nestjs-drizzle-crud';
-type User = { id: number; name: string };
-declare class S extends SqlBaseCrudService<User, User, Partial<User>, Partial<User>> {}
-declare const s: S;
-// ---cut---
-const result = s.find(1);
-const resultWithOptions = s.find(1, { relations: ['state'] });
-```
-
-### `findOne` signature
-
-```ts twoslash
-import { SqlBaseCrudService } from 'nestjs-drizzle-crud';
+```ts twoslash title="users.service.ts"
+import { SqlBaseCrudService } from '@avytrix/nestjs-drizzle-crud';
 type User = { id: number; name: string; email: string };
-declare class S extends SqlBaseCrudService<User, User, Partial<User>, Partial<User>> {}
-declare const s: S;
+declare class UsersService extends SqlBaseCrudService<User, User, Partial<User>, Partial<User>> {}
+declare const usersService: UsersService;
 // ---cut---
-const user = s.findOne({ email: 'ada@example.com' });
+const user = usersService.find(1, { relations: ['state'] });
+const byEmail = usersService.findOne({ email: 'ada@example.com' });
 ```
 
-### `findAll` signature
-
-```ts
-import { SqlBaseCrudService } from 'nestjs-drizzle-crud';
-type User = { id: number; name: string; status: string };
-declare class S extends SqlBaseCrudService<User, User, Partial<User>, Partial<User>> {}
-declare const s: S;
-
-const page = s.findAll(
-  { status: 'active' },            // filters
-  { page: 1, limit: 20 },          // pagination
-  {
-    relations: ['state'],
-    search: { term: 'john', columns: ['name'] },
-  },                               // options
+```ts title="users.service.ts"
+const page = await usersService.findAll(
+  { status: "active" },                     // filters
+  { page: 1, limit: 20, sortBy: "-name" },  // pagination
+  { relations: ["state"], search: { term: "john", columns: ["name"] } },
 );
-```
 
-### `count` with search
-
-```ts
-import { SqlBaseCrudService } from 'nestjs-drizzle-crud';
-type User = { id: number; name: string; email: string; status: string };
-declare class S extends SqlBaseCrudService<User, User, Partial<User>, Partial<User>> {}
-declare const s: S;
-
-const total = s.count(
-  { status: 'active' },
-  { search: { term: 'john', columns: ['name', 'email'] } },
+const total = await usersService.count(
+  { status: "active" },
+  { search: { term: "john", columns: ["name", "email"] } },
 );
 ```
 
@@ -100,22 +92,24 @@ const total = s.count(
 
 | Method | Returns | Notes |
 | --- | --- | --- |
-| `create(data, options?)` | `Promise<T>` | Runs `validateCreate` → `mapCreateDtoToEntity` → `beforeCreate` → insert → `afterCreate`. |
-| `update(id, data, options?)` | `Promise<T>` | Throws `EntityNotFoundException` if missing, and `ValidationFailedException` (400) when `data` has no column to set. |
-| `delete(id, options?)` | `Promise<boolean>` | Hard delete. |
-| `softDelete(id, options?)` | `Promise<boolean>` | Sets `deleted_at` to `now()`. Requires soft delete enabled. |
-| `restore(id, options?)` | `Promise<T>` | Clears `deleted_at`. Throws `EntityNotFoundException` if missing. |
-| `forceDelete(id, options?)` | `Promise<boolean>` | Hard delete, soft-deleted or not. |
-| `upsert(data, upsert?, options?)` | `Promise<T>` | `ON CONFLICT DO UPDATE` (Postgres) or `ON DUPLICATE KEY UPDATE` (MySQL). `upsert` is `{ conflictTarget?, update? }`. See [Upsert](/docs/upsert). |
-| `attach(id, relation, relatedIds, options?)` | `Promise<T>` | Links many-to-many rows through the join table; returns the row with the relation loaded. See [Relations on writes](/docs/relations-on-writes). |
+| `create(data, options?)` | `Promise<T>` | Runs `validateCreate`, `beforeCreate`, `mapCreateDtoToEntity`, the insert, then `afterCreate`. Sets the timestamps, the scope and the version. |
+| `update(id, data, options?)` | `Promise<T>` | 404 when the row is missing. 400 (`ValidationFailedException`) when `data` has no column to set. Runs `validateUpdate`, `beforeUpdate`, `mapUpdateDtoToEntity`, the update, then `afterUpdate`. |
+| `softDelete(id, options?)` | `Promise<boolean>` | Sets the soft delete column to now. 404 when the row is missing. Throws a plain `Error` when soft delete is off for the entity. |
+| `restore(id, options?)` | `Promise<T>` | Clears the soft delete column. 404 when the row is missing. |
+| `delete(id, options?)` | `Promise<boolean>` | Hard delete. 404 for a missing row or a row in the trash; 409 (`EntityInUseException`) when other rows still reference it. |
+| `forceDelete(id, options?)` | `Promise<boolean>` | Hard delete whether or not the row is soft-deleted. Runs the delete hooks. |
+| `upsert(data, upsert?, options?)` | `Promise<T>` | `ON CONFLICT DO UPDATE` on Postgres, `ON DUPLICATE KEY UPDATE` on MySQL. `upsert` is `UpsertOptions`: `{ conflictTarget?, update? }`. See [Upsert](/docs/upsert). |
+| `attach(id, relation, relatedIds, options?)` | `Promise<T>` | Links many-to-many rows through the join table and returns the row with the relation loaded. See [Relations on writes](/docs/relations-on-writes). |
 | `detach(id, relation, relatedIds?, options?)` | `Promise<T>` | Unlinks the ids, or every link when `relatedIds` is left out. |
 | `sync(id, relation, relatedIds, options?)` | `Promise<T>` | Makes the links exactly `relatedIds`. |
 
-Writes take `options.relations` and `options.counts` and return the rows with them loaded. With [`versionColumn`](/docs/optimistic-locking), `update`, `softDelete`, `restore` and `delete` take `expectedVersion` (or the version in the body) and answer a stale one with a 409. With [global hooks](/docs/events) on, every write raises a before and an after event.
+Writes take `options.relations` and `options.counts` and return the rows with them loaded. With a [`versionColumn`](/docs/optimistic-locking), `update`, `softDelete`, `restore` and `delete` take `expectedVersion` (or the version in an update body) and answer a stale one with a 409. With [global hooks](/docs/events) on, every write raises one before and one after event.
 
-`create`, `update` and `upsert` apply [`writableColumns`](/docs/allowlists#which-columns-can-a-body-write-by-default). Without it, `update` ignores the primary key and `createdAt`, and both ignore the soft delete column.
+`create`, `update` and `upsert` apply [`writableColumns`](/docs/allowlists). Without that list, both drop the soft delete and version columns from the body, and `update` also drops the primary key and the `createdAt` column.
 
-## Bulk (single transaction, rolls back on any failure)
+## Bulk
+
+Every bulk method runs in one transaction (or joins `options.transaction`) and rolls back on any failure.
 
 | Method | Returns |
 | --- | --- |
@@ -127,89 +121,129 @@ Writes take `options.relations` and `options.counts` and return the rows with th
 | `massForceDelete(ids[], options?)` | `Promise<boolean>` |
 | `massUpsert(data[], upsert?, options?)` | `Promise<T[]>` |
 
-Each method is one statement for the whole set (plus one `SELECT` that checks the ids exist), and `bulkMode: 'perItem'` runs the single-row method per item instead. When the statement fails, the items that fail are named. Throws `BulkOperationException` on failure; its 400 body is `{ statusCode, error, message, errors: [{ index | id, status, message }] }`. See [Bulk operations](/docs/bulk-operations).
+Each one is a single statement for the whole set, plus one `SELECT` that checks the ids exist for the methods that take ids. `bulkMode: "perItem"` runs the single-row method per item instead, each in its own savepoint. A failure throws `BulkOperationException`, a 400 whose body is `{ statusCode, error, message, errors: [{ index | id, status, message }] }`. See [Bulk operations](/docs/bulk-operations).
 
 ## Search
 
 | Method | Returns | Notes |
 | --- | --- | --- |
-| `fullTextSearch(term, columns, pagination?, options?)` | `Promise<{ data: T[]; total: number; page: number; limit: number }>` | PostgreSQL only. Same envelope as `findAll`. `to_tsvector(...) @@ plainto_tsquery(...)` with `ts_rank` ordering, then the primary key. Always applies page and limit. An unknown column is a 400. Excludes soft-deleted rows when soft-delete is enabled. |
+| `fullTextSearch(term, columns, pagination?, options?)` | `Promise<{ data: T[]; total: number; page: number; limit: number }>` | PostgreSQL only. `to_tsvector('english', ...) @@ plainto_tsquery('english', ...)`, ordered by `ts_rank`, then the primary key. Page and limit always apply. An empty column list or an unknown column is a 400. Respects soft delete and scope. |
 
-## Transaction helper
+For a search inside a normal list, pass `options.search` to `findAll` or `count` instead. See [Full-text search](/docs/full-text-search).
 
-```ts twoslash
-import { SqlBaseCrudService } from 'nestjs-drizzle-crud';
+## Controller helpers
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `parseQuery(query, options?)` | `ParsedCrudQuery` | Turns an HTTP query object into `{ filters, pagination, sort, options, isCursor, ... }` with this entity's relations, primary key and allowlists. See [Parse query strings](/docs/query-parsing). |
+| `parseId(raw)` | `Promise<unknown>` | Parses a route id by the primary key column: `ParseIntPipe` for an integer, `ParseUUIDPipe` for a uuid, `BigInt` for a bigint, the string otherwise. Bad input is a 400. |
+| `idKind()` | `"int" \| "bigint" \| "uuid" \| "string"` | What the primary key column holds. |
+
+```ts accent=nest title="users.controller.ts"
+@Get()
+list(@Query() query: Record<string, unknown>) {
+  const q = this.usersService.parseQuery(query);
+  return q.isCursor
+    ? this.usersService.findByCursor(q.filters, q.pagination, q.options)
+    : this.usersService.findAll(q.filters, q.pagination, q.options);
+}
+```
+
+## Protected members for subclasses
+
+These are not callable from outside the service. Override the hooks in your subclass, and call the helpers from your own methods.
+
+| Member | Signature | Default |
+| --- | --- | --- |
+| `validateCreate` | `(data: CreateDto) => Promise<void>` | Does nothing. Throw `ValidationFailedException` to reject. |
+| `validateUpdate` | `(id, data: UpdateDto) => Promise<void>` | Does nothing. |
+| `beforeCreate` | `(data: CreateDto) => Promise<CreateDto>` | Returns `data`. |
+| `afterCreate` | `(entity: T) => Promise<void>` | Does nothing. |
+| `beforeUpdate` | `(id, data: UpdateDto) => Promise<UpdateDto>` | Returns `data`. |
+| `afterUpdate` | `(entity: T) => Promise<void>` | Does nothing. |
+| `beforeSoftDelete`, `afterSoftDelete` | `(id) => Promise<void>` | Do nothing. |
+| `beforeRestore` | `(id) => Promise<void>` | Does nothing. |
+| `afterRestore` | `(entity: T) => Promise<void>` | Does nothing. |
+| `beforeDelete`, `afterDelete` | `(id) => Promise<void>` | Do nothing. |
+| `mapCreateDtoToEntity` | `(data: CreateDto) => Record<string, any>` | A shallow copy of `data`. |
+| `mapUpdateDtoToEntity` | `(data: UpdateDto) => Record<string, any>` | A shallow copy of `data`. |
+| `executeSqlTransaction` | `<R>(operation: (tx) => Promise<R>, existingTransaction?) => Promise<R>` | Runs `operation` in `existingTransaction` when given, otherwise in a new `db.transaction`. |
+| `getEntityName` | `() => string` | The Drizzle table name, used in error messages. |
+| `config` | `SqlCrudConfig` | The merged entity config, including `db` and `table` for hand-written queries. |
+
+`hooks: { skipBefore: true }` or `{ skipAfter: true }` in the options skips the before or after hooks for one call. See [Hooks and validation](/docs/hooks-validation).
+
+```ts twoslash title="users.service.ts"
+import { SqlBaseCrudService } from '@avytrix/nestjs-drizzle-crud';
 type User = { id: number; name: string };
-class S extends SqlBaseCrudService<User, Omit<User, 'id'>, Partial<User>, Partial<User>> {
+class UsersService extends SqlBaseCrudService<User, Omit<User, 'id'>, Partial<User>, Partial<User>> {
   // Called from inside a service method.
-  doIt() {
+  createTwo() {
     return this.executeSqlTransaction(async (tx) => {
-      return this.create({ name: 'Ada' }, { transaction: tx });
+      await this.create({ name: 'Ada' }, { transaction: tx });
+      return this.create({ name: 'Grace' }, { transaction: tx });
     });
   }
 }
-declare const s: S;
+declare const usersService: UsersService;
 // ---cut---
-const result = s.doIt();
+const result = usersService.createTwo();
 ```
 
-`executeSqlTransaction(callback)` opens a transaction, runs the callback with the transaction handle, commits on success, rolls back on any throw.
+The transaction commits when the callback resolves and rolls back when it throws. See [Transactions](/docs/transactions).
 
 ## `SqlOperationOptions`
 
-```ts twoslash
-// ---cut---
-interface SqlOperationOptions {
-  /** Run within an existing transaction. */
-  transaction?: any;
-  /** Return only these columns. A dotted entry narrows a relation, at any depth. */
-  select?: string[];
-  /** Eager-load these configured relations. A dotted path nests: 'state.country'. */
-  relations?: string[];
-  /** Search configured table columns in findAll() and count(). */
-  search?: {
-    term: string;
-    columns: string[];
-    mode?: 'ilike' | 'fullText';
-  };
-  /** Skip before/after hooks for this call. */
-  hooks?: {
-    skipBefore?: boolean;
-    skipAfter?: boolean;
-  };
-  /** Row-level lock. PostgreSQL only. See [Row-level locks](/docs/row-locks). */
-  lock?: 'update' | 'share' | 'none';
-  /** Use FOR NO KEY UPDATE. PostgreSQL only. See [Row-level locks](/docs/row-locks). */
-  forNoKeyUpdate?: boolean;
-  /** Also return soft-deleted rows. */
-  withDeleted?: boolean;
-  /** Return only soft-deleted rows (the trash). */
-  onlyDeleted?: boolean;
-  /** Skip the entity's allowlists for a trusted, server-side call. */
-  skipAllowlists?: boolean;
-  /** Mass writes: one statement ('set', default) or one call per item ('perItem'). */
-  bulkMode?: 'set' | 'perItem';
-  /** Relation counts under `_count`: ['posts'] or { posts: { status: 'draft' } }. */
-  counts?: string[] | Record<string, true | object>;
-  /** The context a function `scope` reads. Defaults to CrudContext.current(). */
-  context?: Record<string, unknown>;
-  /** Run this trusted call without the entity's scope. */
-  skipScope?: boolean;
-  /** Do not raise module-level events for this call. */
-  skipEvents?: boolean;
-  /** Optimistic locking: the version the caller last read. */
-  expectedVersion?: number;
-  /** Optimistic locking for mass writes, keyed by id as a string. */
-  expectedVersions?: Record<string, number>;
-}
-```
+The last argument of every method. Every key is optional.
 
-`relations` eager-loads relations declared in the entity's config: a top-level belongs-to joins the main query, while has-many, many-to-many and every nested level add one batched query each for the whole result set. Never one query per row. See [Relations](/docs/relations).
+<PropsTable
+  props={{
+    transaction: { type: "any", description: "A Drizzle transaction handle. The call runs inside it." },
+    relations: { type: "string[]", description: "Configured relations to eager-load. A dotted path nests: \"state.country\"." },
+    select: { type: "string[]", description: "Columns to return. A dotted entry narrows a relation at any depth: \"region.code\"." },
+    "search.term": { type: "string", description: "The search term for findAll and count." },
+    "search.columns": { type: "string[]", description: "Table columns to search." },
+    "search.mode": { type: '"ilike" | "fullText"', default: '"ilike"', description: "ilike ORs a contains match per column. fullText is PostgreSQL only." },
+    "hooks.skipBefore": { type: "boolean", default: "false", description: "Skip the before hooks for this call." },
+    "hooks.skipAfter": { type: "boolean", default: "false", description: "Skip the after hooks for this call." },
+    lock: { type: '"update" | "share" | "none"', description: "Row lock on a read, as FOR UPDATE OF or FOR SHARE OF the base table. PostgreSQL only; ignored on MySQL." },
+    forNoKeyUpdate: { type: "boolean", description: "Lock with FOR NO KEY UPDATE. PostgreSQL only." },
+    withDeleted: { type: "boolean", description: "Also return soft-deleted rows." },
+    onlyDeleted: { type: "boolean", description: "Return only soft-deleted rows (the trash). A 400 when soft delete is off." },
+    skipAllowlists: { type: "boolean", description: "Skip the entity's allowlists for a trusted, server-side call." },
+    bulkMode: { type: '"set" | "perItem"', default: '"set"', description: "Mass writes: one statement for the batch, or the single-row method per item." },
+    counts: { type: "RelationCounts", description: "Relation counts under _count: [\"posts\"] or { posts: { status: \"draft\" } }." },
+    context: { type: "Record<string, unknown>", description: "The context a function scope reads. Defaults to CrudContext.current()." },
+    skipScope: { type: "boolean", description: "Run this trusted call without the entity's scope." },
+    skipEvents: { type: "boolean", description: "Do not raise module-level events for this call." },
+    expectedVersion: { type: "number", description: "Optimistic locking: the version the caller last read." },
+    expectedVersions: { type: "Record<string, number>", description: "Optimistic locking for mass writes, keyed by the id as a string." },
+  }}
+/>
 
-`select` narrows the projection, and a dotted entry narrows an eager-loaded relation at any depth (`['id', 'name', 'region.code', 'states.cities.name']`). See [Column selection](/docs/column-selection).
+`relations` joins a top-level belongs-to into the main query and loads has-many, many-to-many and every nested level with one batched query each for the whole result, never one per row. See [Relations](/docs/relations) and [Column selection](/docs/column-selection). The locks are described on [Row-level locks](/docs/row-locks).
 
-## Next
+## Common questions
 
-- → [Errors: hTTP status code mapping for every exception](/docs/errors)
-- → [Config types, `SqlCrudConfig` and `DrizzleCrudConfig`](/docs/config-types)
-- → [Exports: the full public API surface](/docs/exports)
+<Accordions>
+  <Accordion title="Does SqlBaseCrudService give default types to its generics?">
+    No. All four generics, `T`, `CreateDto`, `UpdateDto` and `FilterDto`, are required. A subclass that passes only the row type does not compile.
+  </Accordion>
+  <Accordion title="Which methods throw EntityNotFoundException?">
+    `update`, `softDelete`, `restore` and `delete` throw it (404) when the row is missing, and the mass versions report it per id inside a `BulkOperationException`. Reads never throw it: `find` and `findOne` return `null` and `exists` returns `false`.
+  </Accordion>
+  <Accordion title="What does findAll return with withCount set to false?">
+    It returns `{ data, total: null, page, limit, hasMore }`. The service fetches one row past the page to set `hasMore` and skips the `COUNT(*)` query.
+  </Accordion>
+  <Accordion title="Can I call executeSqlTransaction from a controller?">
+    No, it is protected. Call it from a method on your service subclass, and pass `{ transaction: tx }` to every CRUD call that should join the transaction.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Layers />} title="Config types" href="/docs/config-types" description="SqlCrudConfig, DrizzleCrudConfig and every type the methods take." />
+  <Card icon={<Package />} title="Exports" href="/docs/exports" description="Everything you can import from the package root." />
+  <Card icon={<Shield />} title="Errors" href="/docs/errors" description="The HTTP status of every exception, per method." />
+</Cards>
