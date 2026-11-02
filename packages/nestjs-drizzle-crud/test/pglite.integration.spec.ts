@@ -2957,7 +2957,7 @@ describe("3.7.1: select paths from the request", () => {
 		const svc: any = new Svc(base(await sharedDb(), authors));
 		const tree = svc.parseSelect(["__proto__.x", "constructor.y", "name"]);
 		expect(Object.getPrototypeOf(tree.relations)).toBeNull();
-		expect(tree.relations.__proto__.base).toEqual(["x"]);
+		expect(svc.selectFor(tree, "__proto__").base).toEqual(["x"]);
 		expect(({} as any).base).toBeUndefined();
 		expect(svc.selectFor(tree, "constructor").base).toEqual(["y"]);
 		expect(
