@@ -1,12 +1,15 @@
 # Changelog
 
-All notable changes to `@avytrix/nestjs-drizzle-crud` (published as `nestjs-drizzle-crud` up to 3.5.0) are documented here.
+All notable changes to `@avytrix/nestjs-drizzle-crud` (published as `nestjs-drizzle-crud` up to 3.3.0) are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Scope note: the 3.0.x line is PostgreSQL-first. MySQL-specific paths (non-`RETURNING`
 restore, `ER_DUP_ENTRY` mapping, dialect locking) are tracked separately and unchanged here.
+
+3.3.1, 3.4.0, 3.5.0 and 3.5.2 were tagged but never published to npm. Their changes reached npm
+in 3.5.1 (3.3.1 to 3.5.0) and 3.6.0 (3.5.2). The unscoped `nestjs-drizzle-crud` stops at 3.3.0.
 
 ## [3.6.0] - 2026-11-02
 
