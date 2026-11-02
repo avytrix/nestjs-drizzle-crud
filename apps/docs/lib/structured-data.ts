@@ -1,21 +1,23 @@
-import type { Root } from "fumadocs-core/page-tree";
-import { firstUrl, folderPath } from "./page-tree";
-import { siteConfig } from "./seo";
+import type { Faq, HowToStep } from "./page-schema";
+import { absoluteUrl, siteConfig } from "./seo";
 
 /**
  * Schema.org descriptions of this site, for the crawlers that read them.
  *
- * Every page carries exactly one `@graph`, and each graph repeats the organization, website and
- * package nodes in full, so no node points at an `@id` defined on another document. Everything
- * stated here is visible on the site: the package, its repository, its version, the company
- * credited in the footer, and the section a page sits in.
+ * Every page carries exactly one `@graph` (SEO standard 5.3), and each graph repeats the
+ * organization, website and package nodes in full, so no node points at an `@id` defined on
+ * another document. Everything stated here is visible on the site: the package, its repository,
+ * its version and license, Avytrix Technologies and the three profiles the footer links to, the
+ * page's breadcrumb, and the questions and steps rendered on the page itself.
  */
 
 const origin = siteConfig.url;
+const home = absoluteUrl("/");
+const orgRef = { "@id": `${origin}/#organization` };
 
 const organization = {
 	"@type": "Organization",
-	"@id": `${origin}/#organization`,
+	...orgRef,
 	name: siteConfig.organization.name,
 	url: siteConfig.organization.url,
 	logo: {
@@ -25,17 +27,18 @@ const organization = {
 		contentUrl: `${origin}${siteConfig.logo}`,
 	},
 	image: { "@id": `${origin}/#logo` },
-	sameAs: [siteConfig.organization.github],
+	sameAs: siteConfig.organization.profiles.map((p) => p.url),
 };
 
 const website = {
 	"@type": "WebSite",
 	"@id": `${origin}/#website`,
-	url: origin,
+	url: home,
 	name: siteConfig.displayName,
 	alternateName: siteConfig.name,
 	description: siteConfig.description,
-	publisher: { "@id": `${origin}/#organization` },
+	publisher: orgRef,
+	author: orgRef,
 	inLanguage: "en-US",
 };
 
@@ -49,93 +52,121 @@ const software = {
 	runtimePlatform: "Node.js",
 	license: "https://opensource.org/licenses/MIT",
 	version: siteConfig.version,
-	url: siteConfig.npm,
+	url: home,
 	author: { "@type": "Person", name: siteConfig.author },
-	publisher: { "@id": `${origin}/#organization` },
+	maintainer: orgRef,
+	publisher: orgRef,
 	keywords: siteConfig.keywords.join(", "),
+	targetProduct: { "@id": `${origin}/#application` },
 };
 
-/** The home page: who publishes the site, and the package it documents. */
+const application = {
+	"@type": "SoftwareApplication",
+	"@id": `${origin}/#application`,
+	name: siteConfig.name,
+	description: siteConfig.description,
+	applicationCategory: "DeveloperApplication",
+	operatingSystem: "Node.js",
+	softwareVersion: siteConfig.version,
+	license: "https://opensource.org/licenses/MIT",
+	url: home,
+	downloadUrl: siteConfig.npm,
+	publisher: orgRef,
+};
+
+const shared = [organization, website, software, application];
+
+/** The home page: who publishes the site, and the package it documents. No breadcrumb. */
 export function homeLd() {
 	return {
 		"@context": "https://schema.org",
 		"@graph": [
-			organization,
-			website,
-			software,
+			...shared,
 			{
 				"@type": "WebPage",
-				"@id": `${origin}/#webpage`,
-				url: origin,
-				name: `${siteConfig.displayName}: ${siteConfig.tagline}`,
+				"@id": `${home}#webpage`,
+				url: home,
+				name: siteConfig.homeTitle,
 				description: siteConfig.description,
 				isPartOf: { "@id": `${origin}/#website` },
 				about: { "@id": `${origin}/#software` },
+				publisher: orgRef,
 				inLanguage: "en-US",
 			},
 		],
 	};
 }
 
-/** One docs page: the page, the article on it, and its breadcrumb trail. */
+/**
+ * One docs page: the page, the article on it, its breadcrumb trail, and, when the page renders
+ * them, its common questions (FAQPage) and its steps (HowTo).
+ */
 export function docPageLd({
 	title,
 	description,
 	url,
-	tree,
+	faqs = [],
+	steps = [],
+	about = false,
+	modified,
 }: {
 	title: string;
 	description?: string;
+	/** The page's path, e.g. "/docs/soft-delete". */
 	url: string;
-	tree: Root;
+	faqs?: Faq[];
+	steps?: HowToStep[];
+	/** The page about Avytrix Technologies: an AboutPage whose subject is the organization. */
+	about?: boolean;
+	/** ISO date the page's file last changed in git. */
+	modified?: string;
 }) {
-	// A section is only named when it leads somewhere, so each resolves to its first page. A
-	// section whose first page is this page would list it twice, so it is dropped.
-	const sections = (folderPath(tree, url) ?? []).flatMap((folder) => {
-		const href = firstUrl(folder);
-		const named = typeof folder.name === "string" ? folder.name : undefined;
-		return href && named && href !== url ? [{ name: named, url: href }] : [];
-	});
+	const pageUrl = absoluteUrl(url);
+	const page = { "@id": `${pageUrl}#webpage` };
 
+	// Navigation labels, home first, the current page last, no item twice (standard 5.4).
 	const trail = [
 		{ name: siteConfig.displayName, url: "/" },
 		...(url === "/docs" ? [] : [{ name: "Documentation", url: "/docs" }]),
-		...sections,
 		{ name: title, url },
 	];
-
-	const pageUrl = `${origin}${url}`;
 
 	return {
 		"@context": "https://schema.org",
 		"@graph": [
-			organization,
-			website,
-			software,
+			...shared,
 			{
-				"@type": "WebPage",
-				"@id": `${pageUrl}#webpage`,
+				"@type": about ? "AboutPage" : "WebPage",
+				...page,
 				url: pageUrl,
 				name: title,
 				description,
 				isPartOf: { "@id": `${origin}/#website` },
-				about: { "@id": `${origin}/#software` },
+				about: about ? orgRef : { "@id": `${origin}/#software` },
+				publisher: orgRef,
 				inLanguage: "en-US",
 				breadcrumb: { "@id": `${pageUrl}#breadcrumb` },
+				...(about ? { mainEntity: orgRef } : {}),
+				...(modified ? { dateModified: modified } : {}),
 			},
-			{
-				"@type": "TechArticle",
-				"@id": `${pageUrl}#article`,
-				headline: title,
-				description,
-				url: pageUrl,
-				inLanguage: "en-US",
-				isPartOf: { "@id": `${pageUrl}#webpage` },
-				mainEntityOfPage: { "@id": `${pageUrl}#webpage` },
-				about: { "@id": `${origin}/#software` },
-				publisher: { "@id": `${origin}/#organization` },
-				author: { "@id": `${origin}/#organization` },
-			},
+			...(about
+				? []
+				: [
+						{
+							"@type": "TechArticle",
+							"@id": `${pageUrl}#article`,
+							headline: title,
+							description,
+							url: pageUrl,
+							inLanguage: "en-US",
+							isPartOf: page,
+							mainEntityOfPage: page,
+							about: { "@id": `${origin}/#software` },
+							publisher: orgRef,
+							author: orgRef,
+							...(modified ? { dateModified: modified } : {}),
+						},
+					]),
 			{
 				"@type": "BreadcrumbList",
 				"@id": `${pageUrl}#breadcrumb`,
@@ -143,9 +174,40 @@ export function docPageLd({
 					"@type": "ListItem",
 					position: i + 1,
 					name: item.name,
-					item: `${origin}${item.url}`,
+					item: absoluteUrl(item.url),
 				})),
 			},
+			...(steps.length >= 2
+				? [
+						{
+							"@type": "HowTo",
+							"@id": `${pageUrl}#howto`,
+							name: title,
+							description,
+							isPartOf: page,
+							step: steps.map((s, i) => ({
+								"@type": "HowToStep",
+								position: i + 1,
+								name: s.name,
+								text: s.text,
+							})),
+						},
+					]
+				: []),
+			...(faqs.length > 0
+				? [
+						{
+							"@type": "FAQPage",
+							"@id": `${pageUrl}#faq`,
+							isPartOf: page,
+							mainEntity: faqs.map((f) => ({
+								"@type": "Question",
+								name: f.question,
+								acceptedAnswer: { "@type": "Answer", text: f.answer },
+							})),
+						},
+					]
+				: []),
 		],
 	};
 }

@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import type { ReactNode } from "react";
 import { Provider } from "@/components/provider";
-import { siteConfig } from "@/lib/seo";
+import { absoluteUrl, indexRobots, siteConfig } from "@/lib/seo";
 
 /*
  * Geist for text and Geist Mono for code. Both are exposed as CSS
@@ -21,13 +21,13 @@ const geistMono = Geist_Mono({
 	display: "swap",
 });
 
-const ogTitle = `${siteConfig.displayName}: ${siteConfig.tagline}`;
+const ogTitle = siteConfig.homeTitle;
 
 export const metadata: Metadata = {
 	metadataBase: new URL(siteConfig.url),
 	title: {
 		default: ogTitle,
-		template: `%s · ${siteConfig.displayName}`,
+		template: `%s | ${siteConfig.displayName}`,
 	},
 	description: siteConfig.description,
 	keywords: siteConfig.keywords,
@@ -36,21 +36,11 @@ export const metadata: Metadata = {
 	creator: siteConfig.author,
 	publisher: siteConfig.organization.name,
 	category: "technology",
-	alternates: { canonical: "/" },
-	robots: {
-		index: true,
-		follow: true,
-		googleBot: {
-			index: true,
-			follow: true,
-			"max-image-preview": "large",
-			"max-snippet": -1,
-			"max-video-preview": -1,
-		},
-	},
+	alternates: { canonical: absoluteUrl("/") },
+	robots: indexRobots,
 	openGraph: {
 		type: "website",
-		url: siteConfig.url,
+		url: absoluteUrl("/"),
 		siteName: siteConfig.displayName,
 		title: ogTitle,
 		description: siteConfig.description,

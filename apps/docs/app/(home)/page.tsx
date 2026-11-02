@@ -7,6 +7,9 @@ import { CompatibleWith } from "@/components/home/compatible-with";
 import { LatestReleases } from "@/components/home/latest-releases";
 import { SponsorCta } from "@/components/home/sponsor-cta";
 import { Footer } from "@/components/home/footer";
+import { createMetadata } from "@/lib/seo";
+
+export const metadata = createMetadata();
 
 export default function HomePage() {
 	return (

@@ -6,8 +6,10 @@ export const siteConfig = {
 	logo: "/avytrix-icon.png", // Avytrix Technologies mark
 	version: "3.5.0",
 	tagline: "Type-safe CRUD for Drizzle ORM in NestJS",
+	/** The home page <title>: the primary query first, the display name last, at most 60 characters. */
+	homeTitle: "NestJS + Drizzle ORM CRUD library | Nestjs Drizzle",
 	description:
-		"Type-safe CRUD for Drizzle ORM in NestJS. Configure the connection once, and every entity gets full CRUD: find, create, update, soft-delete, bulk ops, pagination, filtering, relations and full-text search.",
+		"NestJS + Drizzle ORM CRUD: type-safe services with filtering, pagination, relations, soft delete, upsert and multi-tenancy for PostgreSQL and MySQL.",
 	url: (process.env.NEXT_PUBLIC_SITE_URL ?? "https://crud.avytrix.dev").replace(
 		/\/+$/,
 		"",
@@ -21,7 +23,15 @@ export const siteConfig = {
 	organization: {
 		name: "Avytrix Technologies",
 		url: "https://avytrix.dev",
+		contact: "https://avytrix.dev/contact",
+		email: "hello@avytrix.dev",
 		github: "https://github.com/avytrix",
+		/** The profiles avytrix.dev itself links to, in its footer. Nothing else goes in sameAs. */
+		profiles: [
+			{ name: "GitHub", url: "https://github.com/avytrix" },
+			{ name: "LinkedIn", url: "https://www.linkedin.com/company/avytrix" },
+			{ name: "Facebook", url: "https://www.facebook.com/myavytrix" },
+		],
 	},
 	/** Where the docs sources live, for "edit on GitHub" and page history links. */
 	git: {
@@ -33,6 +43,15 @@ export const siteConfig = {
 	keywords: [
 		"nestjs",
 		"drizzle",
+		"nestjs drizzle orm",
+		"drizzle orm nestjs crud",
+		"nestjs crud generator",
+		"drizzle pagination",
+		"drizzle cursor pagination",
+		"drizzle soft delete",
+		"drizzle upsert",
+		"nestjs multi tenant",
+		"nestjs swagger",
 		"drizzle-orm",
 		"nestjs crud",
 		"drizzle crud",
@@ -56,7 +75,39 @@ export const siteConfig = {
 
 export type SiteConfig = typeof siteConfig;
 
-const ogTitle = `${siteConfig.displayName}: ${siteConfig.tagline}`;
+/**
+ * The one URL form for a page: absolute, with the trailing slash `trailingSlash: true` gives
+ * every exported route. Canonicals, og:url, the sitemap, JSON-LD and llms.txt all use it, so no
+ * crawler is ever handed a URL that GitHub Pages answers with a 301.
+ */
+export function absoluteUrl(path = "/"): string {
+	const clean = path.split("#")[0] ?? "/";
+	return `${siteConfig.url}${clean === "/" ? "/" : `${clean.replace(/\/+$/, "")}/`}`;
+}
+
+/**
+ * A link to avytrix.dev that says where it came from, so enquiries from the docs can be
+ * measured: utm_source=nestjs-drizzle-crud, utm_medium=docs, utm_campaign=<page slug>.
+ */
+export function avytrixUrl(path: string, campaign: string): string {
+	const url = new URL(path, siteConfig.organization.url);
+	url.searchParams.set("utm_source", "nestjs-drizzle-crud");
+	url.searchParams.set("utm_medium", "docs");
+	url.searchParams.set("utm_campaign", campaign);
+	return url.toString();
+}
+
+/** The robots policy for every indexable page (SEO standard 2.4). */
+export const indexRobots = {
+	index: true,
+	follow: true,
+	"max-snippet": -1,
+	"max-image-preview": "large",
+	"max-video-preview": -1,
+} as const;
+
+const ogTitle = siteConfig.homeTitle;
+const ogImage = { url: "/opengraph-image", width: 1200, height: 630 };
 
 /**
  * Per-page metadata. Returns Next.js `Metadata` with a self canonical, merged keywords, and
@@ -74,18 +125,21 @@ export function createMetadata(params?: {
 	image?: string;
 }): Metadata {
 	const description = params?.description ?? siteConfig.description;
-	const path = params?.path ?? "/";
-	const url = new URL(path, siteConfig.url).toString();
+	const url = absoluteUrl(params?.path ?? "/");
 	const heading = params?.title
-		? `${params.title} · ${siteConfig.displayName}`
+		? `${params.title} | ${siteConfig.displayName}`
 		: ogTitle;
-	const images = params?.image ? [params.image] : undefined;
+	const image = params?.image
+		? { url: params.image, width: 1200, height: 630 }
+		: ogImage;
+	const images = [{ ...image, alt: heading }];
 
 	return {
-		title: params?.title,
+		title: params?.title ?? { absolute: ogTitle },
 		description,
 		keywords: [...siteConfig.keywords, ...(params?.keywords ?? [])],
-		alternates: { canonical: path },
+		alternates: { canonical: url },
+		robots: indexRobots,
 		openGraph: {
 			type: params?.ogType ?? "website",
 			url,
@@ -93,13 +147,13 @@ export function createMetadata(params?: {
 			title: heading,
 			description,
 			locale: "en_US",
-			...(images ? { images } : {}),
+			images,
 		},
 		twitter: {
 			card: "summary_large_image",
 			title: heading,
 			description,
-			...(images ? { images } : {}),
+			images: [image.url],
 		},
 	};
 }

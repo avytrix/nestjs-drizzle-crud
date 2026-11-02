@@ -1,6 +1,6 @@
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
 import { BookOpen, Globe, Heart, History, Package } from "lucide-react";
-import { siteConfig } from "@/lib/seo";
+import { avytrixUrl, siteConfig } from "@/lib/seo";
 
 /**
  * The header shared by the home page and the docs.
@@ -17,7 +17,7 @@ export function baseOptions(): BaseLayoutProps {
 					{/* biome-ignore lint/performance/noImgElement: static export, a 24px mark needs no optimizer */}
 					<img
 						src={siteConfig.logo}
-						alt=""
+						alt={`${siteConfig.organization.name} logo`}
 						width={24}
 						height={24}
 						className="size-6"
@@ -61,7 +61,7 @@ export function baseOptions(): BaseLayoutProps {
 				label: siteConfig.organization.name,
 				icon: <Globe className="text-fd-primary" />,
 				text: siteConfig.organization.name,
-				url: siteConfig.organization.url,
+				url: avytrixUrl("/", "header"),
 				external: true,
 			},
 		],

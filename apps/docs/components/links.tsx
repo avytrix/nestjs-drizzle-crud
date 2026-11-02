@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { siteConfig } from "@/lib/seo";
+import { avytrixUrl, siteConfig } from "@/lib/seo";
 
 /**
  * Links to the project's other homes, for MDX.
@@ -19,8 +19,8 @@ const TARGETS = {
 	npm: siteConfig.npm,
 	/** GitHub Sponsors. */
 	sponsor: siteConfig.sponsor,
-	/** Avytrix Technologies, who build and maintain the package. */
-	avytrix: siteConfig.organization.url,
+	/** Avytrix Technologies, who build and maintain the package (UTM-tagged, campaign "docs"). */
+	avytrix: avytrixUrl("/", "docs"),
 } as const;
 
 export type LinkTarget = keyof typeof TARGETS;
