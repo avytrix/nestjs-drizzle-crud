@@ -114,18 +114,18 @@ If you are unsure whether a doc applies, it does, so update it. A change that to
 pnpm lint                                   # biome, whole workspace
 pnpm typecheck                              # the only gate that sees type errors
 pnpm build
-pnpm --filter nestjs-drizzle-crud test      # unit
+pnpm --filter @avytrix/nestjs-drizzle-crud test      # unit
 pnpm --filter api test                      # e2e: Playwright + PGlite, no setup needed
 ```
 
 Single test while iterating:
 
 ```bash
-pnpm --filter nestjs-drizzle-crud test -- test/bug-fixes.spec.ts
-pnpm --filter nestjs-drizzle-crud test -- -t "soft delete"
+pnpm --filter @avytrix/nestjs-drizzle-crud test -- test/bug-fixes.spec.ts
+pnpm --filter @avytrix/nestjs-drizzle-crud test -- -t "soft delete"
 ```
 
-The e2e suite is self-contained: Playwright builds and boots `apps/api` with `DATABASE_URL=pglite`, an in-process Postgres seeded from `apps/api/src/db/pglite.ts`, then drives it over HTTP. A green run does prove the database paths. Rebuild the library first (`pnpm --filter nestjs-drizzle-crud build`) when you run the e2e suite directly, or run it through Turbo from the root, otherwise the app loads a stale `dist/`.
+The e2e suite is self-contained: Playwright builds and boots `apps/api` with `DATABASE_URL=pglite`, an in-process Postgres seeded from `apps/api/src/db/pglite.ts`, then drives it over HTTP. A green run does prove the database paths. Rebuild the library first (`pnpm --filter @avytrix/nestjs-drizzle-crud build`) when you run the e2e suite directly, or run it through Turbo from the root, otherwise the app loads a stale `dist/`.
 
 If a spec needs a new table or new seed rows, add them to `apps/api/src/db/pglite.ts` **and** `apps/api/src/db/schema.ts`, and keep the counts the specs assert (50 countries) intact.
 

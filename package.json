@@ -16,7 +16,7 @@
 		"dev:all": "turbo run dev",
 		"lint": "biome lint .",
 		"format": "biome format --write .",
-		"release": "pnpm --filter nestjs-drizzle-crud release"
+		"release": "pnpm --filter @avytrix/nestjs-drizzle-crud release"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.4",

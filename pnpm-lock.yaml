@@ -28,6 +28,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@avytrix/nestjs-drizzle-crud':
+        specifier: workspace:*
+        version: link:../../packages/nestjs-drizzle-crud
       '@nestjs/common':
         specifier: ^11.1.28
         version: 11.1.28(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -52,9 +55,6 @@ importers:
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@electric-sql/pglite@0.5.4)(postgres@3.4.9)
-      nestjs-drizzle-crud:
-        specifier: workspace:*
-        version: link:../../packages/nestjs-drizzle-crud
       postgres:
         specifier: ^3.4.9
         version: 3.4.9
@@ -108,6 +108,9 @@ importers:
         specifier: ^0.3.0
         version: 0.3.9(typescript@5.9.3)
     devDependencies:
+      '@avytrix/nestjs-drizzle-crud':
+        specifier: workspace:*
+        version: link:../../packages/nestjs-drizzle-crud
       '@tailwindcss/postcss':
         specifier: ^4.3.3
         version: 4.3.3
@@ -126,9 +129,6 @@ importers:
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@electric-sql/pglite@0.5.4)(postgres@3.4.9)
-      nestjs-drizzle-crud:
-        specifier: workspace:*
-        version: link:../../packages/nestjs-drizzle-crud
       postcss:
         specifier: '>=8.5.23'
         version: 8.5.26

@@ -1,5 +1,5 @@
 import { Module } from "@nestjs/common";
-import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { DrizzleCrudModule } from "@avytrix/nestjs-drizzle-crud";
 import { countries } from "../db/schema";
 import { CountriesController } from "./countries.controller";
 import { countriesCrud } from "./countries.crud";

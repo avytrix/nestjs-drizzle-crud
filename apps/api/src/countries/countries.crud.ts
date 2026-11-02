@@ -1,4 +1,4 @@
-import type { CrudFeatureConfig } from "nestjs-drizzle-crud";
+import type { CrudFeatureConfig } from "@avytrix/nestjs-drizzle-crud";
 import { cities, countryTags, regions, states, tags } from "../db/schema";
 
 // The countries config, shared by forFeature (countries.module.ts) and the
