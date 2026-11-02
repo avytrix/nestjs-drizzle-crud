@@ -9,7 +9,7 @@
  */
 
 import { PGlite } from "@electric-sql/pglite";
-import { describe, expect, it } from "@jest/globals";
+import { afterAll, describe, expect, it } from "@jest/globals";
 import { BadRequestException, HttpException } from "@nestjs/common";
 import {
 	integer,
@@ -132,8 +132,15 @@ INSERT INTO comments (body, author_id) VALUES ('first', 1), ('second', 2);
 INSERT INTO notes (body) VALUES ('hello');
 `;
 
+// Every database is closed after the run, so Jest exits without open handles.
+const clients: PGlite[] = [];
+afterAll(async () => {
+	await Promise.all(clients.map((client) => client.close()));
+});
+
 async function freshDb(): Promise<any> {
 	const client = await PGlite.create();
+	clients.push(client);
 	await client.exec(DDL);
 	await client.exec(SEED);
 	return drizzle(client);
