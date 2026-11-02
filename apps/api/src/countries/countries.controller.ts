@@ -14,52 +14,24 @@ import {
 // runtime class from emitDecoratorMetadata; type-only imports would erase them.
 import { CountriesService } from "./countries.service";
 import { CreateCountryDto } from "./dto/create-country.dto";
-import { QueryCountryDto } from "./dto/query-country.dto";
 import { UpdateCountryDto } from "./dto/update-country.dto";
-
-// `?with=region,states,states.cities,tags` -> the eager-load list. Dotted paths
-// load a relation of a relation. Unknown names are ignored by the service.
-function relationsOf(withParam?: string): string[] {
-	return (withParam ?? "")
-		.split(",")
-		.map((name) => name.trim())
-		.filter(Boolean);
-}
 
 @Controller("countries")
 export class CountriesController {
 	constructor(private readonly countries: CountriesService) {}
 
+	// The whole query string goes through parseQuery, which coerces values by
+	// column type and checks them against the allowlists in countries.module.ts:
+	//   ?region[name]=Asia&name[startsWith]=In&sortBy=-name&page=2&limit=10
+	//   ?or[0][code]=IN&or[1][code]=NP&with=region,states&fields=id,name
+	//   ?states[name]=Kerala&search=nep
+	// `?cursor=` (empty for the first page) switches to keyset pagination.
 	@Get()
-	findAll(@Query() query: QueryCountryDto) {
-		const {
-			page,
-			limit,
-			sortBy,
-			sortOrder,
-			search,
-			with: withParam,
-			fields,
-			stateName,
-			tagName,
-			...filters
-		} = query;
-		return this.countries.findAll(
-			{
-				...filters,
-				// filter by a related collection: countries that have a state / tag
-				...(stateName ? { states: { name: stateName } } : {}),
-				...(tagName ? { tags: { name: tagName } } : {}),
-			},
-			{ page, limit, sortBy, sortOrder },
-			{
-				relations: relationsOf(withParam),
-				select: fields ? fields.split(",") : undefined,
-				search: search
-					? { term: search, columns: ["name", "code"] }
-					: undefined,
-			},
-		);
+	findAll(@Query() query: Record<string, unknown>) {
+		const q = this.countries.parseQuery(query);
+		return q.isCursor
+			? this.countries.findByCursor(q.filters, q.pagination, q.options)
+			: this.countries.findAll(q.filters, q.pagination, q.options);
 	}
 
 	@Get(":id")
@@ -68,10 +40,11 @@ export class CountriesController {
 		@Query("with") withParam?: string,
 		@Query("fields") fields?: string,
 	) {
-		const country = await this.countries.find(id, {
-			relations: relationsOf(withParam),
-			select: fields ? fields.split(",") : undefined,
+		const { options } = this.countries.parseQuery({
+			with: withParam,
+			fields,
 		});
+		const country = await this.countries.find(id, options);
 		if (!country) {
 			throw new NotFoundException(`Country ${id} not found`);
 		}

@@ -128,6 +128,7 @@ test.describe("countries: eager loading without N+1", () => {
 		// The internal grouping key never reaches the response.
 		expect(Object.keys(india.tags[0]).sort()).toEqual([
 			"created_at",
+			"deleted_at",
 			"id",
 			"name",
 			"updated_at",
@@ -198,7 +199,7 @@ test.describe("countries: column selection", () => {
 
 test.describe("countries: filtering by a related collection", () => {
 	test("filters by a has-many child column", async ({ request }) => {
-		const res = await request.get("/countries?stateName=Kerala");
+		const res = await request.get("/countries?states[name]=Kerala");
 		const body = await res.json();
 		expect(body.total).toBe(1);
 		expect(body.data[0].name).toBe("India");
@@ -206,7 +207,7 @@ test.describe("countries: filtering by a related collection", () => {
 
 	test("filters by a many-to-many tag", async ({ request }) => {
 		const res = await request.get(
-			"/countries?tagName=himalayan&sortBy=name&sortOrder=asc",
+			"/countries?tags[name]=himalayan&sortBy=name&sortOrder=asc",
 		);
 		const body = await res.json();
 		// Both India and Nepal carry the tag, and neither row is duplicated.
@@ -216,7 +217,7 @@ test.describe("countries: filtering by a related collection", () => {
 
 	test("a collection filter does not multiply rows", async ({ request }) => {
 		// India has 3 states; a JOIN would report 3 and paginate wrongly.
-		const res = await request.get("/countries?stateName=Kerala&limit=10");
+		const res = await request.get("/countries?states[name]=Kerala&limit=10");
 		const body = await res.json();
 		expect(body.data).toHaveLength(1);
 		expect(body.total).toBe(1);

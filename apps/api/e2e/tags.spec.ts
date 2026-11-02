@@ -63,3 +63,72 @@ test.describe("tags: bulk delete", () => {
 		expect((await request.get(`/tags/${created.id}`)).status()).toBe(404);
 	});
 });
+
+// Tags are soft-deleted. A trashed tag disappears from reads, shows up with
+// ?onlyDeleted=true, can be restored, and is gone for good after a purge.
+test.describe("tags: trash and purge", () => {
+	test("archive, list the trash, restore, purge", async ({ request }) => {
+		const tag = await (
+			await request.post("/tags", { data: { name: `trash-${process.pid}` } })
+		).json();
+		const inTrash = async () =>
+			(
+				await (await request.get("/tags?onlyDeleted=true&limit=100")).json()
+			).data
+				.map((t: any) => t.id)
+				.includes(tag.id);
+
+		expect((await request.post(`/tags/${tag.id}/archive`)).status()).toBe(200);
+		expect((await request.get(`/tags/${tag.id}`)).status()).toBe(404);
+		expect(await inTrash()).toBe(true);
+		// A plain delete only sees live rows.
+		expect((await request.delete(`/tags/${tag.id}`)).status()).toBe(404);
+
+		const restored = await request.post(`/tags/${tag.id}/restore`);
+		expect(restored.status()).toBe(200);
+		expect((await restored.json()).deleted_at).toBeNull();
+		expect(await inTrash()).toBe(false);
+
+		await request.post(`/tags/${tag.id}/archive`);
+		expect((await request.delete(`/tags/${tag.id}/purge`)).status()).toBe(200);
+		expect(await inTrash()).toBe(false);
+		const all = await (
+			await request.get("/tags?withDeleted=true&limit=100")
+		).json();
+		expect(all.data.map((t: any) => t.id)).not.toContain(tag.id);
+		expect((await request.delete(`/tags/${tag.id}/purge`)).status()).toBe(404);
+	});
+
+	test("purges a mix of live and trashed tags in one call", async ({
+		request,
+	}) => {
+		const [a, b] = await Promise.all(
+			["p1", "p2"].map(async (name) =>
+				(
+					await request.post("/tags", {
+						data: { name: `${name}-${process.pid}` },
+					})
+				).json(),
+			),
+		);
+		await request.post(`/tags/${a.id}/archive`);
+		const res = await request.post("/tags/purge", {
+			data: { ids: [a.id, b.id] },
+		});
+		expect(res.status()).toBe(200);
+		const all = await (
+			await request.get("/tags?withDeleted=true&limit=100")
+		).json();
+		const left = all.data.map((t: any) => t.id);
+		expect(left).not.toContain(a.id);
+		expect(left).not.toContain(b.id);
+	});
+
+	test("rejects trash flags on an entity that does not allow them", async ({
+		request,
+	}) => {
+		expect((await request.get("/countries?onlyDeleted=true")).status()).toBe(
+			400,
+		);
+	});
+});
