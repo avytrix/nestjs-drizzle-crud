@@ -2951,3 +2951,17 @@ describe("3.7.1: scoped upsert on MySQL", () => {
 		);
 	});
 });
+
+describe("3.7.1: select paths from the request", () => {
+	it("treats __proto__ and constructor as plain names, not object internals", async () => {
+		const svc: any = new Svc(base(await sharedDb(), authors));
+		const tree = svc.parseSelect(["__proto__.x", "constructor.y", "name"]);
+		expect(Object.getPrototypeOf(tree.relations)).toBeNull();
+		expect(tree.relations.__proto__.base).toEqual(["x"]);
+		expect(({} as any).base).toBeUndefined();
+		expect(svc.selectFor(tree, "constructor").base).toEqual(["y"]);
+		expect(
+			svc.selectFor({ base: [], relations: {} }, "__proto__").base,
+		).toEqual([]);
+	});
+});

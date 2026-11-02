@@ -653,14 +653,19 @@ export abstract class SqlBaseCrudService<
 	// An empty `base` means "all columns of that table", so selecting only
 	// relation columns still returns the full parent row.
 	protected parseSelect(select?: string[]): SelectTree {
-		const root: SelectTree = { base: [], relations: {} };
+		// Null-prototype maps: the names come from the request (`?fields=`), so
+		// "__proto__" or "constructor" must stay plain keys.
+		const tree = (): SelectTree => ({
+			base: [],
+			relations: Object.create(null),
+		});
+		const root = tree();
 		for (const entry of select || []) {
 			const segments = (entry || "").split(".").filter(Boolean);
 			if (segments.length === 0) continue;
 			let node = root;
 			for (const name of segments.slice(0, -1)) {
-				if (!node.relations[name])
-					node.relations[name] = { base: [], relations: {} };
+				if (!Object.hasOwn(node.relations, name)) node.relations[name] = tree();
 				node = node.relations[name];
 			}
 			node.base.push(segments[segments.length - 1]!);
@@ -669,7 +674,9 @@ export abstract class SqlBaseCrudService<
 	}
 
 	protected selectFor(select: SelectTree, name: string): SelectTree {
-		return select.relations[name] ?? { base: [], relations: {} };
+		return Object.hasOwn(select.relations, name)
+			? select.relations[name]!
+			: { base: [], relations: {} };
 	}
 
 	// The columns a projection of `hostTable` must keep so the given child

@@ -23,6 +23,8 @@ in 3.5.1 (3.3.1 to 3.5.0) and 3.6.0 (3.5.2). The unscoped `nestjs-drizzle-crud` 
 
 - The error for an upsert on a scoped entity on MySQL now reads "upsert on a scoped entity needs
   PostgreSQL or SQLite". It said PostgreSQL only, though SQLite supports a scoped upsert since 3.7.0.
+- `?fields=` paths named `__proto__`, `constructor` or `prototype` are treated as plain names.
+  Before, they reached the select tree's object internals (CodeQL js/remote-property-injection).
 
 ## [3.7.0] - 2026-11-02
 
