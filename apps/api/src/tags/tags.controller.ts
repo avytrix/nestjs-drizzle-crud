@@ -3,6 +3,7 @@ import {
 	Controller,
 	Delete,
 	Get,
+	HttpCode,
 	NotFoundException,
 	Param,
 	ParseUUIDPipe,
@@ -11,6 +12,7 @@ import {
 } from "@nestjs/common";
 // Value imports (not `import type`): NestJS DI and ValidationPipe read the
 // runtime class from emitDecoratorMetadata; type-only imports would erase them.
+import { BulkDeleteTagsDto } from "./dto/bulk-delete-tags.dto";
 import { CreateTagDto } from "./dto/create-tag.dto";
 import { TagsService } from "./tags.service";
 
@@ -41,6 +43,14 @@ export class TagsController {
 	@Post()
 	create(@Body() dto: CreateTagDto) {
 		return this.tags.create(dto);
+	}
+
+	// Deletes every id or none. A failure answers 400 with one entry per failed
+	// id in `errors`, each carrying the status that id alone would have produced.
+	@Post("bulk-delete")
+	@HttpCode(200)
+	removeMany(@Body() dto: BulkDeleteTagsDto) {
+		return this.tags.massDelete(dto.ids);
 	}
 
 	@Delete(":id")
