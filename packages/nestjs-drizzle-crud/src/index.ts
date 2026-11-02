@@ -7,6 +7,7 @@
 export {
 	and,
 	asc,
+	between,
 	desc,
 	eq,
 	gt,
@@ -19,6 +20,8 @@ export {
 	lt,
 	lte,
 	ne,
+	not,
+	notInArray,
 	or,
 	sql,
 } from "drizzle-orm";
@@ -35,6 +38,23 @@ export type {
 	CrudFeatureConfig,
 	DrizzleCrudConfig,
 } from "./core/interfaces/drizzle-crud-config.interface";
+// Query, filter, cursor, allowlist and upsert types
+export type {
+	BulkMode,
+	ColumnFilter,
+	CrudAllowlists,
+	CrudFilter,
+	CursorPage,
+	CursorPaginationOptions,
+	FilterGroup,
+	FilterOperator,
+	FilterOperators,
+	FilterScalar,
+	ParseCrudQueryOptions,
+	ParsedCrudQuery,
+	SortInput,
+	UpsertOptions,
+} from "./core/interfaces/query.interface";
 // Configuration interfaces
 export type {
 	RelationConfig,
@@ -47,6 +67,8 @@ export type {
 	SqlSearchMode,
 	SqlSearchOptions,
 } from "./core/interfaces/sql-crud-config.interface";
+// Query string parser
+export { parseCrudQuery } from "./core/utils/query-parser";
 // Types
 export type {
 	PrimaryKeyType,

@@ -1,7 +1,10 @@
 // Drizzle imports
 import {
 	and,
+	arrayContains,
+	arrayOverlaps,
 	asc,
+	between,
 	desc,
 	eq,
 	getTableColumns,
@@ -16,6 +19,8 @@ import {
 	lt,
 	lte,
 	ne,
+	not,
+	notInArray,
 	or,
 	sql,
 } from "drizzle-orm";
@@ -33,6 +38,15 @@ import type {
 	PaginationOptions,
 } from "../interfaces/crud-service.interface";
 import type {
+	CrudAllowlists,
+	CursorPage,
+	CursorPaginationOptions,
+	ParseCrudQueryOptions,
+	ParsedCrudQuery,
+	SortInput,
+	UpsertOptions,
+} from "../interfaces/query.interface";
+import type {
 	RelationConfig,
 	RelationNode,
 	RelationsConfig,
@@ -41,12 +55,32 @@ import type {
 	SqlCrudConfig,
 	SqlOperationOptions,
 } from "../interfaces/sql-crud-config.interface";
-import type { SortOrder } from "../types/sql.types";
+import type { SortColumn, SortOrder } from "../types/sql.types";
+import { decodeCursor, encodeCursor } from "../utils/cursor";
 import { isPlainObject, mergeCrudConfig } from "../utils/merge-config";
+import { parseCrudQuery } from "../utils/query-parser";
 
 // Alias a many-to-many row carries its join-table key under while it is being
 // grouped. Prefixed so it cannot collide with a real column name.
 const JOIN_KEY = "__crudJoinKey";
+
+// Prefix of the hidden fields a keyset page selects to build its cursor.
+const CURSOR_KEY = "__crudCursor";
+
+// Thrown inside a savepoint to roll it back on purpose; never escapes.
+const ROLLBACK = Symbol("rollback");
+
+// One resolved ORDER BY entry. `key` is what the caller wrote ("name",
+// "region.name"), `relation` the belongs-to it needs joined.
+interface SortSpec {
+	key: string;
+	column: any;
+	order: SortOrder;
+	relation?: string;
+}
+
+// The group keys of a filter object.
+const GROUP_KEYS = new Set(["and", "or", "not"]);
 
 export abstract class SqlBaseCrudService<
 	T extends Record<string, any>,
@@ -169,6 +203,133 @@ export abstract class SqlBaseCrudService<
 			if (!Number.isNaN(date.getTime())) return date;
 		}
 		throw new BadRequestException(`Invalid date filter value: ${value}`);
+	}
+
+	// ---- Allowlists, soft delete scope, writable columns ----
+
+	private static readonly ALLOWLIST_LABELS: Record<
+		keyof CrudAllowlists,
+		string
+	> = {
+		filterableColumns: "Filtering on",
+		sortableColumns: "Sorting by",
+		selectableColumns: "Selecting",
+		searchableColumns: "Searching",
+		loadableRelations: "Loading the relation",
+		writableColumns: "Writing",
+	};
+
+	// A 400 when `path` is outside a configured allowlist. An unset list allows
+	// everything. The primary key may always be selected and sorted on, since
+	// every page sorts on it anyway. A relation path is allowed when a longer
+	// listed path goes through it ("states.cities" allows "states").
+	protected assertAllowed(
+		list: keyof CrudAllowlists,
+		path: string,
+		options?: SqlOperationOptions,
+	): void {
+		if (options?.skipAllowlists) return;
+		const allowed = this.config[list];
+		if (!allowed) return;
+		if (
+			path === this.config.primaryKey &&
+			(list === "selectableColumns" || list === "sortableColumns")
+		) {
+			return;
+		}
+		if (allowed.includes(path)) return;
+		if (
+			list === "loadableRelations" &&
+			allowed.some((entry) => entry.startsWith(`${path}.`))
+		) {
+			return;
+		}
+		throw new BadRequestException(
+			`${SqlBaseCrudService.ALLOWLIST_LABELS[list]} "${path}" is not allowed`,
+		);
+	}
+
+	// Check the caller-supplied parts of a read against the allowlists.
+	protected checkReadOptions(options?: SqlOperationOptions): void {
+		if (options?.skipAllowlists) return;
+		for (const path of options?.relations ?? []) {
+			if (path) this.assertAllowed("loadableRelations", path, options);
+		}
+		for (const path of options?.select ?? []) {
+			if (path) this.assertAllowed("selectableColumns", path, options);
+		}
+		for (const column of options?.search?.columns ?? []) {
+			this.assertAllowed("searchableColumns", column, options);
+		}
+	}
+
+	// The soft delete predicate for the service's own table: deleted rows are
+	// hidden unless the caller asks for them with withDeleted or onlyDeleted.
+	protected softDeleteScope(options?: SqlOperationOptions): any | undefined {
+		const softDelete = this.config.softDelete;
+		if (options?.onlyDeleted) {
+			if (!softDelete?.enabled) {
+				throw new BadRequestException(
+					"onlyDeleted needs soft delete, which is off for this entity",
+				);
+			}
+			return isNotNull(this.config.table[softDelete.column]);
+		}
+		if (!softDelete?.enabled || options?.withDeleted) return undefined;
+		return isNull(this.config.table[softDelete.column]);
+	}
+
+	// The columns the package manages itself, which a create or update body may
+	// not set unless writableColumns names them: the soft delete column, and on
+	// update the primary key and the createdAt timestamp.
+	protected managedColumns(operation: "create" | "update"): string[] {
+		const out: string[] = [];
+		if (this.config.softDelete?.enabled)
+			out.push(this.config.softDelete.column);
+		if (operation === "update") {
+			out.push(this.config.primaryKey);
+			if (this.config.timestamps?.createdAt) {
+				out.push(this.config.timestamps.createdAt);
+			}
+		}
+		return out;
+	}
+
+	// Apply writableColumns to an entity about to be written. With the list set,
+	// a column outside it is a 400. Without it, the managed columns are dropped
+	// so a body cannot move a primary key or resurrect a row by accident. Keys
+	// that are not columns are left alone; Drizzle ignores them.
+	protected filterWritable(
+		entity: Record<string, any>,
+		operation: "create" | "update",
+		options?: SqlOperationOptions,
+	): Record<string, any> {
+		const out = { ...entity };
+		const allowed = this.config.writableColumns;
+		if (allowed && !options?.skipAllowlists) {
+			for (const [key, value] of Object.entries(out)) {
+				if (value === undefined || !this.columnOf(this.config.table, key)) {
+					continue;
+				}
+				if (!allowed.includes(key)) {
+					throw new ValidationFailedException(
+						`the column "${key}" is not writable`,
+					);
+				}
+			}
+			return out;
+		}
+		if (allowed) return out;
+		for (const key of this.managedColumns(operation)) delete out[key];
+		return out;
+	}
+
+	// A comparable key for a primary key value: route params arrive as strings
+	// while the driver hands back numbers, and uuids may differ in case.
+	protected keyOf(value: unknown): string {
+		const column = this.columnOf(this.config.table, this.config.primaryKey);
+		const key = String(value);
+		return column?.columnType === "PgUUID" ? key.toLowerCase() : key;
 	}
 
 	constructor(protected readonly config: SqlCrudConfig) {
@@ -766,57 +927,136 @@ export abstract class SqlBaseCrudService<
 	// Build the ORDER BY expressions for findAll. An explicit caller `sortBy`
 	// wins and fully replaces the configured default; otherwise the entity's
 	// `defaultSort` (possibly multi-column) is applied in order.
-	// A caller-supplied `sortBy` that isn't a real column is a client error and
-	// fails fast (400) rather than silently returning unsorted data. An unknown
-	// column inside the configured `defaultSort` is a developer/config mistake,
-	// so it's warned and skipped (not surfaced to the client).
 	// The primary key always comes last, so rows that tie on the sort columns
 	// (or a query with no sort at all) still page in the same order every time.
 	protected buildOrderBy(
-		sortBy?: string,
+		sortBy?: SortInput,
 		sortOrder: SortOrder = "desc",
 	): any[] {
-		const out = this.buildSortColumns(sortBy, sortOrder);
-		const pk = this.columnOf(this.config.table, this.config.primaryKey);
-		if (pk && !out.columns.includes(pk)) out.order.push(asc(pk));
-		return out.order;
+		return this.resolveSort(sortBy, sortOrder).map((spec) =>
+			this.orderOf(spec),
+		);
 	}
 
-	private buildSortColumns(
-		sortBy?: string,
+	protected orderOf(spec: SortSpec): any {
+		return spec.order === "desc" ? desc(spec.column) : asc(spec.column);
+	}
+
+	// Resolve a caller sort (or the configured defaultSort) into ORDER BY
+	// entries, primary key last. A single string keeps its 3.3 meaning: one
+	// column in `sortOrder` (default "desc"). A list, or a string with commas,
+	// sorts by each entry in turn, ascending unless it starts with "-".
+	// A caller column that does not exist, or sits outside sortableColumns, is
+	// a 400. An unknown column in defaultSort is a config mistake, so it is
+	// warned about and skipped instead.
+	protected resolveSort(
+		sortBy?: SortInput,
 		sortOrder: SortOrder = "desc",
-	): { order: any[]; columns: any[] } {
-		if (sortBy) {
-			const col = this.columnOf(this.config.table, sortBy);
-			if (!col) {
-				throw new BadRequestException(`Unknown sort column: ${sortBy}`);
+		options?: SqlOperationOptions,
+	): SortSpec[] {
+		// Fail fast on a bad sortOrder; anything other than "desc" used to sort
+		// ascending silently.
+		if (sortOrder !== "asc" && sortOrder !== "desc") {
+			throw new BadRequestException(
+				`Invalid sortOrder: ${sortOrder} (expected 'asc' or 'desc')`,
+			);
+		}
+		const specs: SortSpec[] = [];
+		const add = (spec: SortSpec) => {
+			if (!specs.some((existing) => existing.column === spec.column)) {
+				specs.push(spec);
 			}
-			// Fail fast on a bad sortOrder too (mirrors the unknown-column check);
-			// otherwise anything other than "desc" silently sorted ascending.
-			if (sortOrder !== "asc" && sortOrder !== "desc") {
+		};
+		const entries = this.sortEntries(sortBy, sortOrder);
+		if (entries.length > 0) {
+			for (const entry of entries) {
+				this.assertAllowed("sortableColumns", entry.column, options);
+				add(this.resolveSortColumn(entry.column, entry.order ?? "asc"));
+			}
+		} else {
+			for (const entry of this.config.defaultSort ?? []) {
+				try {
+					add(this.resolveSortColumn(entry.column, entry.order ?? "asc"));
+				} catch {
+					console.warn(
+						`[nestjs-drizzle-crud] defaultSort references unknown column "${entry.column}"; skipping.`,
+					);
+				}
+			}
+		}
+		const pk = this.columnOf(this.config.table, this.config.primaryKey);
+		if (pk) add({ key: this.config.primaryKey, column: pk, order: "asc" });
+		return specs;
+	}
+
+	// Normalize the accepted sortBy shapes into SortColumn entries.
+	private sortEntries(sortBy: SortInput | undefined, sortOrder: SortOrder) {
+		const fromString = (entry: string): SortColumn => {
+			const name = entry.trim();
+			if (name.startsWith("-")) return { column: name.slice(1), order: "desc" };
+			if (name.startsWith("+")) return { column: name.slice(1), order: "asc" };
+			return { column: name, order: "asc" };
+		};
+		if (typeof sortBy === "string") {
+			if (!sortBy.trim()) return [];
+			if (!sortBy.includes(",")) {
+				const entry = fromString(sortBy);
+				return [
+					sortBy.trim().startsWith("-") || sortBy.trim().startsWith("+")
+						? entry
+						: { column: entry.column, order: sortOrder },
+				];
+			}
+			return sortBy
+				.split(",")
+				.filter((part) => part.trim())
+				.map(fromString);
+		}
+		if (!Array.isArray(sortBy)) return [];
+		return sortBy.map((entry) => {
+			if (typeof entry === "string") return fromString(entry);
+			if (
+				!isPlainObject(entry) ||
+				typeof entry.column !== "string" ||
+				(entry.order !== undefined &&
+					entry.order !== "asc" &&
+					entry.order !== "desc")
+			) {
 				throw new BadRequestException(
-					`Invalid sortOrder: ${sortOrder} (expected 'asc' or 'desc')`,
+					"Each sortBy entry is a column name or { column, order }",
 				);
 			}
-			return {
-				order: [sortOrder === "desc" ? desc(col) : asc(col)],
-				columns: [col],
-			};
+			return entry;
+		});
+	}
+
+	// A sort column of the service's table, or of a top-level belongs-to
+	// relation written as "relation.column". A collection cannot be sorted on:
+	// it has many values per row.
+	protected resolveSortColumn(key: string, order: SortOrder): SortSpec {
+		const dot = key.indexOf(".");
+		if (dot < 0) {
+			const column = this.columnOf(this.config.table, key);
+			if (!column) throw new BadRequestException(`Unknown sort column: ${key}`);
+			return { key, column, order };
 		}
-		const order: any[] = [];
-		const columns: any[] = [];
-		for (const spec of this.config.defaultSort ?? []) {
-			const col = this.columnOf(this.config.table, spec.column);
-			if (!col) {
-				console.warn(
-					`[nestjs-drizzle-crud] defaultSort references unknown column "${spec.column}"; skipping.`,
-				);
-				continue;
-			}
-			order.push(spec.order === "desc" ? desc(col) : asc(col));
-			columns.push(col);
+		const name = key.slice(0, dot);
+		const relations = this.config.relations || {};
+		const relation = Object.hasOwn(relations, name)
+			? relations[name]
+			: undefined;
+		const column = relation
+			? this.columnOf(relation.table, key.slice(dot + 1))
+			: undefined;
+		if (!relation || !column) {
+			throw new BadRequestException(`Unknown sort column: ${key}`);
 		}
-		return { order, columns };
+		if (this.isCollection(relation) || !relation.localKey) {
+			throw new BadRequestException(
+				`Cannot sort by "${key}": only a belongs-to relation column can be sorted on`,
+			);
+		}
+		return { key, column, order, relation: name };
 	}
 
 	// Clamp pagination input to safe bounds: page >= 1 and 1 <= limit <= maxLimit.
@@ -879,6 +1119,7 @@ export abstract class SqlBaseCrudService<
 		"22P02": "a value does not match its column type",
 		"22007": "a date or time value has an invalid format",
 		"22008": "a date or time value is out of range",
+		"21000": "the same key appears more than once in one upsert",
 	};
 
 	protected isDataException(error: any): boolean {
@@ -987,6 +1228,26 @@ export abstract class SqlBaseCrudService<
 			: ilike(column, pattern);
 	}
 
+	// Parse an HTTP query (`@Query()`) into filters, pagination and options for
+	// this entity: its table, relations, primary key and allowlists. Pass
+	// `allowTrash: true` to accept withDeleted / onlyDeleted.
+	parseQuery(
+		query: Record<string, unknown> | null | undefined,
+		options: ParseCrudQueryOptions = {},
+	): ParsedCrudQuery {
+		const config = this.config;
+		return parseCrudQuery(query, config.table, {
+			relations: config.relations,
+			primaryKey: config.primaryKey,
+			filterableColumns: config.filterableColumns,
+			sortableColumns: config.sortableColumns,
+			selectableColumns: config.selectableColumns,
+			searchableColumns: config.searchableColumns,
+			loadableRelations: config.loadableRelations,
+			...options,
+		});
+	}
+
 	// The existence check that guards update / softDelete / delete only needs to
 	// know whether the row is there, so it drops the caller's relations and
 	// columns: joining or batch-loading children to throw them away would be an
@@ -999,43 +1260,31 @@ export abstract class SqlBaseCrudService<
 			...options,
 			relations: [],
 			select: [this.config.primaryKey],
+			skipAllowlists: true,
 		});
 	}
 
 	// Single Operations
 	async find(id: any, options?: SqlOperationOptions): Promise<T | null> {
-		const { transaction, relations = [], select = [] } = options || {};
-		const db = transaction || this.config.db;
-		const nodes = this.relationTree(relations);
-		const joined = this.planJoins(nodes);
-		const selection = this.parseSelect(select);
-		const baseSelect = this.withRequiredKeys(selection.base, nodes);
-
-		const conditions = [eq(this.config.table[this.config.primaryKey], id)];
-		if (this.config.softDelete?.enabled) {
-			conditions.push(isNull(this.config.table[this.config.softDelete.column]));
-		}
-
-		let query = this.startSelect(db, baseSelect, joined, false, selection);
-		query = this.applyJoins(
-			query,
-			joined.map((node) => node.name),
-		)
-			.where(and(...conditions))
-			.limit(1);
-		query = this.applyLock(query, options);
-
-		const result = await this.runRead<any[]>(query);
-		const rows = this.normalizeRelations(
-			result,
-			joined.map((node) => node.name),
+		this.checkReadOptions(options);
+		return this.findFirst(
+			[eq(this.config.table[this.config.primaryKey], id)],
+			options,
 		);
-		await this.loadRelations(db, rows, nodes, selection);
-		return rows[0] || null;
 	}
 
 	async findOne(
 		where: Partial<T>,
+		options?: SqlOperationOptions,
+	): Promise<T | null> {
+		this.checkReadOptions(options);
+		return this.findFirst(this.buildWhereConditionsFromPartial(where), options);
+	}
+
+	// The first row matching `conditions`, with the soft delete scope, joins,
+	// lock and eager loads of `options` applied.
+	private async findFirst(
+		conditions: any[],
 		options?: SqlOperationOptions,
 	): Promise<T | null> {
 		const { transaction, relations = [], select = [] } = options || {};
@@ -1045,10 +1294,8 @@ export abstract class SqlBaseCrudService<
 		const selection = this.parseSelect(select);
 		const baseSelect = this.withRequiredKeys(selection.base, nodes);
 
-		const conditions = this.buildWhereConditionsFromPartial(where);
-		if (this.config.softDelete?.enabled) {
-			conditions.push(isNull(this.config.table[this.config.softDelete.column]));
-		}
+		const scope = this.softDeleteScope(options);
+		if (scope) conditions.push(scope);
 
 		let query = this.startSelect(db, baseSelect, joined, false, selection);
 		query = this.applyJoins(
@@ -1068,18 +1315,17 @@ export abstract class SqlBaseCrudService<
 		return rows[0] || null;
 	}
 
-	async findAll(
-		filters?: FilterDto,
-		pagination?: PaginationOptions,
+	// Everything a list read needs before it builds its queries: the eager
+	// load plan, the WHERE (filters, search, soft delete scope), the sort and
+	// the relations to join. Shared by findAll and findByCursor.
+	private planList(
+		filters: any,
+		sortBy: SortInput | undefined,
+		sortOrder: SortOrder,
 		options?: SqlOperationOptions,
-	): Promise<{ data: T[]; total: number; page: number; limit: number }> {
+	) {
+		this.checkReadOptions(options);
 		const { transaction, relations = [], select = [] } = options || {};
-		const { sortBy, sortOrder = "desc" } = pagination || {};
-		const {
-			page,
-			limit: safeLimit,
-			offset,
-		} = this.resolvePagination(pagination?.page, pagination?.limit);
 		const db = transaction || this.config.db;
 		const nodes = this.relationTree(relations);
 		const joined = this.planJoins(nodes);
@@ -1087,47 +1333,85 @@ export abstract class SqlBaseCrudService<
 		const baseSelect = this.withRequiredKeys(selection.base, nodes);
 
 		const { conditions, relations: filterRelations } =
-			this.buildFilterConditions(filters, db);
+			this.buildFilterConditions(filters, db, options);
 		const searchCondition = this.buildSearchCondition(options?.search);
-		if (searchCondition) {
-			conditions.push(searchCondition);
-		}
-		if (this.config.softDelete?.enabled) {
-			conditions.push(isNull(this.config.table[this.config.softDelete.column]));
-		}
+		if (searchCondition) conditions.push(searchCondition);
+		const scope = this.softDeleteScope(options);
+		if (scope) conditions.push(scope);
 
-		// Join everything needed for eager-loading and for relation filters.
+		const sort = this.resolveSort(sortBy, sortOrder, options);
+		// Join everything needed for eager-loading, relation filters and
+		// relation sorts. The count query only joins the filter relations.
 		const joinRelations = Array.from(
-			new Set([...joined.map((node) => node.name), ...filterRelations]),
+			new Set([
+				...joined.map((node) => node.name),
+				...filterRelations,
+				...sort.flatMap((spec) => (spec.relation ? [spec.relation] : [])),
+			]),
 		);
+		return {
+			db,
+			nodes,
+			joined,
+			selection,
+			baseSelect,
+			conditions,
+			filterRelations,
+			sort,
+			joinRelations,
+		};
+	}
+
+	private buildCountQuery(
+		db: any,
+		conditions: any[],
+		filterRelations: string[],
+	): any {
+		let query = db
+			.select({ count: sql<number>`count(*)` })
+			.from(this.config.table);
+		query = this.applyJoins(query, filterRelations);
+		if (conditions.length > 0) query = query.where(and(...conditions));
+		return query;
+	}
+
+	async findAll(
+		filters?: FilterDto,
+		pagination?: PaginationOptions,
+		options?: SqlOperationOptions,
+	): Promise<{ data: T[]; total: number; page: number; limit: number }> {
+		const { sortBy, sortOrder = "desc" } = pagination || {};
+		const {
+			page,
+			limit: safeLimit,
+			offset,
+		} = this.resolvePagination(pagination?.page, pagination?.limit);
+		const plan = this.planList(filters, sortBy, sortOrder, options);
 
 		let dataQuery = this.startSelect(
-			db,
-			baseSelect,
-			joined,
-			joinRelations.length > 0,
-			selection,
+			plan.db,
+			plan.baseSelect,
+			plan.joined,
+			plan.joinRelations.length > 0,
+			plan.selection,
 		);
-		dataQuery = this.applyJoins(dataQuery, joinRelations);
-		if (conditions.length > 0) {
-			dataQuery = dataQuery.where(and(...conditions));
+		dataQuery = this.applyJoins(dataQuery, plan.joinRelations);
+		if (plan.conditions.length > 0) {
+			dataQuery = dataQuery.where(and(...plan.conditions));
 		}
-		const orderBy = this.buildOrderBy(sortBy, sortOrder);
-		if (orderBy.length > 0) {
-			dataQuery = dataQuery.orderBy(...orderBy);
+		if (plan.sort.length > 0) {
+			dataQuery = dataQuery.orderBy(
+				...plan.sort.map((spec) => this.orderOf(spec)),
+			);
 		}
 		dataQuery = dataQuery.limit(safeLimit).offset(offset);
 		dataQuery = this.applyLock(dataQuery, options);
 
-		let countQuery = db
-			.select({ count: sql<number>`count(*)` })
-			.from(this.config.table);
-		// Count only needs the relations used for filtering, not eager loads.
-		countQuery = this.applyJoins(countQuery, filterRelations);
-		if (conditions.length > 0) {
-			countQuery = countQuery.where(and(...conditions));
-		}
-
+		const countQuery = this.buildCountQuery(
+			plan.db,
+			plan.conditions,
+			plan.filterRelations,
+		);
 		const [data, totalResult] = await this.runRead(
 			Promise.all([dataQuery, countQuery]),
 		);
@@ -1136,9 +1420,9 @@ export abstract class SqlBaseCrudService<
 		// One batched query per relation for the whole page, never one per row.
 		const rows = this.normalizeRelations(
 			data,
-			joined.map((node) => node.name),
+			plan.joined.map((node) => node.name),
 		);
-		await this.loadRelations(db, rows, nodes, selection);
+		await this.loadRelations(plan.db, rows, plan.nodes, plan.selection);
 
 		return {
 			data: rows,
@@ -1148,47 +1432,233 @@ export abstract class SqlBaseCrudService<
 		};
 	}
 
-	async create(data: CreateDto, options?: SqlOperationOptions): Promise<T> {
-		const { transaction, hooks = {} } = options || {};
+	// Keyset pagination. Each page is `WHERE (sort columns) > (last row's
+	// values)` instead of an OFFSET, so a deep page costs the same as the first
+	// and a row inserted on an earlier page does not shift the next one. The
+	// primary key is always the last sort column, which makes every position
+	// unique. The count query only runs when `count: true` is passed.
+	async findByCursor(
+		filters?: FilterDto,
+		pagination?: CursorPaginationOptions,
+		options?: SqlOperationOptions,
+	): Promise<CursorPage<T>> {
+		const { sortBy, sortOrder = "desc", count = false } = pagination || {};
+		const { limit } = this.resolvePagination(1, pagination?.limit);
+		const plan = this.planList(filters, sortBy, sortOrder, options);
+		const signature = plan.sort
+			.map((spec) => `${spec.key}:${spec.order}`)
+			.join(",");
+
+		const cursor = pagination?.cursor ?? pagination?.after;
+		const conditions = [...plan.conditions];
+		if (cursor !== undefined && cursor !== null && cursor !== "") {
+			if (typeof cursor !== "string") {
+				throw new BadRequestException("Invalid cursor");
+			}
+			const values = decodeCursor(cursor, signature, plan.sort.length);
+			conditions.push(this.keysetCondition(plan.sort, values));
+		}
+
+		// The sort values travel in hidden fields so the cursor can be built
+		// whatever `select` narrowed the row to. They are removed below.
+		const fields = this.buildSelection(
+			plan.baseSelect,
+			plan.joined,
+			plan.selection,
+		);
+		plan.sort.forEach((spec, i) => {
+			fields[`${CURSOR_KEY}${i}`] = this.cursorField(spec.column);
+		});
+		let dataQuery = plan.db.select(fields).from(this.config.table);
+		dataQuery = this.applyJoins(dataQuery, plan.joinRelations);
+		if (conditions.length > 0) dataQuery = dataQuery.where(and(...conditions));
+		dataQuery = dataQuery
+			.orderBy(...plan.sort.map((spec) => this.orderOf(spec)))
+			// One row more than the page shows whether there is a next page.
+			.limit(limit + 1);
+		dataQuery = this.applyLock(dataQuery, options);
+
+		const [data, totalResult] = await this.runRead(
+			Promise.all([
+				dataQuery,
+				count
+					? this.buildCountQuery(plan.db, plan.conditions, plan.filterRelations)
+					: Promise.resolve(undefined),
+			]),
+		);
+		const page: any[] = (data as any[]).slice(0, limit);
+		const last = page[page.length - 1];
+		const nextCursor =
+			(data as any[]).length > limit && last
+				? encodeCursor(
+						plan.sort.map((_, i) => last[`${CURSOR_KEY}${i}`]),
+						signature,
+					)
+				: null;
+		for (const row of page) {
+			plan.sort.forEach((_, i) => {
+				delete row[`${CURSOR_KEY}${i}`];
+			});
+		}
+
+		const rows = this.normalizeRelations(
+			page,
+			plan.joined.map((node) => node.name),
+		);
+		await this.loadRelations(plan.db, rows, plan.nodes, plan.selection);
+
+		const out: CursorPage<T> = { data: rows, limit, nextCursor };
+		if (count) {
+			out.total = parseInt(
+				(totalResult as any[])?.[0]?.count?.toString() || "0",
+				10,
+			);
+		}
+		return out;
+	}
+
+	// The value a cursor stores for a sort column. A date column is read as
+	// text: a JavaScript Date keeps milliseconds, Postgres keeps microseconds,
+	// and a cursor rounded down would show the same row twice.
+	protected cursorField(column: any): any {
+		if (column?.dataType !== "date") return column;
+		return this.config.dialect === "mysql"
+			? sql`cast(${column} as char)`
+			: sql`cast(${column} as text)`;
+	}
+
+	// Compare a sort column with a cursor value. Date columns compare with the
+	// text the cursor holds, which the database casts to the column's type.
+	private compareCursor(column: any, op: ">" | "<" | "=", value: any): any {
+		if (column?.dataType === "date") {
+			return sql`${column} ${sql.raw(op)} ${value}`;
+		}
+		if (op === ">") return gt(column, value);
+		if (op === "<") return lt(column, value);
+		return eq(column, value);
+	}
+
+	// "Comes after the cursor row" for a list of sort columns: the first column
+	// is past the cursor value, or it ties and the next one is past, and so on.
+	// NULLs sort last ascending and first descending on Postgres, the other
+	// way round on MySQL, and the comparison follows the same rule.
+	protected keysetCondition(specs: SortSpec[], values: unknown[]): any {
+		const branches: any[] = [];
+		specs.forEach((spec, i) => {
+			const after = this.afterCursor(spec, values[i]);
+			if (!after) return;
+			const ties = specs
+				.slice(0, i)
+				.map((previous, j) =>
+					values[j] === null
+						? isNull(previous.column)
+						: this.compareCursor(previous.column, "=", values[j]),
+				);
+			branches.push(ties.length > 0 ? and(...ties, after) : after);
+		});
+		return branches.length > 0 ? or(...branches) : sql`false`;
+	}
+
+	private afterCursor(spec: SortSpec, value: unknown): any | undefined {
+		const postgres = this.config.dialect !== "mysql";
+		const nullsFirst = postgres ? spec.order === "desc" : spec.order === "asc";
+		if (value === null) {
+			return nullsFirst ? isNotNull(spec.column) : undefined;
+		}
+		const past = this.compareCursor(
+			spec.column,
+			spec.order === "asc" ? ">" : "<",
+			value,
+		);
+		return nullsFirst ? past : or(past, isNull(spec.column));
+	}
+
+	// Validate, run the before hook and map one create DTO into the row to
+	// insert, timestamps included.
+	protected async prepareCreate(
+		data: CreateDto,
+		options?: SqlOperationOptions,
+	): Promise<Record<string, any>> {
+		const hooks = options?.hooks ?? {};
 		await this.validateCreate(data);
 		const processedData = hooks.skipBefore
 			? data
 			: await this.beforeCreate(data);
-		const entityData = this.mapCreateDtoToEntity(processedData);
+		const entityData = this.filterWritable(
+			this.mapCreateDtoToEntity(processedData),
+			"create",
+			options,
+		);
 
 		const now = new Date();
 		if (this.config.timestamps?.createdAt)
 			entityData[this.config.timestamps.createdAt] = now;
 		if (this.config.timestamps?.updatedAt)
 			entityData[this.config.timestamps.updatedAt] = now;
+		return entityData;
+	}
 
+	// Insert one prepared row and return it as stored.
+	private async insertOne(
+		db: any,
+		entityData: Record<string, any>,
+		options?: SqlOperationOptions,
+	): Promise<T> {
+		const insertQuery = db.insert(this.config.table).values(entityData);
+		if (this.config.sql?.useReturning) {
+			const result = await insertQuery.returning();
+			return result[0];
+		}
+		const result = await insertQuery;
+		// Without RETURNING (e.g. MySQL): prefer a client-supplied primary key
+		// (required for uuid / non-auto-increment keys), otherwise fall back to
+		// the driver's auto-increment insertId.
+		const lastInsertId =
+			entityData[this.config.primaryKey] ?? result?.[0]?.insertId;
+		const createdEntity = await this.find(lastInsertId, {
+			...options,
+			transaction: db,
+		});
+		if (!createdEntity) throw new Error("Failed to create entity");
+		return createdEntity;
+	}
+
+	async create(data: CreateDto, options?: SqlOperationOptions): Promise<T> {
+		const { transaction, hooks = {} } = options || {};
+		const entityData = await this.prepareCreate(data, options);
 		const db = transaction || this.config.db;
-		let insertQuery = db.insert(this.config.table).values(entityData);
-
 		try {
-			if (this.config.sql?.useReturning) {
-				insertQuery = insertQuery.returning();
-				const result = await insertQuery;
-				const createdEntity = result[0];
-				if (!hooks.skipAfter) await this.afterCreate(createdEntity);
-				return createdEntity;
-			} else {
-				const result = await insertQuery;
-				// Without RETURNING (e.g. MySQL): prefer a client-supplied primary key
-				// (required for uuid / non-auto-increment keys), otherwise fall back
-				// to the driver's auto-increment insertId.
-				const lastInsertId =
-					entityData[this.config.primaryKey] ?? result?.[0]?.insertId;
-				const createdEntity = await this.find(lastInsertId, options);
-				if (!createdEntity) throw new Error("Failed to create entity");
-				if (!hooks.skipAfter) await this.afterCreate(createdEntity);
-				return createdEntity;
-			}
+			const createdEntity = await this.insertOne(db, entityData, options);
+			if (!hooks.skipAfter) await this.afterCreate(createdEntity);
+			return createdEntity;
 		} catch (error) {
 			// Unique violation -> 409, bad input (too long, failed check, wrong
 			// type) -> 400, a reference to a row that does not exist -> 400.
 			throw this.toClientError(error, "write");
 		}
+	}
+
+	// Map an update DTO into the columns to SET, after writableColumns. An
+	// update with no column left is a 400: Drizzle would send an empty SET (a
+	// raw 500), or with timestamps on quietly bump updated_at instead.
+	protected prepareUpdate(
+		data: UpdateDto,
+		options?: SqlOperationOptions,
+	): Record<string, any> {
+		const entityData = this.filterWritable(
+			this.mapUpdateDtoToEntity(data),
+			"update",
+			options,
+		);
+		const settable = Object.keys(entityData).filter(
+			(key) =>
+				entityData[key] !== undefined &&
+				!!this.columnOf(this.config.table, key),
+		);
+		if (settable.length === 0) {
+			throw new ValidationFailedException("there are no columns to update");
+		}
+		return entityData;
 	}
 
 	async update(
@@ -1204,48 +1674,60 @@ export abstract class SqlBaseCrudService<
 		const processedData = hooks.skipBefore
 			? data
 			: await this.beforeUpdate(id, data);
-		const entityData = this.mapUpdateDtoToEntity(processedData);
-
-		// Drizzle skips undefined values and keys that are not columns, so an
-		// update with none left would send an empty SET (a raw 500). With
-		// timestamps on it would quietly bump updated_at instead. Either way the
-		// caller sent nothing to change, which is a 400.
-		const settable = Object.keys(entityData).filter(
-			(key) =>
-				entityData[key] !== undefined &&
-				!!this.columnOf(this.config.table, key),
-		);
-		if (settable.length === 0) {
-			throw new ValidationFailedException("there are no columns to update");
-		}
+		const entityData = this.prepareUpdate(processedData, options);
 
 		if (this.config.timestamps?.updatedAt) {
 			entityData[this.config.timestamps.updatedAt] = new Date();
 		}
 
 		const db = transaction || this.config.db;
-		let updateQuery = db
-			.update(this.config.table)
-			.set(entityData)
-			.where(eq(this.config.table[this.config.primaryKey], id));
-
 		try {
-			if (this.config.sql?.useReturning) {
-				updateQuery = updateQuery.returning();
-				const result = await updateQuery;
-				const updatedEntity = result[0];
-				if (!hooks.skipAfter) await this.afterUpdate(updatedEntity);
-				return updatedEntity;
-			} else {
-				await updateQuery;
-				const updatedEntity = await this.find(id, options);
-				if (!updatedEntity) throw new Error("Failed to update entity");
-				if (!hooks.skipAfter) await this.afterUpdate(updatedEntity);
-				return updatedEntity;
-			}
+			const [updatedEntity] = await this.updateWhereIn(db, entityData, [id]);
+			if (!updatedEntity) throw new Error("Failed to update entity");
+			if (!hooks.skipAfter) await this.afterUpdate(updatedEntity);
+			return updatedEntity;
 		} catch (error) {
 			throw this.toClientError(error, "write");
 		}
+	}
+
+	// UPDATE ... WHERE pk IN (ids), returning the rows in the order of `ids`.
+	// Without RETURNING the rows are read back with one SELECT.
+	private async updateWhereIn(
+		db: any,
+		set: Record<string, any>,
+		ids: any[],
+	): Promise<T[]> {
+		const pk = this.config.table[this.config.primaryKey];
+		const query = db
+			.update(this.config.table)
+			.set(set)
+			.where(ids.length === 1 ? eq(pk, ids[0]) : inArray(pk, ids));
+		if (this.config.sql?.useReturning) {
+			return this.inIdOrder(await query.returning(), ids);
+		}
+		await query;
+		return this.fetchByIds(db, ids);
+	}
+
+	// Every row whose primary key is in `ids`, deleted or not, in `ids` order.
+	private async fetchByIds(db: any, ids: any[]): Promise<T[]> {
+		const pk = this.config.table[this.config.primaryKey];
+		const rows = await db
+			.select()
+			.from(this.config.table)
+			.where(ids.length === 1 ? eq(pk, ids[0]) : inArray(pk, ids));
+		return this.inIdOrder(rows, ids);
+	}
+
+	private inIdOrder(rows: any[], ids: any[]): T[] {
+		const byKey = new Map<string, any>();
+		for (const row of rows ?? []) {
+			byKey.set(this.keyOf(row?.[this.config.primaryKey]), row);
+		}
+		return ids
+			.map((id) => byKey.get(this.keyOf(id)))
+			.filter((row): row is T => !!row);
 	}
 
 	async softDelete(id: any, options?: SqlOperationOptions): Promise<boolean> {
@@ -1254,22 +1736,19 @@ export abstract class SqlBaseCrudService<
 		}
 
 		const { transaction, hooks = {} } = options || {};
-		const existing = await this.findForGuard(id, options);
+		const existing = await this.findForGuard(id, {
+			...options,
+			withDeleted: false,
+			onlyDeleted: false,
+		});
 		if (!existing) throw new EntityNotFoundException(this.getEntityName(), id);
 
 		if (!hooks.skipBefore) await this.beforeSoftDelete(id);
 
 		const db = transaction || this.config.db;
-		const updateData = {
-			[this.config.softDelete.column]: new Date(),
-			...(this.config.timestamps?.updatedAt && {
-				[this.config.timestamps.updatedAt]: new Date(),
-			}),
-		};
-
 		let updateQuery = db
 			.update(this.config.table)
-			.set(updateData)
+			.set(this.softDeleteSet(new Date()))
 			.where(eq(this.config.table[this.config.primaryKey], id));
 
 		if (this.config.sql?.useReturning) updateQuery = updateQuery.returning();
@@ -1278,6 +1757,16 @@ export abstract class SqlBaseCrudService<
 
 		if (success && !hooks.skipAfter) await this.afterSoftDelete(id);
 		return success;
+	}
+
+	// The SET of a soft delete (a Date) or a restore (null).
+	private softDeleteSet(deletedAt: Date | null): Record<string, any> {
+		return {
+			[this.config.softDelete!.column]: deletedAt,
+			...(this.config.timestamps?.updatedAt && {
+				[this.config.timestamps.updatedAt]: new Date(),
+			}),
+		};
 	}
 
 	async restore(id: any, options?: SqlOperationOptions): Promise<T> {
@@ -1289,34 +1778,14 @@ export abstract class SqlBaseCrudService<
 		if (!hooks.skipBefore) await this.beforeRestore(id);
 
 		const db = transaction || this.config.db;
-		const updateData = {
-			[this.config.softDelete!.column]: null,
-			...(this.config.timestamps?.updatedAt && {
-				[this.config.timestamps.updatedAt]: new Date(),
-			}),
-		};
-
-		let updateQuery = db
-			.update(this.config.table)
-			.set(updateData)
-			.where(eq(this.config.table[this.config.primaryKey], id));
-
-		if (this.config.sql?.useReturning) {
-			updateQuery = updateQuery.returning();
-			const result: any[] = await this.runRead(updateQuery);
-			if (result.length === 0)
-				throw new EntityNotFoundException(this.getEntityName(), id);
-			const restoredEntity = result[0];
-			if (!hooks.skipAfter) await this.afterRestore(restoredEntity);
-			return restoredEntity;
-		} else {
-			await this.runRead(updateQuery);
-			const restoredEntity = await this.find(id, options);
-			if (!restoredEntity)
-				throw new EntityNotFoundException(this.getEntityName(), id);
-			if (!hooks.skipAfter) await this.afterRestore(restoredEntity);
-			return restoredEntity;
+		const [restoredEntity] = await this.runRead(
+			this.updateWhereIn(db, this.softDeleteSet(null), [id]),
+		);
+		if (!restoredEntity) {
+			throw new EntityNotFoundException(this.getEntityName(), id);
 		}
+		if (!hooks.skipAfter) await this.afterRestore(restoredEntity);
+		return restoredEntity;
 	}
 
 	async delete(id: any, options?: SqlOperationOptions): Promise<boolean> {
@@ -1344,30 +1813,230 @@ export abstract class SqlBaseCrudService<
 		}
 	}
 
-	// Bulk Operations
+	// Hard delete, whether or not the row is soft-deleted: the purge half of a
+	// trash view. Runs the delete hooks.
+	async forceDelete(id: any, options?: SqlOperationOptions): Promise<boolean> {
+		return this.delete(id, {
+			...options,
+			withDeleted: true,
+			onlyDeleted: false,
+		});
+	}
+
+	// Insert or update by a unique key in one statement: ON CONFLICT DO UPDATE
+	// on Postgres, ON DUPLICATE KEY UPDATE on MySQL. Runs validateCreate,
+	// beforeCreate and mapCreateDtoToEntity, since it starts as an insert.
+	// A unique violation on another key is still a 409.
+	async upsert(
+		data: CreateDto,
+		upsert: UpsertOptions = {},
+		options?: SqlOperationOptions,
+	): Promise<T> {
+		const entityData = await this.prepareCreate(data, options);
+		const db = options?.transaction || this.config.db;
+		try {
+			const [row] = await this.upsertRows(db, [entityData], upsert);
+			return row;
+		} catch (error) {
+			throw this.toClientError(error, "write");
+		}
+	}
+
+	// One INSERT ... ON CONFLICT for the whole batch, in a transaction.
+	async massUpsert(
+		data: CreateDto[],
+		upsert: UpsertOptions = {},
+		options?: SqlOperationOptions,
+	): Promise<T[]> {
+		return this.executeSqlTransaction(async (tx) => {
+			const opts = { ...options, transaction: tx };
+			const rows = await this.eachItem(
+				data.map((item, index) => ({
+					index,
+					run: () => this.prepareCreate(item, opts),
+				})),
+				"Mass upsert errors",
+			);
+			if (rows.length === 0) return [];
+			return this.runSet(
+				tx,
+				"Mass upsert errors",
+				(sp) => this.upsertRows(sp, rows, upsert),
+				rows.map((row, index) => ({
+					index,
+					run: (sp: any) => this.upsertRows(sp, [row], upsert),
+				})),
+				"write",
+			);
+		}, options?.transaction);
+	}
+
+	// The upsert statement itself. `update` names the columns to overwrite on a
+	// conflict; by default every column sent except the conflict target, the
+	// primary key and createdAt. With nothing to overwrite the target is set to
+	// itself, so the existing row still comes back.
+	private async upsertRows(
+		db: any,
+		rows: Record<string, any>[],
+		upsert: UpsertOptions,
+	): Promise<T[]> {
+		const table = this.config.table;
+		const targetKeys =
+			upsert.conflictTarget === undefined
+				? [this.config.primaryKey]
+				: ([] as string[]).concat(upsert.conflictTarget);
+		if (targetKeys.length === 0) {
+			throw new BadRequestException("upsert needs a conflictTarget");
+		}
+		const targets = targetKeys.map((key) => {
+			const column = this.columnOf(table, key);
+			if (!column) {
+				throw new BadRequestException(`Unknown conflict target column: ${key}`);
+			}
+			return column;
+		});
+		const keep = new Set(
+			[
+				...targetKeys,
+				this.config.primaryKey,
+				this.config.timestamps?.createdAt,
+			].filter(Boolean),
+		);
+		const updateKeys =
+			upsert.update ??
+			Array.from(
+				new Set(
+					rows.flatMap((row) =>
+						Object.keys(row).filter(
+							(key) =>
+								row[key] !== undefined &&
+								!keep.has(key) &&
+								!!this.columnOf(table, key),
+						),
+					),
+				),
+			);
+		const set: Record<string, any> = {};
+		for (const key of updateKeys) {
+			const column = this.columnOf(table, key);
+			if (!column) {
+				throw new BadRequestException(`Unknown upsert column: ${key}`);
+			}
+			set[key] = this.excludedValue(column);
+		}
+		if (Object.keys(set).length === 0) {
+			set[targetKeys[0]!] = this.excludedValue(targets[0]);
+		}
+
+		const readBack = !this.config.sql?.useReturning;
+		if (readBack) {
+			for (const row of rows) {
+				for (const key of targetKeys) {
+					if (row[key] === undefined) {
+						throw new ValidationFailedException(
+							`upsert needs a value for "${key}" to read the row back`,
+						);
+					}
+				}
+			}
+		}
+
+		const insert = db.insert(table).values(rows);
+		const statement =
+			this.config.dialect === "mysql"
+				? insert.onDuplicateKeyUpdate({ set })
+				: insert.onConflictDoUpdate({
+						target: targets.length === 1 ? targets[0] : targets,
+						set,
+					});
+		if (!readBack) return statement.returning();
+		await statement;
+		const match = rows.map((row) =>
+			and(...targetKeys.map((key, i) => eq(targets[i], row[key]))),
+		);
+		return db
+			.select()
+			.from(table)
+			.where(match.length === 1 ? match[0] : or(...match));
+	}
+
+	// The value a row would have had: excluded.col on Postgres, VALUES(col) on
+	// MySQL.
+	private excludedValue(column: any): any {
+		return this.config.dialect === "mysql"
+			? sql`values(${sql.identifier(column.name)})`
+			: sql`excluded.${sql.identifier(column.name)}`;
+	}
+
+	// ---- Bulk operations ----
+	//
+	// Every mass write runs in one transaction and costs a fixed number of
+	// statements whatever the number of ids: a SELECT that checks every id
+	// exists, then one INSERT, UPDATE or DELETE for the whole set. Hooks still
+	// run once per item, in JavaScript. When the set statement fails, the batch
+	// is replayed one item at a time inside a savepoint that is rolled back,
+	// only to name the items that fail; the 400 then lists them in `errors` as
+	// before. `bulkMode: "perItem"` keeps the 3.3 behaviour of one single-row
+	// call per item.
+
 	async massCreate(
 		data: CreateDto[],
 		options?: SqlOperationOptions,
 	): Promise<T[]> {
+		if (options?.bulkMode === "perItem") {
+			return this.massCreatePerItem(data, options);
+		}
 		return this.executeSqlTransaction(async (tx) => {
-			const results: T[] = [];
-			const errors: Array<{ index: number; error: Error }> = [];
-
-			for (let i = 0; i < data.length; i++) {
-				try {
-					const result = await this.savepoint(tx, (sp) =>
-						this.create(data[i], { ...options, transaction: sp }),
-					);
-					results.push(result);
-				} catch (error) {
-					errors.push({ index: i, error: error as Error });
-				}
+			const opts = { ...options, transaction: tx };
+			const rows = await this.eachItem(
+				data.map((item, index) => ({
+					index,
+					run: () => this.prepareCreate(item, opts),
+				})),
+				"Mass create errors",
+			);
+			if (rows.length === 0) return [];
+			const created = await this.runSet(
+				tx,
+				"Mass create errors",
+				(sp) => this.insertMany(sp, rows, opts),
+				rows.map((row, index) => ({
+					index,
+					run: (sp: any) => this.insertOne(sp, row, opts),
+				})),
+				"write",
+			);
+			if (!options?.hooks?.skipAfter) {
+				for (const entity of created) await this.afterCreate(entity);
 			}
-
-			if (errors.length > 0)
-				throw new BulkOperationException("Mass create errors", errors);
-			return results;
+			return created;
 		}, options?.transaction);
+	}
+
+	// One multi-row INSERT. Without RETURNING the rows are read back by their
+	// primary keys, which works when the caller supplied them. MySQL only
+	// reports the first auto-increment id of a batch and InnoDB does not
+	// promise the rest are consecutive, so that one case inserts row by row.
+	private async insertMany(
+		db: any,
+		rows: Record<string, any>[],
+		options?: SqlOperationOptions,
+	): Promise<T[]> {
+		if (this.config.sql?.useReturning) {
+			return db.insert(this.config.table).values(rows).returning();
+		}
+		const pk = this.config.primaryKey;
+		if (rows.every((row) => row[pk] !== undefined)) {
+			await db.insert(this.config.table).values(rows);
+			return this.fetchByIds(
+				db,
+				rows.map((row) => row[pk]),
+			);
+		}
+		const created: T[] = [];
+		for (const row of rows)
+			created.push(await this.insertOne(db, row, options));
+		return created;
 	}
 
 	async massUpdate(
@@ -1375,24 +2044,71 @@ export abstract class SqlBaseCrudService<
 		data: UpdateDto,
 		options?: SqlOperationOptions,
 	): Promise<T[]> {
+		if (options?.bulkMode === "perItem") {
+			return this.massUpdatePerItem(ids, data, options);
+		}
+		const message = "Mass update errors";
 		return this.executeSqlTransaction(async (tx) => {
-			const results: T[] = [];
-			const errors: Array<{ id: any; error: Error }> = [];
+			const opts = { ...options, transaction: tx };
+			const hooks = options?.hooks ?? {};
+			const unique = this.uniqueIds(ids);
+			if (unique.length === 0) return [];
+			await this.assertAllExist(tx, unique, opts, message);
 
-			for (const id of ids) {
-				try {
-					const result = await this.savepoint(tx, (sp) =>
-						this.update(id, data, { ...options, transaction: sp }),
-					);
-					results.push(result);
-				} catch (error) {
-					errors.push({ id, error: error as Error });
-				}
+			const sets = await this.eachItem(
+				unique.map((id) => ({
+					id,
+					run: async () => {
+						await this.validateUpdate(id, data);
+						const processed = hooks.skipBefore
+							? data
+							: await this.beforeUpdate(id, data);
+						return this.prepareUpdate(processed, opts);
+					},
+				})),
+				message,
+			);
+			const now = new Date();
+			const stamp = (set: Record<string, any>) =>
+				this.config.timestamps?.updatedAt
+					? { ...set, [this.config.timestamps.updatedAt]: now }
+					: set;
+
+			let updated: T[];
+			const first = this.fingerprint(sets[0]);
+			if (sets.every((set) => this.fingerprint(set) === first)) {
+				const set = stamp(sets[0]!);
+				updated = await this.runSet(
+					tx,
+					message,
+					(sp) => this.updateWhereIn(sp, set, unique),
+					unique.map((id) => ({
+						id,
+						run: (sp: any) => this.updateWhereIn(sp, set, [id]),
+					})),
+					"write",
+				);
+			} else {
+				// A beforeUpdate hook returned different data per id, which one SET
+				// cannot express, so each row gets its own UPDATE.
+				const rows = await this.eachItem(
+					unique.map((id, i) => ({
+						id,
+						run: () =>
+							this.savepoint(tx, (sp) =>
+								this.updateWhereIn(sp, stamp(sets[i]!), [id]),
+							),
+					})),
+					message,
+					"write",
+				);
+				updated = rows.flat();
 			}
 
-			if (errors.length > 0)
-				throw new BulkOperationException("Mass update errors", errors);
-			return results;
+			if (!hooks.skipAfter) {
+				for (const entity of updated) await this.afterUpdate(entity);
+			}
+			return this.inIdOrder(updated, ids);
 		}, options?.transaction);
 	}
 
@@ -1402,19 +2118,44 @@ export abstract class SqlBaseCrudService<
 	): Promise<boolean> {
 		if (!this.config.softDelete?.enabled)
 			throw new Error("Soft delete not enabled");
+		if (options?.bulkMode === "perItem") {
+			return this.massSoftDeletePerItem(ids, options);
+		}
+		const message = "Mass soft delete errors";
 		return this.executeSqlTransaction(async (tx) => {
-			const errors: Array<{ id: any; error: Error }> = [];
-			for (const id of ids) {
-				try {
-					await this.savepoint(tx, (sp) =>
-						this.softDelete(id, { ...options, transaction: sp }),
-					);
-				} catch (error) {
-					errors.push({ id, error: error as Error });
-				}
+			const opts = {
+				...options,
+				transaction: tx,
+				withDeleted: false,
+				onlyDeleted: false,
+			};
+			const hooks = options?.hooks ?? {};
+			const unique = this.uniqueIds(ids);
+			if (unique.length === 0) return true;
+			await this.assertAllExist(tx, unique, opts, message);
+			if (!hooks.skipBefore) {
+				await this.eachItem(
+					unique.map((id) => ({ id, run: () => this.beforeSoftDelete(id) })),
+					message,
+				);
 			}
-			if (errors.length > 0)
-				throw new BulkOperationException("Mass soft delete errors", errors);
+			const set = this.softDeleteSet(new Date());
+			const pk = this.config.table[this.config.primaryKey];
+			await this.runSet(
+				tx,
+				message,
+				(sp) =>
+					sp.update(this.config.table).set(set).where(inArray(pk, unique)),
+				unique.map((id) => ({
+					id,
+					run: (sp: any) =>
+						sp.update(this.config.table).set(set).where(eq(pk, id)),
+				})),
+				"write",
+			);
+			if (!hooks.skipAfter) {
+				for (const id of unique) await this.afterSoftDelete(id);
+			}
 			return true;
 		}, options?.transaction);
 	}
@@ -1422,22 +2163,42 @@ export abstract class SqlBaseCrudService<
 	async massRestore(ids: any[], options?: SqlOperationOptions): Promise<T[]> {
 		if (!this.config.softDelete?.enabled)
 			throw new Error("Soft delete not enabled");
+		if (options?.bulkMode === "perItem") {
+			return this.massRestorePerItem(ids, options);
+		}
+		const message = "Mass restore errors";
 		return this.executeSqlTransaction(async (tx) => {
-			const results: T[] = [];
-			const errors: Array<{ id: any; error: Error }> = [];
-			for (const id of ids) {
-				try {
-					const result = await this.savepoint(tx, (sp) =>
-						this.restore(id, { ...options, transaction: sp }),
-					);
-					results.push(result);
-				} catch (error) {
-					errors.push({ id, error: error as Error });
-				}
+			const opts = {
+				...options,
+				transaction: tx,
+				withDeleted: true,
+				onlyDeleted: false,
+			};
+			const hooks = options?.hooks ?? {};
+			const unique = this.uniqueIds(ids);
+			if (unique.length === 0) return [];
+			await this.assertAllExist(tx, unique, opts, message);
+			if (!hooks.skipBefore) {
+				await this.eachItem(
+					unique.map((id) => ({ id, run: () => this.beforeRestore(id) })),
+					message,
+				);
 			}
-			if (errors.length > 0)
-				throw new BulkOperationException("Mass restore errors", errors);
-			return results;
+			const set = this.softDeleteSet(null);
+			const restored = await this.runSet(
+				tx,
+				message,
+				(sp) => this.updateWhereIn(sp, set, unique),
+				unique.map((id) => ({
+					id,
+					run: (sp: any) => this.updateWhereIn(sp, set, [id]),
+				})),
+				"write",
+			);
+			if (!hooks.skipAfter) {
+				for (const entity of restored) await this.afterRestore(entity);
+			}
+			return this.inIdOrder(restored, ids);
 		}, options?.transaction);
 	}
 
@@ -1445,21 +2206,305 @@ export abstract class SqlBaseCrudService<
 		ids: any[],
 		options?: SqlOperationOptions,
 	): Promise<boolean> {
+		if (options?.bulkMode === "perItem") {
+			return this.massDeletePerItem(ids, options);
+		}
+		const message = "Mass delete errors";
 		return this.executeSqlTransaction(async (tx) => {
-			const errors: Array<{ id: any; error: Error }> = [];
-			for (const id of ids) {
-				try {
-					await this.savepoint(tx, (sp) =>
-						this.delete(id, { ...options, transaction: sp }),
-					);
-				} catch (error) {
-					errors.push({ id, error: error as Error });
-				}
+			const opts = { ...options, transaction: tx };
+			const hooks = options?.hooks ?? {};
+			const unique = this.uniqueIds(ids);
+			if (unique.length === 0) return true;
+			await this.assertAllExist(tx, unique, opts, message);
+			if (!hooks.skipBefore) {
+				await this.eachItem(
+					unique.map((id) => ({ id, run: () => this.beforeDelete(id) })),
+					message,
+				);
 			}
-			if (errors.length > 0)
-				throw new BulkOperationException("Mass delete errors", errors);
+			const pk = this.config.table[this.config.primaryKey];
+			await this.runSet(
+				tx,
+				message,
+				(sp) => sp.delete(this.config.table).where(inArray(pk, unique)),
+				unique.map((id) => ({
+					id,
+					run: (sp: any) => sp.delete(this.config.table).where(eq(pk, id)),
+				})),
+				// Dependent rows still reference an id -> 409 for that id.
+				"delete",
+			);
+			if (!hooks.skipAfter) {
+				for (const id of unique) await this.afterDelete(id);
+			}
 			return true;
 		}, options?.transaction);
+	}
+
+	// Hard delete a set of rows, soft-deleted or not, in one statement.
+	async massForceDelete(
+		ids: any[],
+		options?: SqlOperationOptions,
+	): Promise<boolean> {
+		return this.massDelete(ids, {
+			...options,
+			withDeleted: true,
+			onlyDeleted: false,
+		});
+	}
+
+	// The ids in input order with duplicates removed.
+	private uniqueIds(ids: any[]): any[] {
+		const seen = new Set<string>();
+		return (ids ?? []).filter((id) => {
+			const key = this.keyOf(id);
+			if (seen.has(key)) return false;
+			seen.add(key);
+			return true;
+		});
+	}
+
+	// A stable string for comparing two SET objects (Dates and bigints included).
+	private fingerprint(value: unknown): string {
+		return JSON.stringify(value, (_key, v) =>
+			typeof v === "bigint" ? `${v}n` : v,
+		);
+	}
+
+	// One SELECT for every id, in the soft delete scope of `options`. Every id
+	// that is not there becomes a 404 entry of the BulkOperationException.
+	private async assertAllExist(
+		tx: any,
+		ids: any[],
+		options: SqlOperationOptions,
+		message: string,
+	): Promise<void> {
+		const table = this.config.table;
+		const pk = table[this.config.primaryKey];
+		const scope = this.softDeleteScope(options);
+		const where = (condition: any) =>
+			scope ? and(condition, scope) : condition;
+		const found: any[] = await this.runSet(
+			tx,
+			message,
+			(sp) =>
+				sp
+					.select({ id: pk })
+					.from(table)
+					.where(where(inArray(pk, ids))),
+			ids.map((id) => ({
+				id,
+				run: (sp: any) =>
+					sp
+						.select({ id: pk })
+						.from(table)
+						.where(where(eq(pk, id))),
+			})),
+			"write",
+		);
+		const present = new Set(found.map((row) => this.keyOf(row.id)));
+		const missing = ids.filter((id) => !present.has(this.keyOf(id)));
+		if (missing.length > 0) {
+			throw new BulkOperationException(
+				message,
+				missing.map((id) => ({
+					id,
+					error: new EntityNotFoundException(this.getEntityName(), id),
+				})),
+			);
+		}
+	}
+
+	// Run one async step per item, collecting every failure instead of stopping
+	// at the first. Any failure throws a BulkOperationException listing them.
+	private async eachItem<R>(
+		items: Array<{ index?: number; id?: any; run: () => Promise<R> }>,
+		message: string,
+		operation: "write" | "delete" = "write",
+	): Promise<R[]> {
+		const results: R[] = [];
+		const errors: Array<{ id?: any; index?: number; error: Error }> = [];
+		for (const item of items) {
+			try {
+				results.push(await item.run());
+			} catch (error) {
+				errors.push({
+					...this.itemRef(item),
+					error: this.toClientError(error, operation) as Error,
+				});
+			}
+		}
+		if (errors.length > 0) throw new BulkOperationException(message, errors);
+		return results;
+	}
+
+	private itemRef(item: { index?: number; id?: any }) {
+		return item.index !== undefined ? { index: item.index } : { id: item.id };
+	}
+
+	// Run a set statement inside a savepoint. When it fails, find out which
+	// items fail on their own and report those; when none does alone (the
+	// failure needs two items together), report the statement's own error.
+	protected async runSet<R>(
+		tx: any,
+		message: string,
+		statement: (sp: any) => Promise<R>,
+		items: Array<{
+			index?: number;
+			id?: any;
+			run: (sp: any) => Promise<unknown>;
+		}>,
+		operation: "write" | "delete",
+	): Promise<R> {
+		try {
+			return await this.savepoint(tx, statement);
+		} catch (error) {
+			const failures = await this.diagnose(tx, items, operation);
+			if (failures.length > 0) {
+				throw new BulkOperationException(message, failures);
+			}
+			throw this.toClientError(error, operation);
+		}
+	}
+
+	// Replay items one by one, each in its own savepoint, all inside an outer
+	// savepoint that is rolled back at the end, so nothing the replay wrote
+	// survives even inside a caller's transaction.
+	private async diagnose(
+		tx: any,
+		items: Array<{
+			index?: number;
+			id?: any;
+			run: (sp: any) => Promise<unknown>;
+		}>,
+		operation: "write" | "delete",
+	): Promise<Array<{ id?: any; index?: number; error: Error }>> {
+		const failures: Array<{ id?: any; index?: number; error: Error }> = [];
+		try {
+			await this.savepoint(tx, async (outer) => {
+				for (const item of items) {
+					try {
+						await this.savepoint(outer, item.run);
+					} catch (error) {
+						failures.push({
+							...this.itemRef(item),
+							error: this.toClientError(error, operation) as Error,
+						});
+					}
+				}
+				throw ROLLBACK;
+			});
+		} catch (error) {
+			// The rollback above is deliberate; anything else is real.
+			if (error !== ROLLBACK) throw error;
+		}
+		return failures;
+	}
+
+	// ---- bulkMode: "perItem", the 3.3 behaviour ----
+
+	private async massCreatePerItem(
+		data: CreateDto[],
+		options?: SqlOperationOptions,
+	): Promise<T[]> {
+		return this.executeSqlTransaction(
+			(tx) =>
+				this.eachItem(
+					data.map((item, index) => ({
+						index,
+						run: () =>
+							this.savepoint(tx, (sp) =>
+								this.create(item, { ...options, transaction: sp }),
+							),
+					})),
+					"Mass create errors",
+				),
+			options?.transaction,
+		);
+	}
+
+	private async massUpdatePerItem(
+		ids: any[],
+		data: UpdateDto,
+		options?: SqlOperationOptions,
+	): Promise<T[]> {
+		return this.executeSqlTransaction(
+			(tx) =>
+				this.eachItem(
+					ids.map((id) => ({
+						id,
+						run: () =>
+							this.savepoint(tx, (sp) =>
+								this.update(id, data, { ...options, transaction: sp }),
+							),
+					})),
+					"Mass update errors",
+				),
+			options?.transaction,
+		);
+	}
+
+	private async massSoftDeletePerItem(
+		ids: any[],
+		options?: SqlOperationOptions,
+	): Promise<boolean> {
+		await this.executeSqlTransaction(
+			(tx) =>
+				this.eachItem(
+					ids.map((id) => ({
+						id,
+						run: () =>
+							this.savepoint(tx, (sp) =>
+								this.softDelete(id, { ...options, transaction: sp }),
+							),
+					})),
+					"Mass soft delete errors",
+				),
+			options?.transaction,
+		);
+		return true;
+	}
+
+	private async massRestorePerItem(
+		ids: any[],
+		options?: SqlOperationOptions,
+	): Promise<T[]> {
+		return this.executeSqlTransaction(
+			(tx) =>
+				this.eachItem(
+					ids.map((id) => ({
+						id,
+						run: () =>
+							this.savepoint(tx, (sp) =>
+								this.restore(id, { ...options, transaction: sp }),
+							),
+					})),
+					"Mass restore errors",
+				),
+			options?.transaction,
+		);
+	}
+
+	private async massDeletePerItem(
+		ids: any[],
+		options?: SqlOperationOptions,
+	): Promise<boolean> {
+		await this.executeSqlTransaction(
+			(tx) =>
+				this.eachItem(
+					ids.map((id) => ({
+						id,
+						run: () =>
+							this.savepoint(tx, (sp) =>
+								this.delete(id, { ...options, transaction: sp }),
+							),
+					})),
+					"Mass delete errors",
+					"delete",
+				),
+			options?.transaction,
+		);
+		return true;
 	}
 
 	// Run one bulk item in a nested transaction, which Drizzle turns into a
@@ -1486,25 +2531,18 @@ export abstract class SqlBaseCrudService<
 		filters?: FilterDto,
 		options?: SqlOperationOptions,
 	): Promise<number> {
-		const { transaction } = options || {};
-		const db = transaction || this.config.db;
-		let query = db
-			.select({ count: sql<number>`count(*)` })
-			.from(this.config.table);
+		this.checkReadOptions(options);
+		const db = options?.transaction || this.config.db;
 		const { conditions, relations: filterRelations } =
-			this.buildFilterConditions(filters, db);
+			this.buildFilterConditions(filters, db, options);
 		const searchCondition = this.buildSearchCondition(options?.search);
-		if (searchCondition) {
-			conditions.push(searchCondition);
-		}
+		if (searchCondition) conditions.push(searchCondition);
+		const scope = this.softDeleteScope(options);
+		if (scope) conditions.push(scope);
 
-		if (this.config.softDelete?.enabled) {
-			conditions.push(isNull(this.config.table[this.config.softDelete.column]));
-		}
-
-		query = this.applyJoins(query, filterRelations);
-		if (conditions.length > 0) query = query.where(and(...conditions));
-		const result = await this.runRead<any[]>(query);
+		const result = await this.runRead<any[]>(
+			this.buildCountQuery(db, conditions, filterRelations),
+		);
 		return parseInt(result[0]?.count?.toString() || "0", 10);
 	}
 
@@ -1564,6 +2602,23 @@ export abstract class SqlBaseCrudService<
 		value: Record<string, any>,
 		db: any = this.config.db,
 		name = "relation",
+		options?: SqlOperationOptions,
+	): any | undefined {
+		const targetConditions = this.compileTableFilter(
+			relation.table,
+			value,
+			name,
+			options,
+		);
+		if (targetConditions.length === 0) return undefined;
+		return this.collectionCondition(relation, targetConditions, db);
+	}
+
+	// The IN (SELECT ...) for already compiled conditions on the related table.
+	private collectionCondition(
+		relation: RelationConfig,
+		targetConditions: any[],
+		db: any,
 	): any | undefined {
 		const target = relation.table;
 		const manyToMany = this.relationType(relation) === "manyToMany";
@@ -1573,19 +2628,9 @@ export abstract class SqlBaseCrudService<
 		const key = manyToMany ? joinLocal : target[relation.foreignKey ?? ""];
 		if (!key) return undefined;
 
-		const targetConditions: any[] = [];
-		for (const [col, colValue] of Object.entries(value)) {
-			if (colValue === undefined || colValue === null) continue;
-			const column = this.columnOf(target, col);
-			if (!column) {
-				throw new BadRequestException(`Unknown filter column: ${name}.${col}`);
-			}
-			this.pushColumnCondition(targetConditions, column, colValue);
-		}
-		if (targetConditions.length === 0) return undefined;
-
+		const conditions = [...targetConditions];
 		const softDeleted = this.softDeleteCondition(target);
-		if (softDeleted) targetConditions.push(softDeleted);
+		if (softDeleted) conditions.push(softDeleted);
 
 		let subquery: any;
 		if (manyToMany) {
@@ -1596,12 +2641,12 @@ export abstract class SqlBaseCrudService<
 				.select({ value: key })
 				.from(relation.through)
 				.innerJoin(target, eq(joinForeign, referenced))
-				.where(and(...targetConditions));
+				.where(and(...conditions));
 		} else {
 			subquery = db
 				.select({ value: key })
 				.from(target)
-				.where(and(...targetConditions));
+				.where(and(...conditions));
 		}
 		const parentKey = this.parentKeyOf(relation);
 		return inArray(this.config.table[parentKey], subquery);
@@ -1611,26 +2656,60 @@ export abstract class SqlBaseCrudService<
 	// relation, with an object value, filters by the related table's columns
 	// (e.g. { state: { name: 'X', country_id: 1 } }). A belongs-to relation is
 	// returned in `relations` so the caller can JOIN it; a collection relation
-	// becomes a subquery condition and needs no join.
+	// becomes a subquery condition and needs no join. `and`, `or` and `not`
+	// group filter objects and nest.
 	// `undefined` and `null` values are skipped, so a query DTO can be passed
 	// through with its empty fields. A key that is neither a column nor a
 	// relation is a 400, like an unknown sortBy: dropping it would return every
-	// row for a typo.
+	// row for a typo. So is a key outside filterableColumns.
 	protected buildFilterConditions(
 		filters?: any,
 		db: any = this.config.db,
+		options?: SqlOperationOptions,
 	): {
 		conditions: any[];
 		relations: string[];
 	} {
-		const conditions: any[] = [];
-		const relations: string[] = [];
-		if (!filters) return { conditions, relations };
+		const joins = new Set<string>();
+		const conditions = this.compileFilter(filters, db, joins, options);
+		return { conditions, relations: Array.from(joins) };
+	}
 
+	// `and`, `or` and `not` are group keys unless the table really has a column
+	// (or the entity a relation) by that name, which then wins.
+	private isGroupKey(table: any, key: string): boolean {
+		if (!GROUP_KEYS.has(key) || this.columnOf(table, key)) return false;
+		return !(
+			table === this.config.table &&
+			Object.hasOwn(this.config.relations || {}, key)
+		);
+	}
+
+	// The conditions of one filter object on the service's table: columns,
+	// relations and groups, all ANDed.
+	private compileFilter(
+		filters: any,
+		db: any,
+		joins: Set<string>,
+		options?: SqlOperationOptions,
+	): any[] {
+		const conditions: any[] = [];
+		if (filters === undefined || filters === null) return conditions;
+		if (!isPlainObject(filters)) {
+			throw new BadRequestException("A filter must be an object");
+		}
 		const relConfig = this.config.relations || {};
 
 		for (const [key, value] of Object.entries(filters)) {
 			if (value === undefined || value === null) continue;
+
+			if (this.isGroupKey(this.config.table, key)) {
+				const group = this.compileGroup(key, value, (member) =>
+					this.compileFilter(member, db, joins, options),
+				);
+				if (group) conditions.push(group);
+				continue;
+			}
 
 			const relation = Object.hasOwn(relConfig, key)
 				? relConfig[key]
@@ -1641,29 +2720,20 @@ export abstract class SqlBaseCrudService<
 						`Filter on relation "${key}" must be an object of column filters`,
 					);
 				}
+				const inner = this.compileTableFilter(
+					relation.table,
+					value,
+					key,
+					options,
+				);
+				if (inner.length === 0) continue;
 				if (this.isCollection(relation)) {
-					const condition = this.buildCollectionFilter(
-						relation,
-						value,
-						db,
-						key,
-					);
+					const condition = this.collectionCondition(relation, inner, db);
 					if (condition) conditions.push(condition);
-					continue;
+				} else {
+					conditions.push(...inner);
+					joins.add(key);
 				}
-				let used = false;
-				for (const [col, colValue] of Object.entries(value)) {
-					if (colValue === undefined || colValue === null) continue;
-					const relColumn = this.columnOf(relation.table, col);
-					if (!relColumn) {
-						throw new BadRequestException(
-							`Unknown filter column: ${key}.${col}`,
-						);
-					}
-					this.pushColumnCondition(conditions, relColumn, colValue);
-					used = true;
-				}
-				if (used) relations.push(key);
 				continue;
 			}
 
@@ -1671,10 +2741,80 @@ export abstract class SqlBaseCrudService<
 			if (!column) {
 				throw new BadRequestException(`Unknown filter column: ${key}`);
 			}
+			this.assertAllowed("filterableColumns", key, options);
 			this.pushColumnCondition(conditions, column, value);
 		}
+		return conditions;
+	}
 
-		return { conditions, relations };
+	// The conditions on one related table's columns, groups included. `prefix`
+	// is the relation name, for messages and the filterableColumns check.
+	private compileTableFilter(
+		table: any,
+		value: Record<string, any>,
+		prefix: string,
+		options?: SqlOperationOptions,
+	): any[] {
+		const conditions: any[] = [];
+		for (const [col, colValue] of Object.entries(value)) {
+			if (colValue === undefined || colValue === null) continue;
+			if (this.isGroupKey(table, col)) {
+				const group = this.compileGroup(col, colValue, (member) =>
+					this.compileTableFilter(table, member, prefix, options),
+				);
+				if (group) conditions.push(group);
+				continue;
+			}
+			const column = this.columnOf(table, col);
+			if (!column) {
+				throw new BadRequestException(
+					`Unknown filter column: ${prefix}.${col}`,
+				);
+			}
+			this.assertAllowed("filterableColumns", `${prefix}.${col}`, options);
+			this.pushColumnCondition(conditions, column, colValue);
+		}
+		return conditions;
+	}
+
+	// `or: [a, b]`, `and: [a, b]` or `not: a`, where each member is a filter
+	// object. An empty member of an `or` matches every row, so the whole group
+	// adds nothing; an empty `and` member is skipped.
+	private compileGroup(
+		op: string,
+		value: unknown,
+		compile: (member: Record<string, any>) => any[],
+	): any | undefined {
+		if (op === "not") {
+			if (!isPlainObject(value)) {
+				throw new BadRequestException(
+					'Filter group "not" expects a filter object',
+				);
+			}
+			const inner = compile(value);
+			return inner.length > 0 ? not(and(...inner)!) : undefined;
+		}
+		if (!Array.isArray(value)) {
+			throw new BadRequestException(
+				`Filter group "${op}" expects an array of filter objects`,
+			);
+		}
+		const parts: any[] = [];
+		for (const member of value) {
+			if (!isPlainObject(member)) {
+				throw new BadRequestException(
+					`Filter group "${op}" expects an array of filter objects`,
+				);
+			}
+			const inner = compile(member);
+			if (inner.length === 0) {
+				if (op === "or") return undefined;
+				continue;
+			}
+			parts.push(inner.length === 1 ? inner[0] : and(...inner));
+		}
+		if (parts.length === 0) return undefined;
+		return op === "or" ? or(...parts) : and(...parts);
 	}
 
 	protected buildWhereConditions(filters?: any): any[] {
@@ -1690,11 +2830,53 @@ export abstract class SqlBaseCrudService<
 		);
 	}
 
+	private expectArray(op: string, raw: unknown): unknown[] {
+		if (!Array.isArray(raw)) {
+			throw new BadRequestException(`Filter operator "${op}" expects an array`);
+		}
+		return raw;
+	}
+
+	private requirePostgres(op: string): void {
+		if (this.config.dialect !== "postgresql") {
+			throw new BadRequestException(
+				`Filter operator "${op}" is only supported on PostgreSQL`,
+			);
+		}
+	}
+
+	// startsWith / endsWith / contains and their always case-insensitive `i`
+	// forms. `%`, `_` and `\` in the value are escaped, so the value matches
+	// literally. The plain forms follow sql.caseSensitive, like an exact match.
+	private patternCondition(column: any, op: string, raw: unknown): any {
+		if (typeof raw !== "string") {
+			throw new BadRequestException(`Filter operator "${op}" expects a string`);
+		}
+		if (!this.isTextColumn(column)) {
+			throw new BadRequestException(
+				`Filter operator "${op}" only works on text columns`,
+			);
+		}
+		const insensitive = /^i[A-Z]/.test(op);
+		const kind = insensitive ? op[1]!.toLowerCase() + op.slice(2) : op;
+		const escaped = raw.replace(/[\\%_]/g, "\\$&");
+		const pattern =
+			kind === "startsWith"
+				? `${escaped}%`
+				: kind === "endsWith"
+					? `%${escaped}`
+					: `%${escaped}%`;
+		return insensitive || this.config.sql?.caseSensitive === false
+			? this.caseInsensitiveLike(column, pattern)
+			: like(column, pattern);
+	}
+
 	protected applyComplexFilter(
 		conditions: any[],
 		column: any,
 		filterObj: any,
 	): void {
+		const coerce = (value: unknown) => this.coerceFilterValue(column, value);
 		for (const [op, raw] of Object.entries(filterObj)) {
 			// An absent operand (an empty query DTO field) adds nothing.
 			if (raw === undefined) continue;
@@ -1713,22 +2895,22 @@ export abstract class SqlBaseCrudService<
 			}
 			switch (op) {
 				case "eq":
-					conditions.push(eq(column, this.coerceFilterValue(column, raw)));
+					conditions.push(eq(column, coerce(raw)));
 					break;
 				case "gt":
-					conditions.push(gt(column, this.coerceFilterValue(column, raw)));
+					conditions.push(gt(column, coerce(raw)));
 					break;
 				case "gte":
-					conditions.push(gte(column, this.coerceFilterValue(column, raw)));
+					conditions.push(gte(column, coerce(raw)));
 					break;
 				case "lt":
-					conditions.push(lt(column, this.coerceFilterValue(column, raw)));
+					conditions.push(lt(column, coerce(raw)));
 					break;
 				case "lte":
-					conditions.push(lte(column, this.coerceFilterValue(column, raw)));
+					conditions.push(lte(column, coerce(raw)));
 					break;
 				case "neq":
-					conditions.push(ne(column, this.coerceFilterValue(column, raw)));
+					conditions.push(ne(column, coerce(raw)));
 					break;
 				case "like":
 					// Caller supplies the pattern (e.g. 'John%'); do not re-wrap.
@@ -1738,18 +2920,25 @@ export abstract class SqlBaseCrudService<
 					conditions.push(this.caseInsensitiveLike(column, raw as string));
 					break;
 				case "in":
-					if (!Array.isArray(raw)) {
-						throw new BadRequestException(
-							`Filter operator "in" expects an array`,
-						);
-					}
 					conditions.push(
-						inArray(
-							column,
-							raw.map((item) => this.coerceFilterValue(column, item)),
-						),
+						inArray(column, this.expectArray(op, raw).map(coerce)),
 					);
 					break;
+				case "notIn":
+					conditions.push(
+						notInArray(column, this.expectArray(op, raw).map(coerce)),
+					);
+					break;
+				case "between": {
+					const range = this.expectArray(op, raw);
+					if (range.length !== 2) {
+						throw new BadRequestException(
+							'Filter operator "between" expects [from, to]',
+						);
+					}
+					conditions.push(between(column, coerce(range[0]), coerce(range[1])));
+					break;
+				}
 				case "isNull":
 					conditions.push(
 						this.parseFlag(op, raw) ? isNull(column) : isNotNull(column),
@@ -1759,6 +2948,39 @@ export abstract class SqlBaseCrudService<
 					conditions.push(
 						this.parseFlag(op, raw) ? isNotNull(column) : isNull(column),
 					);
+					break;
+				case "startsWith":
+				case "endsWith":
+				case "contains":
+				case "iStartsWith":
+				case "iEndsWith":
+				case "iContains":
+					conditions.push(this.patternCondition(column, op, raw));
+					break;
+				case "arrayContains":
+				case "arrayOverlaps": {
+					this.requirePostgres(op);
+					if (column?.dataType !== "array") {
+						throw new BadRequestException(
+							`Filter operator "${op}" only works on array columns`,
+						);
+					}
+					const values = this.expectArray(op, raw);
+					conditions.push(
+						op === "arrayContains"
+							? arrayContains(column, values)
+							: arrayOverlaps(column, values),
+					);
+					break;
+				}
+				case "jsonContains":
+					this.requirePostgres(op);
+					if (column?.columnType !== "PgJsonb") {
+						throw new BadRequestException(
+							'Filter operator "jsonContains" only works on jsonb columns',
+						);
+					}
+					conditions.push(sql`${column} @> ${JSON.stringify(raw)}::jsonb`);
 					break;
 				default:
 					throw new BadRequestException(`Unknown filter operator: ${op}`);
@@ -1806,6 +3028,7 @@ export abstract class SqlBaseCrudService<
 			if (!column) {
 				throw new BadRequestException(`Unknown search column: ${name}`);
 			}
+			this.assertAllowed("searchableColumns", name, options);
 			return column;
 		});
 
@@ -1823,9 +3046,8 @@ export abstract class SqlBaseCrudService<
 
 		// Like find/findAll/count, exclude soft-deleted rows from search results.
 		const matchExpr = sql`${tsVector} @@ ${tsQuery}`;
-		const whereExpr = this.config.softDelete?.enabled
-			? and(matchExpr, isNull(this.config.table[this.config.softDelete.column]))
-			: matchExpr;
+		const scope = this.softDeleteScope(options);
+		const whereExpr = scope ? and(matchExpr, scope) : matchExpr;
 
 		// The page and limit always apply, with or without `pagination`, so the
 		// envelope matches what came back. Ties on rank fall back to the primary
