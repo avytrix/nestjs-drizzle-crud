@@ -55,7 +55,7 @@
 	"bugs": {
 		"url": "https://github.com/avytrix/nestjs-drizzle-crud/issues"
 	},
-	"homepage": "https://crud.viliha.com",
+	"homepage": "https://crud.avytrix.dev",
 	"funding": {
 		"type": "github",
 		"url": "https://github.com/sponsors/myviliha"

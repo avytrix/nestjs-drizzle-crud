@@ -1,10 +1,12 @@
-# viliha-drizzle
+# nestjs-drizzle-crud
 
-[![docs](https://img.shields.io/badge/docs-crud.viliha.com-E0234E)](https://crud.viliha.com)
+[![docs](https://img.shields.io/badge/docs-crud.avytrix.dev-E0234E)](https://crud.avytrix.dev)
 [![npm](https://img.shields.io/npm/v/nestjs-drizzle-crud?color=E0234E)](https://www.npmjs.com/package/nestjs-drizzle-crud)
 [![license](https://img.shields.io/npm/l/nestjs-drizzle-crud)](./LICENSE)
-[![CI](https://github.com/myviliha/viliha-drizzle-crud/actions/workflows/ci.yml/badge.svg)](https://github.com/myviliha/viliha-drizzle-crud/actions/workflows/ci.yml)
-[![Sponsor @myviliha](https://img.shields.io/badge/Sponsor-%40myviliha-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/myviliha)
+[![CI](https://github.com/avytrix/nestjs-drizzle-crud/actions/workflows/ci.yml/badge.svg)](https://github.com/avytrix/nestjs-drizzle-crud/actions/workflows/ci.yml)
+[![Sponsor @avytrix](https://img.shields.io/badge/Sponsor-%40avytrix-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/avytrix)
+
+Built and maintained by **[Avytrix Technologies](https://avytrix.dev)**.
 
 ## ❤️ Sponsoring is what keeps this free
 
@@ -16,10 +18,10 @@ TypeScript releases is ongoing work.
 
 **Even $1 a month helps.** It funds bug fixes, new guides, and the next release.
 
-> Sponsors get a spot on the [sponsor page](https://crud.viliha.com/docs/sponsor)
+> Sponsors get a spot on the [sponsor page](https://crud.avytrix.dev/docs/sponsor)
 > and our genuine thanks.
 
-### 👉 [Sponsor on GitHub →](https://github.com/sponsors/myviliha) &nbsp;·&nbsp; thank you 🙏
+### 👉 [Sponsor on GitHub →](https://github.com/sponsors/avytrix) &nbsp;·&nbsp; thank you 🙏
 
 ---
 
@@ -29,9 +31,9 @@ in [NestJS](https://nestjs.com/).
 
 Turborepo + pnpm, TypeScript 7. Lint and format via [Biome](https://biomejs.dev/).
 
-**Docs:** [crud.viliha.com](https://crud.viliha.com) ·
+**Docs:** [crud.avytrix.dev](https://crud.avytrix.dev) ·
 **npm:** [nestjs-drizzle-crud](https://www.npmjs.com/package/nestjs-drizzle-crud) ·
-**Sponsor:** [github.com/sponsors/myviliha](https://github.com/sponsors/myviliha)
+**Sponsor:** [github.com/sponsors/avytrix](https://github.com/sponsors/avytrix)
 
 ## Install the package
 
@@ -58,7 +60,7 @@ export class UsersService extends SqlBaseCrudService<User> {}
 DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
 ```
 
-Full guides, API reference and an FAQ are at [crud.viliha.com](https://crud.viliha.com).
+Full guides, API reference and an FAQ are at [crud.avytrix.dev](https://crud.avytrix.dev).
 
 ## Layout
 
@@ -92,7 +94,7 @@ pnpm dev:api                                 # example api on http://localhost:4
 pnpm dev:all                                 # docs and api together
 ```
 
-`pnpm dev` runs the docs site, the same way it does in the other Viliha repos.
+`pnpm dev` runs the docs site, the same way it does in the other Avytrix Technologies repos.
 
 Publishing (maintainers), after the verify set is green. A `v*` tag is the normal
 path; `pnpm release` is the manual fallback:
@@ -120,7 +122,7 @@ cp node_modules/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md   # Claude Co
 
 The package also ships an MCP server, so an agent can search the docs while it
 works: `npx nestjs-drizzle-crud-mcp`. Setup per client is in
-[the AI agents guide](https://crud.viliha.com/docs/ai-agents).
+[the AI agents guide](https://crud.avytrix.dev/docs/ai-agents).
 
 ## TypeScript 7 toolchain notes
 
@@ -162,7 +164,7 @@ real connection string is for `pnpm dev:api` only.
 
 - **CI** (`.github/workflows/ci.yml`): lint, typecheck, build and test on push and PR.
 - **Docs** (`deploy-docs.yml`): static export to GitHub Pages on push to `main`,
-  served at [crud.viliha.com](https://crud.viliha.com). One-time setup is
+  served at [crud.avytrix.dev](https://crud.avytrix.dev). One-time setup is
   Settings → Pages → Source = GitHub Actions.
 - **Release** (`release.yml`): on a `v*` tag, re-runs the verify set and publishes
   [`nestjs-drizzle-crud`](https://www.npmjs.com/package/nestjs-drizzle-crud) to npm
