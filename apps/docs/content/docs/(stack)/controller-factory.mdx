@@ -82,7 +82,8 @@ Every option is optional. The source is [`crud-controller.factory.ts`](https://g
     path: { type: "string", description: "Applies @Controller(path) to the generated class. Leave it out and decorate your subclass instead." },
     idType: { type: '"int" | "uuid" | "string"', description: "Fixes the :id pipe when the class is built. Unset, the id follows the primary key column at request time." },
     "dto.create": { type: "Type", description: "DTO class for POST /, and the ParseArrayPipe items type for POST /bulk. A global ValidationPipe validates it." },
-    "dto.update": { type: "Type", description: "DTO class for PATCH /:id." },
+    "dto.update": { type: "Type", description: "DTO class for PATCH /:id and the data of PATCH /bulk." },
+    validation: { type: "ValidationPipeOptions", description: "Validator options for the bulk bodies. Pass the same options as your global ValidationPipe." },
     query: { type: "ParseCrudQueryOptions", default: "{}", description: "Options for parseQuery on every route, such as allowTrash or ignore." },
     routes: { type: "{ [route: CrudRouteName]: boolean | CrudRouteOptions }", description: "Turns a route on or off. An object { enabled?, decorators? } can also give one route its own decorators." },
     decorators: { type: "MethodDecorator[]", description: "Applied to every route, before the per-route decorators." },
@@ -94,7 +95,7 @@ Every option is optional. The source is [`crud-controller.factory.ts`](https://g
 
 ## How do I validate request bodies?
 
-Pass the DTO classes in `dto`. They become the parameter types of `create` and `update`, so a global `ValidationPipe` validates them the usual way. `bulkCreate` validates each array element with `ParseArrayPipe({ items: dto.create })`.
+Pass the DTO classes in `dto`. They become the parameter types of `create` and `update`, so a global `ValidationPipe` validates them the usual way. A global pipe cannot see inside the bulk bodies, so the factory validates them itself: each element of `POST /bulk` against `dto.create`, and `data` of `PATCH /bulk` against `dto.update`. Pass your global pipe's options in `validation` (such as `{ whitelist: true }`) so the bulk routes apply the same rules. Bulk ids are parsed like `:id`, so a bad one is a 400.
 
 ```ts accent=nest title="main.ts"
 app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));

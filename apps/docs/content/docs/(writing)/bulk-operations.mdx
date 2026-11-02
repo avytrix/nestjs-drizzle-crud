@@ -187,7 +187,9 @@ Yes:
 
 ## How large can a bulk call be?
 
-There is no limit in the package: the bulk methods take the whole array in memory and write it in one transaction. The limit is the database. A very large multi-row statement can hit the driver's parameter limit, and one transaction holding thousands of row locks can block other connections. For thousands of rows, split the array into chunks of a few hundred and call the bulk method once per chunk, accepting that each chunk commits on its own.
+A call may bind at most 60,000 values, below the 65,535 bound parameters a Postgres statement accepts. For `massCreate` and `massUpsert` that is rows times columns; for the id based methods it is the number of ids. A bigger call is a 400 that names the limit, before any statement runs. The same limit applies to an `IN` filter list.
+
+One transaction holding thousands of row locks can also block other connections. For thousands of rows, split the array into chunks of a few hundred and call the bulk method once per chunk, accepting that each chunk commits on its own.
 
 ## Common questions
 

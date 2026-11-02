@@ -8,7 +8,7 @@ export const siteConfig = {
 	mcpBin: "nestjs-drizzle-crud-mcp",
 	displayName: "Nestjs Drizzle", // what readers see: header, tab titles, site name
 	logo: "/avytrix-icon.png", // Avytrix Technologies mark
-	version: "3.5.2",
+	version: "3.6.0",
 	tagline: "Type-safe CRUD for Drizzle ORM in NestJS",
 	/** The home page <title>: the primary query first, the display name last, at most 60 characters. */
 	homeTitle: "NestJS + Drizzle ORM CRUD library | Nestjs Drizzle",

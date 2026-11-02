@@ -121,10 +121,9 @@ The mass methods run in a transaction: one `SELECT` checks the ids exist, then o
 `UPDATE ... WHERE id IN (...)` (or `DELETE`) writes them all. Calling any soft delete or restore
 method on an entity with soft delete turned off is a 400 `BadRequestException`.
 
-<Callout title="restore does not check the trash">
-  `restore` clears the column on any row with that id, so restoring a live row succeeds and changes
-  nothing but `updated_at`. To ask whether a row is in the trash, use
-  `usersService.exists(42, { onlyDeleted: true })`.
+<Callout title="restore only takes a row from the trash">
+  `restore` on a live row is a 404, before any hook or event runs. To ask whether a row is in the
+  trash, use `usersService.exists(42, { onlyDeleted: true })`.
 </Callout>
 
 ## Which reads hide soft-deleted rows?

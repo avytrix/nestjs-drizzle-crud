@@ -70,6 +70,7 @@ Yes, on PostgreSQL:
 | Feature | What upsert does |
 | --- | --- |
 | [Tenant scope](/docs/multi-tenancy) | Writes the scope onto the inserted row and adds it to `ON CONFLICT DO UPDATE ... WHERE`. A conflict with another tenant's row updates nothing and is a 404. |
+| [Soft delete](/docs/soft-delete) | A conflict with a row in the trash updates nothing and is a 404, the same as `update` on that row. Restore it first. |
 | [Version column](/docs/optimistic-locking) | Sets the version to 1 on insert and adds one on update. The version is never taken from the body. |
 | Scope and version columns | Never overwritten from the body, even if you list them in `update`. |
 | `options.relations`, `options.counts` | Loaded onto the returned row, the same as after `create`. See [Relations on writes](/docs/relations-on-writes). |
@@ -85,6 +86,7 @@ Upsert maps driver errors the same way `create` does:
 | A foreign key that points at no row | 400 |
 | An unknown `conflictTarget` or `update` column | 400 |
 | On a scoped entity, the key belongs to another tenant | 404 |
+| The key belongs to a row in the trash | 404 |
 
 ```ts title="items.sync.ts"
 // sku is unique too: moving row 1 onto row 2's sku is a 409

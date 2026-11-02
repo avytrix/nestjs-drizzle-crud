@@ -72,8 +72,9 @@ The service catches Postgres errors by SQLSTATE code (on the error or its Drizzl
 | `22P02` | value does not match the column type (`"abc"` for an integer, an unknown enum label) | `ValidationFailedException` (400) |
 | `22007`, `22008` | date or time with an invalid format, or out of range | `ValidationFailedException` (400) |
 | `21000` | the same key twice in one `massUpsert` | `ValidationFailedException` (400) |
+| `23502` | a required column got no value | `ValidationFailedException` (400), with the column name |
 
-Any other error passes through unchanged. That includes `NOT NULL` violations, which usually mean a programming or config mistake rather than a bad value, so they stay a 500. The codes are Postgres SQLSTATEs: MySQL driver errors are not translated.
+On MySQL, `ER_DUP_ENTRY` (1062) is a 409 `DuplicateEntityException`, `ER_NO_REFERENCED_ROW_2` (1452) a 400 `ForeignKeyViolationException`, and `ER_ROW_IS_REFERENCED_2` (1451) on a delete a 409 `EntityInUseException`. Any other error passes through unchanged.
 
 ## Which other 400s does the service throw?
 
@@ -184,7 +185,7 @@ Register it with `app.useGlobalFilters(new CrudExceptionFilter())` or `@UseFilte
     The class has no `field` property; the field only appears in its message, as in `users with email 'a@b.co' already exists`. If you need it structured, catch the driver error yourself in an override.
   </Accordion>
   <Accordion title="Are MySQL errors mapped to HTTP status codes?">
-    No. The translation reads Postgres SQLSTATE codes, so a MySQL duplicate key or foreign key error reaches Nest unchanged and becomes a 500.
+    Duplicate keys and foreign keys are: `ER_DUP_ENTRY` is a 409, a missing parent row a 400, and a delete blocked by other rows a 409. Other MySQL errors reach Nest unchanged.
   </Accordion>
 </Accordions>
 
