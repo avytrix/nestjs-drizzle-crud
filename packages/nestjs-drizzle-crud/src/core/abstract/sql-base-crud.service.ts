@@ -366,6 +366,17 @@ export abstract class SqlBaseCrudService<
 		);
 	}
 
+	// Every predicate a row of a related table must pass for this call: not
+	// soft deleted, and inside the tenant scope when the table has the scope
+	// columns. Loaders, joins, relation filters and counts all go through here,
+	// so a relation can never read another tenant's rows.
+	protected relatedRowScope(target: any, options?: SqlOperationOptions): any[] {
+		const out = this.relatedScopeConditions(target, options);
+		const softDeleted = this.softDeleteCondition(target);
+		if (softDeleted) out.push(softDeleted);
+		return out;
+	}
+
 	// The tenant scope on a related table: one condition per scope column that
 	// the related table also has. A related table without the column is shared
 	// across tenants, so it is left unscoped.
@@ -813,6 +824,7 @@ export abstract class SqlBaseCrudService<
 		nodes: RelationNode[],
 		select: SelectTree = { base: [], relations: {} },
 		hostTable: any = this.config.table,
+		options?: SqlOperationOptions,
 	): Promise<void> {
 		if (!nodes.length || !Array.isArray(hosts)) return;
 		const rows = hosts.filter((row) => row && typeof row === "object");
@@ -824,13 +836,27 @@ export abstract class SqlBaseCrudService<
 				if (!node.joined) {
 					switch (this.relationType(node.config)) {
 						case "hasMany":
-							await this.loadHasMany(db, rows, node, childSelect, hostTable);
+							await this.loadHasMany(
+								db,
+								rows,
+								node,
+								childSelect,
+								hostTable,
+								options,
+							);
 							break;
 						case "manyToMany":
-							await this.loadManyToMany(db, rows, node, childSelect, hostTable);
+							await this.loadManyToMany(
+								db,
+								rows,
+								node,
+								childSelect,
+								hostTable,
+								options,
+							);
 							break;
 						default:
-							await this.loadBelongsTo(db, rows, node, childSelect);
+							await this.loadBelongsTo(db, rows, node, childSelect, options);
 					}
 				}
 				if (node.children.length === 0) return;
@@ -845,6 +871,7 @@ export abstract class SqlBaseCrudService<
 					node.children,
 					childSelect,
 					node.config.table,
+					options,
 				);
 			}),
 		);
@@ -856,6 +883,7 @@ export abstract class SqlBaseCrudService<
 		hosts: any[],
 		node: RelationNode,
 		select: SelectTree,
+		options?: SqlOperationOptions,
 	): Promise<void> {
 		const { localKey, references } = node.config;
 		if (!localKey) return;
@@ -877,8 +905,7 @@ export abstract class SqlBaseCrudService<
 			...this.keysForChildren(node.children, target),
 		]);
 		const conditions = [inArray(referenced, ids)];
-		const softDeleted = this.softDeleteCondition(target);
-		if (softDeleted) conditions.push(softDeleted);
+		conditions.push(...this.relatedRowScope(target, options));
 
 		const related = await (fields ? db.select(fields) : db.select())
 			.from(target)
@@ -898,6 +925,7 @@ export abstract class SqlBaseCrudService<
 		node: RelationNode,
 		select: SelectTree,
 		hostTable: any = this.config.table,
+		options?: SqlOperationOptions,
 	): Promise<void> {
 		const { foreignKey } = node.config;
 		if (!foreignKey) return;
@@ -921,8 +949,7 @@ export abstract class SqlBaseCrudService<
 			...this.keysForChildren(node.children, target),
 		]);
 		const conditions = [inArray(foreign, ids)];
-		const softDeleted = this.softDeleteCondition(target);
-		if (softDeleted) conditions.push(softDeleted);
+		conditions.push(...this.relatedRowScope(target, options));
 
 		let query = (fields ? db.select(fields) : db.select())
 			.from(target)
@@ -942,6 +969,7 @@ export abstract class SqlBaseCrudService<
 		node: RelationNode,
 		select: SelectTree,
 		hostTable: any = this.config.table,
+		options?: SqlOperationOptions,
 	): Promise<void> {
 		const { through, throughLocalKey, throughForeignKey, references } =
 			node.config;
@@ -976,8 +1004,7 @@ export abstract class SqlBaseCrudService<
 		}
 
 		const conditions = [inArray(joinLocal, ids)];
-		const softDeleted = this.softDeleteCondition(target);
-		if (softDeleted) conditions.push(softDeleted);
+		conditions.push(...this.relatedRowScope(target, options));
 
 		let query = db
 			.select(fields)
@@ -1019,21 +1046,28 @@ export abstract class SqlBaseCrudService<
 	// LEFT JOIN each belongs-to relation onto the query. Collections are never
 	// joined: one parent row would become one row per child, which breaks `total`
 	// and pagination. They are loaded by loadRelations instead.
-	protected applyJoins(query: any, relationNames: string[]): any {
+	protected applyJoins(
+		query: any,
+		relationNames: string[],
+		options?: SqlOperationOptions,
+	): any {
 		const configured = this.config.relations || {};
 		let q = query;
 		for (const name of relationNames) {
 			const rel = configured[name];
 			if (!rel?.localKey || this.isCollection(rel)) continue;
-			// The soft-delete predicate sits in the ON clause, not the WHERE: a
-			// deleted parent then reads as "no match" (null), and the child row
-			// still comes back, as with any LEFT JOIN miss.
+			// The soft delete and tenant predicates sit in the ON clause, not the
+			// WHERE: a deleted parent, or one of another tenant, then reads as
+			// "no match" (null), and the child row still comes back, as with any
+			// LEFT JOIN miss.
 			const on = eq(
 				this.config.table[rel.localKey],
 				rel.table[rel.references ?? "id"],
 			);
-			const softDeleted = this.softDeleteCondition(rel.table);
-			q = q.leftJoin(rel.table, softDeleted ? and(on, softDeleted) : on);
+			q = q.leftJoin(
+				rel.table,
+				and(on, ...this.relatedRowScope(rel.table, options)),
+			);
 		}
 		return q;
 	}
@@ -1542,6 +1576,7 @@ export abstract class SqlBaseCrudService<
 		query = this.applyJoins(
 			query,
 			joined.map((node) => node.name),
+			options,
 		)
 			.where(and(...conditions))
 			.limit(1);
@@ -1553,7 +1588,7 @@ export abstract class SqlBaseCrudService<
 			joined.map((node) => node.name),
 		);
 		await Promise.all([
-			this.loadRelations(db, rows, nodes, selection),
+			this.loadRelations(db, rows, nodes, selection, undefined, options),
 			this.loadCounts(db, rows, options?.counts, options),
 		]);
 		return rows[0] || null;
@@ -1626,11 +1661,12 @@ export abstract class SqlBaseCrudService<
 		db: any,
 		conditions: any[],
 		filterRelations: string[],
+		options?: SqlOperationOptions,
 	): any {
 		let query = db
 			.select({ count: sql<number>`count(*)` })
 			.from(this.config.table);
-		query = this.applyJoins(query, filterRelations);
+		query = this.applyJoins(query, filterRelations, options);
 		if (conditions.length > 0) query = query.where(and(...conditions));
 		return query;
 	}
@@ -1673,7 +1709,7 @@ export abstract class SqlBaseCrudService<
 			plan.joinRelations.length > 0,
 			plan.selection,
 		);
-		dataQuery = this.applyJoins(dataQuery, plan.joinRelations);
+		dataQuery = this.applyJoins(dataQuery, plan.joinRelations, options);
 		if (plan.conditions.length > 0) {
 			dataQuery = dataQuery.where(and(...plan.conditions));
 		}
@@ -1688,7 +1724,12 @@ export abstract class SqlBaseCrudService<
 		dataQuery = this.applyLock(dataQuery, options);
 
 		const countQuery = withCount
-			? this.buildCountQuery(plan.db, plan.conditions, plan.filterRelations)
+			? this.buildCountQuery(
+					plan.db,
+					plan.conditions,
+					plan.filterRelations,
+					options,
+				)
 			: Promise.resolve(undefined);
 		const [fetched, totalResult] = await this.runRead(
 			Promise.all([dataQuery, countQuery]),
@@ -1701,7 +1742,14 @@ export abstract class SqlBaseCrudService<
 			plan.joined.map((node) => node.name),
 		);
 		await Promise.all([
-			this.loadRelations(plan.db, rows, plan.nodes, plan.selection),
+			this.loadRelations(
+				plan.db,
+				rows,
+				plan.nodes,
+				plan.selection,
+				undefined,
+				options,
+			),
 			this.loadCounts(plan.db, rows, options?.counts, options),
 		]);
 
@@ -1760,7 +1808,7 @@ export abstract class SqlBaseCrudService<
 			fields[`${CURSOR_KEY}${i}`] = this.cursorField(spec.column);
 		});
 		let dataQuery = plan.db.select(fields).from(this.config.table);
-		dataQuery = this.applyJoins(dataQuery, plan.joinRelations);
+		dataQuery = this.applyJoins(dataQuery, plan.joinRelations, options);
 		if (conditions.length > 0) dataQuery = dataQuery.where(and(...conditions));
 		dataQuery = dataQuery
 			.orderBy(...plan.sort.map((spec) => this.orderOf(spec)))
@@ -1772,7 +1820,12 @@ export abstract class SqlBaseCrudService<
 			Promise.all([
 				dataQuery,
 				count
-					? this.buildCountQuery(plan.db, plan.conditions, plan.filterRelations)
+					? this.buildCountQuery(
+							plan.db,
+							plan.conditions,
+							plan.filterRelations,
+							options,
+						)
 					: Promise.resolve(undefined),
 			]),
 		);
@@ -1796,7 +1849,14 @@ export abstract class SqlBaseCrudService<
 			plan.joined.map((node) => node.name),
 		);
 		await Promise.all([
-			this.loadRelations(plan.db, rows, plan.nodes, plan.selection),
+			this.loadRelations(
+				plan.db,
+				rows,
+				plan.nodes,
+				plan.selection,
+				undefined,
+				options,
+			),
 			this.loadCounts(plan.db, rows, options?.counts, options),
 		]);
 
@@ -1915,7 +1975,7 @@ export abstract class SqlBaseCrudService<
 		}
 		const hosts = rows.filter(Boolean);
 		await Promise.all([
-			this.loadRelations(db, hosts, nodes),
+			this.loadRelations(db, hosts, nodes, undefined, undefined, options),
 			this.loadCounts(db, hosts, options?.counts, options),
 		]);
 	}
@@ -2201,9 +2261,7 @@ export abstract class SqlBaseCrudService<
 		const foreign = through[relation.throughForeignKey!];
 
 		const conditions = [inArray(referenced, wanted)];
-		const softDeleted = this.softDeleteCondition(target);
-		if (softDeleted) conditions.push(softDeleted);
-		conditions.push(...this.relatedScopeConditions(target, options));
+		conditions.push(...this.relatedRowScope(target, options));
 		const found: any[] = await tx
 			.select({ id: referenced })
 			.from(target)
@@ -3667,7 +3725,7 @@ export abstract class SqlBaseCrudService<
 		);
 
 		const result = await this.runRead<any[]>(
-			this.buildCountQuery(db, conditions, filterRelations),
+			this.buildCountQuery(db, conditions, filterRelations, options),
 		);
 		return parseInt(result[0]?.count?.toString() || "0", 10);
 	}
@@ -3696,7 +3754,7 @@ export abstract class SqlBaseCrudService<
 		let query = db
 			.select({ value: spec.column, count: total })
 			.from(this.config.table);
-		query = this.applyJoins(query, joins);
+		query = this.applyJoins(query, joins, options);
 		if (conditions.length > 0) query = query.where(and(...conditions));
 		query = query.groupBy(spec.column).orderBy(desc(total), asc(spec.column));
 		const rows = await this.runRead<any[]>(query);
@@ -3848,9 +3906,7 @@ export abstract class SqlBaseCrudService<
 				),
 			);
 		}
-		const softDeleted = this.softDeleteCondition(target);
-		if (softDeleted) conditions.push(softDeleted);
-		conditions.push(...this.relatedScopeConditions(target, options));
+		conditions.push(...this.relatedRowScope(target, options));
 		const total = sql<number>`count(*)`;
 		if (this.relationType(relation) === "manyToMany") {
 			const joinLocal = relation.through[relation.throughLocalKey!];
@@ -3942,6 +3998,7 @@ export abstract class SqlBaseCrudService<
 			targetConditions,
 			db,
 			this.rootHost(),
+			options,
 		);
 	}
 
@@ -3951,6 +4008,7 @@ export abstract class SqlBaseCrudService<
 		targetConditions: any[],
 		db: any,
 		host: FilterHost,
+		options?: SqlOperationOptions,
 	): any | undefined {
 		const target = relation.table;
 		const manyToMany = this.relationType(relation) === "manyToMany";
@@ -3961,8 +4019,7 @@ export abstract class SqlBaseCrudService<
 		if (!key) return undefined;
 
 		const conditions = [...targetConditions];
-		const softDeleted = this.softDeleteCondition(target);
-		if (softDeleted) conditions.push(softDeleted);
+		conditions.push(...this.relatedRowScope(target, options));
 
 		let subquery: any;
 		if (manyToMany) {
@@ -4008,8 +4065,7 @@ export abstract class SqlBaseCrudService<
 		if (quantifier === "every" && compiled.length === 0) return undefined;
 		const parentKey = this.parentKeyOf(relation, host.source);
 		const conditions: any[] = [];
-		const softDeleted = this.softDeleteCondition(target);
-		if (softDeleted) conditions.push(softDeleted);
+		conditions.push(...this.relatedRowScope(target, options));
 		if (compiled.length > 0) {
 			const matched = and(...compiled);
 			conditions.push(
@@ -4071,7 +4127,6 @@ export abstract class SqlBaseCrudService<
 			options,
 		);
 		if (compiled.length === 0) return undefined;
-		const softDeleted = this.softDeleteCondition(target);
 		return exists(
 			db
 				.select({ one: sql`1` })
@@ -4083,7 +4138,7 @@ export abstract class SqlBaseCrudService<
 							host.table[relation.localKey!],
 						),
 						...compiled,
-						...(softDeleted ? [softDeleted] : []),
+						...this.relatedRowScope(target, options),
 					),
 				),
 		);
@@ -4272,6 +4327,7 @@ export abstract class SqlBaseCrudService<
 					compiled,
 					db,
 					host,
+					options,
 				);
 				if (condition) parts.push(condition);
 			} else {

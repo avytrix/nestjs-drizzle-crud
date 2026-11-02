@@ -2564,3 +2564,62 @@ describe("3.5.2 fixes", () => {
 		expect(res.data.map((d: any) => d._count.notes)).toEqual([1, 0, 0]);
 	});
 });
+
+describe("re-audit R-01: relations stay inside the tenant", () => {
+	// Tenant 1's note pointing at doc 4, which belongs to tenant 2, and tenant
+	// 2's note on doc 1, which belongs to tenant 1. A plain foreign key allows
+	// both; the scope must still keep each tenant's reads to its own rows.
+	const seeded = async () => {
+		const db = await freshDb();
+		await db.insert(docNotes).values([
+			{ doc_id: 4, tenant_id: 1, body: "points at b" },
+			{ doc_id: 1, tenant_id: 2, body: "from b" },
+		]);
+		const notes = new Svc({
+			...base(db, docNotes),
+			softDelete: { enabled: false, column: "deleted_at" },
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: { doc: { table: docs, localKey: "doc_id" } },
+		});
+		return { notes, docs: docsService(db) };
+	};
+	const t1 = asTenant(1);
+
+	it("loads a belongs-to of another tenant as null, joined or batched", async () => {
+		const { notes } = await seeded();
+		const res = await notes.findAll(
+			{},
+			{ sortBy: "id" },
+			{ ...t1, relations: ["doc"] },
+		);
+		const crossed = res.data.find((n: any) => n.body === "points at b");
+		expect(crossed.doc).toBeNull();
+		expect(res.data.find((n: any) => n.body === "n1").doc.title).toBe("One");
+	});
+
+	it("does not match a filter on another tenant's belongs-to row", async () => {
+		const { notes } = await seeded();
+		expect((await notes.findAll({ doc: { title: "Four" } }, {}, t1)).total).toBe(
+			0,
+		);
+		expect(await notes.count({ doc: { title: "Four" } }, t1)).toBe(0);
+	});
+
+	it("leaves another tenant's rows out of has-many loads, filters and counts", async () => {
+		const { docs: svc } = await seeded();
+		const one = await svc.find(1, {
+			...t1,
+			relations: ["notes"],
+			counts: ["notes"],
+		});
+		expect(one.notes.map((n: any) => n.body)).toEqual(["n1"]);
+		expect(one._count.notes).toBe(1);
+		const some = await svc.findAll(
+			{ notes: { some: { body: "from b" } } },
+			{},
+			t1,
+		);
+		expect(some.total).toBe(0);
+	});
+});
