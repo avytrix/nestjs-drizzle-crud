@@ -141,7 +141,7 @@ export class ProjectsController extends createCrudController(ProjectsService, {
 }) {}
 ```
 
-Pass `openapi: true` instead when the service carries `@CrudService` metadata.
+Pass `openapi: true` instead when the service carries `@CrudService` metadata. It documents the allowlists of that decorator only: Swagger reads them when the class is defined, before `forFeature` runs, so allowlists set in `forFeature` are not shown. In that case pass the entity object, `{ table, ...allowlists }`, as above.
 
 ## Common questions
 
