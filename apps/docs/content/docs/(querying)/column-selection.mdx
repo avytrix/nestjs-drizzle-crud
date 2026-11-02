@@ -1,33 +1,56 @@
 ---
-title: Column selection
-description: Return only the columns you need with options.select, including dotted paths that narrow eager-loaded and nested relations.
+title: Select columns with Drizzle in NestJS
+description: "Select columns in NestJS with Drizzle: pass options.select to return only the columns you need, and use dotted paths to narrow eager-loaded relations."
+icon: Columns3
 ---
 
-Pass `options.select` with the column names you want and the query stops being `SELECT *`. It works on `find`, `findOne` and `findAll`, and a dotted entry narrows an eager-loaded relation.
+To select columns with Drizzle in NestJS, pass `options.select` with the column names you want, and the query stops being `SELECT *`. It works on `find`, `findOne`, `findAll` and `findByCursor`. A dotted entry such as `'region.code'` narrows an eager-loaded relation, at any depth. Leave `select` out and every column comes back, which is the default.
 
-```ts
-await countries.findAll({}, { page: 1, limit: 20 }, { select: ['id', 'name'] });
+<Callout title="Names are table keys">
+  Each entry is the key in your Drizzle table object, not the SQL column name. The examples use a `countries` table with a belongs-to `region` and a has-many `states`, served by a `CountriesService`.
+</Callout>
+
+## How do I return only some columns?
+
+List them in `select`, the third argument of `findAll` (the second of `find` and `findOne`).
+
+```ts title="countries.controller.ts"
+await this.countriesService.findAll({}, { page: 1, limit: 20 }, { select: ['id', 'name'] });
 // SELECT "id", "name" FROM "countries" ...
-// -> { data: [{ id: 1, name: 'India' }, ...], total, page, limit }
+// { data: [{ id: 1, name: 'India' }, ...], total, page, limit }
+
+await this.countriesService.find(1, { select: ['id', 'name'] });
+// { id: 1, name: 'India' }
 ```
 
-Omit `select` and every column comes back, which is the default.
+Over HTTP, [`parseQuery`](/docs/query-parsing) reads `?fields=id,name` into `options.select`.
 
 ## Which columns can I ask for?
+
+Any column of the table, or a dotted path into a relation you also load.
 
 | Entry | Meaning |
 | --- | --- |
 | `'name'` | A column on this entity's table. |
 | `'region.code'` | The `code` column of the eager-loaded `region` relation. |
 | `'states.name'` | The `name` column of every child in the has-many `states` relation. |
-| `'states.cities.name'` | The `name` column at the next nesting level down. Paths can be any depth. |
+| `'states.cities.name'` | The `name` column one nesting level down. Paths can be any depth. |
 
-A dotted entry only takes effect when the relation is also listed in `options.relations`. Names that do not match a real column are ignored rather than rejected, so a typo returns fewer columns instead of an error. Two things make them a 400 instead: a `selectableColumns` [allowlist](/docs/allowlists) that does not list the name, and [`parseQuery`](/docs/query-parsing), which checks every `?fields=` entry.
+A dotted entry only takes effect when the relation is also listed in `options.relations`. Without it, nothing is loaded and the entry does nothing.
 
-## Narrowing a relation
+### What happens with a name that is not a column?
 
-```ts
-await countries.findAll(
+The service skips it rather than failing, so a typo returns fewer columns instead of an error. Two things make it a 400 instead:
+
+- a [`selectableColumns`](/docs/allowlists) allowlist that does not list the name,
+- [`parseQuery`](/docs/query-parsing), which checks every `?fields=` entry against the table and its relations.
+
+## How do I narrow a relation?
+
+Load the relation with `relations` and name its columns with dotted entries in `select`.
+
+```ts title="countries.controller.ts"
+await this.countriesService.findAll(
   {},
   { page: 1, limit: 20 },
   {
@@ -43,19 +66,26 @@ await countries.findAll(
 // }
 ```
 
-Two keys are added back automatically, because the loader cannot group children without them:
+### Why do some columns come back that I did not ask for?
 
-- the **parent key** on the base row (the configured `primaryKey`, or `parentKey` when set),
-- the **foreign key** on each child row.
+The loader needs some keys to attach children to their parents, so it adds them back:
+
+| Key added | When |
+| --- | --- |
+| The parent key on the base row (the configured `primaryKey`, or the relation's `parentKey` when set) | A has-many or many-to-many relation is loaded, or counted with `counts`. |
+| The foreign key on each has-many child row | Always, because it maps the child back to its parent. |
+| The key a nested relation hangs on | A relation of a relation is loaded. |
 
 So `select: ['name', 'states.name']` still returns `id` on the country and `country_id` on each state. The same applies at every nesting level: `select: ['name', 'states.name', 'states.cities.name']` keeps `states.id` too, because the cities load needs it. Everything else you did not ask for is left out of the SQL.
 
-## Listing only relation columns keeps the parent whole
+A top-level belongs-to such as `region` rides along in the main query as a `LEFT JOIN`, so its key appears only in the `ON` clause and nothing is added to the base row.
 
-If every entry is dotted, the base row is not narrowed at all:
+## What if I only list relation columns?
 
-```ts
-await countries.findAll({}, undefined, {
+Then the base row is not narrowed at all.
+
+```ts title="countries.controller.ts"
+await this.countriesService.findAll({}, undefined, {
   relations: ['region'],
   select: ['region.name'],
 });
@@ -64,16 +94,43 @@ await countries.findAll({}, undefined, {
 
 That way `select: ['region.name']` reads as "narrow the region", not "drop every country column".
 
-## When is this worth doing?
+## When is column selection worth it?
 
-- **Wide tables.** Skipping a large `text` or `jsonb` column you do not render is the cheapest win available.
-- **List endpoints.** A table view usually needs three columns out of fifteen.
-- **Hot paths.** Less data over the wire, less to hydrate, and a covering index can serve the whole query.
+When the rows are wide or the endpoint is hot.
 
-Keep it out of write paths: `create`, `update` and `restore` return the full row through `RETURNING`, and `select` does not apply to them.
+| Case | Why it helps |
+| --- | --- |
+| Wide tables | Skipping a large `text` or `jsonb` column you do not render is the cheapest win there is. |
+| List endpoints | A table view usually needs three columns out of fifteen. |
+| Hot paths | Less data over the wire and less to hydrate, and a covering index can serve the whole query. |
 
-## Related
+`exists(id)` already uses this internally: it selects only the primary key.
 
-- `exists(id)` already uses this internally, selecting only the primary key.
-- [Relations](/docs/relations) covers eager loading and the batched has-many query.
-- [Pagination and sorting](/docs/pagination-sorting) covers the rest of the read options.
+<Callout type="warn" title="Writes return the full row">
+  `select` does not apply to `create`, `update` or `restore`. They return the full row through `RETURNING`, and relations loaded on a write come back whole.
+</Callout>
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Does select work with findByCursor?">
+    Yes. `findByCursor` takes the same `options.select` as `findAll`, and the cursor is still built from the sort columns even when you leave them out of `select`.
+  </Accordion>
+  <Accordion title="Why is the foreign key in my child rows?">
+    The loader groups has-many children by their foreign key, so it always selects it. Remove it in your controller or DTO if the client should not see it.
+  </Accordion>
+  <Accordion title="Does a misspelled column name throw an error?">
+    Not in the service: it is skipped. It is a 400 when a `selectableColumns` allowlist is set, or when the name comes through `parseQuery` as `?fields=`.
+  </Accordion>
+  <Accordion title="Can I narrow a nested relation?">
+    Yes. Use a dotted path of any depth, such as `states.cities.name`, and load the same path with `relations`.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Layers />} title="Relations" href="/docs/relations" description="Eager loading, nested paths and the batched has-many query." />
+  <Card icon={<ListOrdered />} title="Pagination and sorting with Drizzle" href="/docs/pagination-sorting" description="The rest of the read options for findAll." />
+  <Card icon={<Shield />} title="NestJS Drizzle filter and column allowlists" href="/docs/allowlists" description="Limit which columns a caller may select with selectableColumns." />
+</Cards>

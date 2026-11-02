@@ -1,77 +1,167 @@
 ---
-title: Timestamps
-description: Package-managed vs schema and DB-managed created_at and updated_at, and why DB-managed is recommended.
+title: Drizzle createdAt and updatedAt timestamps
+description: Set Drizzle createdAt and updatedAt columns in NestJS. The package stamps them on every write, or the database owns them with defaultNow.
+icon: Clock
 ---
 
-The package can automatically stamp `created_at` and `updated_at` on every write, or you can let your database manage them. The two approaches are mutually exclusive. Pick one per project.
+Drizzle `createdAt` and `updatedAt` columns in NestJS can be set two ways. By default the package stamps them itself: `create` writes both, and `update`, `softDelete` and `restore` move `updated_at`, all with the application clock. Or you turn package timestamps off and let the database own them with `defaultNow()`, `$onUpdate()` or a trigger. Pick one per entity; the database is the more reliable source of time.
 
-## Package-managed (convenient)
+<Callout type="warn" title="The settings name keys, not SQL columns">
+  `timestamps.createdAt` and `timestamps.updatedAt` are keys in your Drizzle table object,
+  `created_at` and `updated_at` by default. A camelCase schema needs them set, and since 3.3.1 a key
+  the table does not have stops the service at startup.
+</Callout>
+
+## What does the package write, and when?
+
+The package writes a JavaScript `new Date()` into the configured keys on writes that go through the
+service:
+
+| Operation | `created_at` | `updated_at` |
+| --- | --- | --- |
+| `create`, `massCreate` | Set to now | Set to now |
+| `update`, `massUpdate` | Left alone | Set to now |
+| `softDelete`, `massSoftDelete`, `restore`, `massRestore` | Left alone | Set to now |
+| `upsert`, `massUpsert` (insert) | Set to now | Set to now |
+| `upsert`, `massUpsert` (conflict, row updated) | Kept from the existing row | Set to now |
+| `delete`, `forceDelete` | (row removed) | (row removed) |
+
+Two more rules keep the values honest:
+
+- **The body cannot override them.** On create, the package writes both keys after mapping the
+  body, so a client-sent `created_at` is replaced. On update, `created_at` is dropped from the body
+  (unless `writableColumns` names it), so a row cannot move its creation date by accident.
+- **An empty update is a 400.** `update()` with no column to change throws
+  `ValidationFailedException`. It does not bump `updated_at` on its own.
+
+<PropsTable
+  props={{
+    "defaults.timestamps": { type: "boolean", default: "true", description: "forRoot: package-managed timestamps for every entity unless one overrides them." },
+    "timestamps.createdAt": { type: "string", default: '"created_at"', description: "forFeature: the key of the creation column in your Drizzle table object." },
+    "timestamps.updatedAt": { type: "string", default: '"updated_at"', description: "forFeature: the key of the last-modified column in your Drizzle table object." },
+    "defaults.sortOrder": { type: '"asc" | "desc"', description: "forRoot: entities without a defaultSort sort findAll by their createdAt key in this direction." },
+  }}
+/>
+
+## How do I set it up with package-managed timestamps?
+
+<Steps>
+
+<Step>
+
+### Add the columns to the schema
+
+```ts accent=drizzle title="db/schema.ts"
+import { pgTable, serial, timestamp, varchar } from 'drizzle-orm/pg-core';
+
+export const users = pgTable('users', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 100 }).notNull(),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+});
+```
+
+</Step>
+
+<Step>
+
+### Leave the project default on
 
 ```ts accent=nest title="app.module.ts"
 DrizzleCrudModule.forRoot({
   dialect: 'postgresql',
   connectionString: process.env.DATABASE_URL,
   schema,
-  defaults: { timestamps: true }, // default
+  defaults: { timestamps: true }, // the default
 });
 ```
 
-The package uses the **application** clock and stamps columns only on writes that go through the package:
+</Step>
 
-- `create()` sets both `created_at` and `updated_at`.
-- `update()`, `softDelete()` and `restore()` bump `updated_at`.
-- `update()` with nothing to change is a 400. It does not bump `updated_at` on its own.
+<Step>
 
-The settings name the **keys** in your Drizzle table object, `created_at` / `updated_at` by default. A camelCase schema (`updatedAt: timestamp('updated_at')`) needs them set per entity:
+### Point camelCase keys at the right columns
 
-```ts
-config: { timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' } }
+With keys like `createdAt: timestamp('created_at')`, tell the entity which keys to use:
+
+```ts accent=nest title="users/users.module.ts"
+DrizzleCrudModule.forFeature([
+  {
+    service: UsersService,
+    table: users,
+    config: { timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' } },
+  },
+])
 ```
 
-### Why does my service fail at startup with a timestamps error?
+The entity setting merges with the project default one level deep, so naming only `updatedAt`
+keeps the default `createdAt`.
 
-Because a configured key is not on the table. Before 3.3.1 the package wrote `updated_at` into the values, Drizzle ignored the unknown key, and `updatedAt` silently never moved. The service now checks both keys when it is built and stops with a message that names the key to use. Set the keys as above, or turn timestamps off for that entity with `timestamps: undefined` (or project wide with `defaults: { timestamps: false }`).
+</Step>
 
-<Callout type="warn" title="Application clock, partial coverage">
-  Package-managed timestamps use the application server's clock, not the
-  database's. They also only apply to writes through the package. Raw
-  SQL, migrations, and other code paths won't set them. For
-  authoritative, wall-clock-accurate, all-write-path timestamps, use
-  schema/DB-managed.
+</Steps>
+
+## Why does my service fail at startup with a timestamps error?
+
+Because a configured key is not on the table. Before 3.3.1 the package wrote `updated_at` into the
+values, Drizzle ignored the unknown key, and `updatedAt` silently never moved. The service now checks
+both keys when it is built and stops with a message that names the key to use when the column exists
+under another name.
+
+Fix it one of three ways:
+
+- Set the keys, as in the step above.
+- Turn timestamps off for that entity with `config: { timestamps: undefined }`.
+- Turn them off for the project with `defaults: { timestamps: false }`.
+
+<Callout type="warn" title="Application clock, package writes only">
+  Package-managed timestamps use the application server's clock, not the database's, and only
+  writes through the service set them. Raw SQL, migrations and other services do not. For
+  timestamps that hold on every write path, let the database manage them.
 </Callout>
 
-## Schema/DB-managed (recommended)
+## How do I let the database manage createdAt and updatedAt?
 
-For authoritative timestamps (database time, on every write path), define them in your Drizzle schema and **leave the package's `timestamps` disabled**:
+Define the defaults in your Drizzle schema and turn the package's timestamps off.
+
+<Steps>
+
+<Step>
+
+### Define the columns with database defaults
 
 ```ts accent=drizzle title="db/schema.ts"
-import { pgTable, serial, varchar, timestamp } from 'drizzle-orm/pg-core';
+import { pgTable, serial, timestamp, varchar } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 100 }).notNull(),
   email: varchar('email', { length: 255 }).notNull().unique(),
-
-  createdAt: timestamp('created_at', { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true })
     .defaultNow()
     .notNull()
     .$onUpdate(() => new Date()),
-
-  deletedAt: timestamp('deleted_at', { withTimezone: true }),
 });
 ```
 
 - `defaultNow()` lets the database set `created_at` on insert.
-- `$onUpdate(() => new Date())` makes Drizzle bump `updated_at` on every update, including the package's own `update()`.
+- `$onUpdate(() => new Date())` makes Drizzle set `updatedAt` on every update it builds, including
+  the package's own `update()`.
 
-For `updated_at` that's authoritative even for raw SQL (e.g. a script that runs `UPDATE users SET name = ...` directly), add a Postgres trigger or a MySQL `ON UPDATE CURRENT_TIMESTAMP` clause:
+</Step>
 
-```sql
--- Postgres
+<Step>
+
+### Add a trigger for writes outside Drizzle
+
+`$onUpdate` runs in Drizzle, so a script that runs `UPDATE users SET name = ...` directly skips it.
+For an `updated_at` that holds even then, add a PostgreSQL trigger or a MySQL
+`ON UPDATE CURRENT_TIMESTAMP` clause:
+
+```sql accent=drizzle title="migrations/set_updated_at.sql"
+-- PostgreSQL
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -85,7 +175,7 @@ BEFORE UPDATE ON users
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 ```
 
-```sql
+```sql accent=drizzle title="migrations/set_updated_at.mysql.sql"
 -- MySQL
 ALTER TABLE users
   MODIFY updated_at TIMESTAMP NOT NULL
@@ -93,7 +183,11 @@ ALTER TABLE users
     ON UPDATE CURRENT_TIMESTAMP;
 ```
 
-### Then turn package timestamps off
+</Step>
+
+<Step>
+
+### Turn package timestamps off
 
 ```ts accent=nest title="app.module.ts"
 DrizzleCrudModule.forRoot({
@@ -104,31 +198,60 @@ DrizzleCrudModule.forRoot({
 });
 ```
 
-The package will not touch the timestamp columns. The database owns them.
+The package then leaves the timestamp columns to the database. Leaving it on would overwrite the
+database default with the application clock on every create and update.
 
-## Comparison
+</Step>
 
-| Aspect | Package-managed | DB-managed |
+</Steps>
+
+## Package-managed or database-managed?
+
+| Aspect | Package-managed | Database-managed |
 | --- | --- | --- |
-| Clock source | Application server | Database |
-| Coverage | Only package writes | All writes (including raw SQL) |
-| Test clock control | Trivial (mock `Date.now()`) | Requires DB time mocking |
-| Setup | `defaults: { timestamps: true }` | Drizzle `defaultNow()` / `$onUpdate()` (or triggers) |
-| Source of truth | Less authoritative | More authoritative |
+| Clock | Application server | Database |
+| Coverage | Writes through the service only | Every write, including raw SQL (with a trigger) |
+| Clock control in tests | Fake timers on `Date` | Needs database time control |
+| Setup | `defaults: { timestamps: true }` | `defaultNow()` and `$onUpdate()`, or triggers |
 
-## When package-managed is the right choice
+Package-managed timestamps fit when:
 
-- **Tests**. You can mock the application clock for deterministic timestamps.
-- **Single-writer apps**. Every write goes through the package, so coverage isn't an issue.
-- **Time zone handling is the app's job**. You've already wrapped your DB driver to use UTC.
+- **Every write goes through the service**, so coverage is not a concern.
+- **Tests need fixed times**, since a faked `Date` controls the values.
 
-## When DB-managed is the right choice (default recommendation)
+Database-managed timestamps fit when:
 
-- **Multiple writers**. Other services, scripts, manual SQL.
-- **Multi-region / replicated databases**. You want a single clock source.
-- **Production**. Give the database the last word on time.
+- **Several writers touch the table**: other services, scripts, manual SQL.
+- **Several app servers write**, and you want one clock instead of each server's.
+- **You run in production** and want the database to have the last word on time.
 
-## Next
+## Can findAll sort by created_at by default?
 
-- → [Soft delete: the third timestamp, `deleted_at`](/docs/soft-delete)
-- → [Lifecycle hooks: overriding `beforeCreate` to set custom fields](/docs/hooks-validation)
+Yes, as an opt-in. Set `defaults.sortOrder: 'desc'` in `forRoot`, and every entity without its own
+`defaultSort` sorts `findAll` by its `timestamps.createdAt` key. An entity with timestamps off gets
+no fallback. See [pagination and sorting](/docs/pagination-sorting) for the full sort rules.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Does the package set createdAt and updatedAt automatically?">
+    Yes, by default. `create` sets both, and `update`, `softDelete` and `restore` set `updated_at`, using the application clock.
+  </Accordion>
+  <Accordion title="How do I use camelCase createdAt and updatedAt keys?">
+    Set `timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' }` in the entity's `forFeature` config. The settings name keys in the Drizzle table object, not SQL column names.
+  </Accordion>
+  <Accordion title="How do I turn timestamps off for one entity?">
+    Pass `config: { timestamps: undefined }` in `forFeature`. For the whole project, set `defaults: { timestamps: false }` in `forRoot`.
+  </Accordion>
+  <Accordion title="Does an upsert change created_at?">
+    Only when it inserts. When the row already exists, the update keeps its `created_at` and sets `updated_at` to now.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Trash2 />} title="Soft delete in Drizzle ORM" href="/docs/soft-delete" description="deleted_at, the third timestamp column." />
+  <Card icon={<ShieldCheck />} title="Hooks and validation" href="/docs/hooks-validation" description="Set other fields in beforeCreate and beforeUpdate." />
+  <Card icon={<ListOrdered />} title="Pagination and sorting" href="/docs/pagination-sorting" description="defaultSort and the created_at fallback." />
+</Cards>

@@ -1,99 +1,114 @@
 ---
-title: Full-text search
-description: "PostgreSQL tsvector / tsquery via fullTextSearch(): ranked, paginated, with a clean result envelope."
+title: Full-text search in PostgreSQL with Drizzle
+description: "Drizzle full text search on Postgres in NestJS: fullTextSearch() matches with tsvector, orders by ts_rank, paginates and skips soft-deleted rows."
+icon: TextSearch
 ---
 
-The package ships a single `fullTextSearch()` method on `SqlBaseCrudService`. It builds a `to_tsvector(...) @@ plainto_tsquery(...)` expression across the columns you pass, orders by `ts_rank`, and returns the same `{ data, total, page, limit }` envelope as `findAll`.
+For Drizzle full text search on PostgreSQL in NestJS, call `fullTextSearch(term, columns, pagination)` on any service that extends `SqlBaseCrudService`. It matches `to_tsvector('english', ...)` across the columns you name against `plainto_tsquery('english', term)`, orders the rows by `ts_rank`, and returns the same `{ data, total, page, limit }` envelope as `findAll`. It works on PostgreSQL only and needs no flag to turn on.
 
 <Callout type="warn" title="PostgreSQL only">
-  Full-text search uses PostgreSQL's `tsvector` and `tsquery` types. The
-  method throws if the entity's dialect is `'mysql'`. There is no
-  MySQL-specific implementation.
+  Full-text search uses PostgreSQL's `tsvector` and `tsquery` types. On any other dialect the
+  method throws a plain `Error` (`Full-text search only supported in PostgreSQL`), which Nest
+  answers with a 500. There is no MySQL implementation.
 </Callout>
 
-<Callout type="info" title="Soft-delete aware">
-  When soft-delete is enabled on the entity, soft-deleted rows are
-  excluded from both the data and the total, matching the behavior of
-  `findAll` and `count`.
-</Callout>
+## How do I run a full-text search?
 
-## Do I need to enable it?
+Pass the term, the columns to search and, optionally, the page you want:
 
-No. `fullTextSearch()` works on any PostgreSQL entity. The `sql.enableFullTextSearch` flag is deprecated and has no effect.
-
-You do need either an `english` (or other language) tsvector index on the columns you're searching, or a generated `tsvector` column. Drizzle has helpers for both. See the [Drizzle docs on full-text search](https://orm.drizzle.team/docs/full-text-search) for the schema side.
-
-## Usage
-
-```ts
-const { data, total, page, limit } = await users.fullTextSearch(
-  'john doe',            // search term: passed to plainto_tsquery
-  ['name', 'email', 'bio'], // columns to search across
-  { page: 1, limit: 20 },   // optional pagination
+```ts title="users.service.ts"
+const { data, total, page, limit } = await this.users.fullTextSearch(
+  "john doe", // search term: passed to plainto_tsquery
+  ["name", "email", "bio"], // columns to search across
+  { page: 1, limit: 20 }, // optional pagination
 );
 
-// data:  at most 20 rows ordered by ts_rank
-// total: total number of matching rows
-// page:  resolved (clamped) page: 1-indexed
-// limit: resolved (clamped) limit
+// data:  at most 20 rows, strongest match first
+// total: number of matching rows
+// page:  the page used (1-indexed)
+// limit: the limit used, clamped to pagination.maxLimit
 ```
 
-Without the pagination argument the entity's default page and limit still apply (page 1, `defaultLimit` rows), and the envelope reports the values that were used. Before 3.3.1 an omitted pagination returned every match while the envelope said `limit: 20`. The data and count queries run together.
+<PropsTable
+  props={{
+    searchTerm: { type: "string", required: true, description: "The text to match. It goes to plainto_tsquery('english', ...), so it is plain words, not tsquery syntax." },
+    searchColumns: { type: "string[]", required: true, description: "Column keys on the table. An empty list or an unknown name is a 400, and so is a column outside searchableColumns when that allowlist is set." },
+    pagination: { type: "PaginationOptions", description: "page and limit. Omitted, page 1 and pagination.defaultLimit (20 by default) apply, and the limit is clamped to pagination.maxLimit." },
+    options: { type: "SqlOperationOptions", description: "transaction to run inside, withDeleted / onlyDeleted for soft-deleted rows, and the tenant scope, as on findAll." },
+  }}
+/>
 
-Every name in the columns list must be a column key on the table. An unknown name, or an empty list, is a 400.
+The envelope always reports the page and limit that were used. Before 3.3.1 an omitted pagination returned every match while the envelope said `limit: 20`. The data and count queries run together in one `Promise.all`.
 
-The columns are passed to a Drizzle `sql` template that generates:
+## What SQL does it generate?
 
-```sql
-to_tsvector('english', "name") || to_tsvector('english', "email") || to_tsvector('english', "bio")
+The columns go into a Drizzle `sql` template as bound column references, joined with `||`:
+
+```sql accent=drizzle title="generated.sql"
+select * from users
+where to_tsvector('english', "name") || to_tsvector('english', "email") || to_tsvector('english', "bio")
   @@ plainto_tsquery('english', $1)
+  and "deleted_at" is null
+order by ts_rank(<same tsvector>, plainto_tsquery('english', $1)) desc, "id" asc
+limit 20 offset 0
 ```
 
-A `NULL` column contributes nothing to the vector, so a row still matches on its other columns.
+What that means for results:
 
-## Full-text search inside list endpoints
+- A `NULL` column contributes nothing to the vector, so a row still matches on its other columns.
+- The text search configuration is always `'english'`. It is not an option.
+- Rows are ordered by `ts_rank` descending, then by the primary key ascending, so rows with the same rank keep a stable order across pages.
+- With soft delete on, soft-deleted rows are left out of both `data` and `total`, as in `findAll` and `count`. A tenant scope applies the same way.
 
-Since `3.1.0`, `findAll` and `count` can also apply a search predicate through
-`options.search`. This is useful for list endpoints where search must compose
-with structured filters, pagination, sorting, relation filters, and the same
-`total` query:
+## Do I need to enable it or add an index?
 
-```ts
-const page = await users.findAll(
-  { status: 'active' },
-  { page: 1, limit: 20, sortBy: 'createdAt', sortOrder: 'desc' },
+You do not need to enable it. `fullTextSearch()` works on any PostgreSQL entity, and the `sql.enableFullTextSearch` flag is deprecated and has no effect.
+
+An index is your call, and it matters on large tables. Without one, PostgreSQL computes `to_tsvector` for every row on every search. Add a GIN index on the same expression, or a generated `tsvector` column; the [Drizzle guide to full-text search](https://orm.drizzle.team/docs/guides/postgresql-full-text-search) shows both on the schema side.
+
+## How do I add search to a filtered list endpoint?
+
+Use `options.search` with `mode: "fullText"` on `findAll` or `count`. The match then composes with your structured filters, pagination, sorting, relation filters and the `total` count:
+
+```ts title="users.service.ts"
+const page = await this.users.findAll(
+  { status: "active" },
+  { page: 1, limit: 20, sortBy: "createdAt", sortOrder: "desc" },
   {
     search: {
-      term: 'john doe',
-      columns: ['name', 'email', 'bio'],
-      mode: 'fullText',
+      term: "john doe",
+      columns: ["name", "email", "bio"],
+      mode: "fullText",
     },
   },
 );
 ```
 
-The `options.search` full-text mode is PostgreSQL-only and is not ranked. Use
-`fullTextSearch()` when search relevance should drive ordering; use
-`findAll(..., ..., { search })` when you need a normal list endpoint with search
-folded into its filtering and count behavior.
+The two differ in a few ways:
 
-## Ordering
+| | `fullTextSearch()` | `findAll` with `search.mode: "fullText"` |
+| --- | --- | --- |
+| Order | `ts_rank`, strongest match first | Your `sortBy`, not ranked |
+| Structured filters | No | Yes, plus relation filters |
+| Unknown column name | 400 | Skipped |
+| Empty term | Matches no rows | Adds no condition |
+| Dialect | PostgreSQL only | PostgreSQL only |
 
-Results are ordered by `ts_rank(...)` descending, then by the primary key ascending. The first result is the strongest match, and rows with the same rank keep a stable order across pages.
+Use `fullTextSearch()` when relevance should drive the order. Use `findAll(..., ..., { search })` when search is one more filter on a normal list. [Filtering with Drizzle in NestJS](/docs/filtering#how-do-i-add-a-search-box-to-a-list) lists every `search` option.
 
-## Limitations
+## What does it not do?
 
-- **No highlighting.** `ts_headline` isn't generated. If you need highlighted snippets, write a custom method.
-- **No multi-language documents per row.** The `to_tsvector` config name is fixed per call (defaults to `'english'`). For multi-language content, add a language column and use a raw Drizzle call.
-- **No fuzzy / prefix matching.** `plainto_tsquery` is the simplest of the `tsquery` constructors. Use `phraseto_tsquery` or `to_tsquery` for phrase / boolean queries via a custom method.
-- **MySQL is unsupported.** MySQL has `MATCH ... AGAINST` but the package doesn't generate dialect-specific full-text SQL.
+- **No highlighting.** `ts_headline` is not generated.
+- **One language.** The configuration is fixed to `'english'`, so content in other languages is stemmed as English.
+- **No phrase, boolean or prefix queries.** `plainto_tsquery` treats the term as plain words joined by AND. `phraseto_tsquery`, `websearch_to_tsquery` and `to_tsquery` need a custom method.
+- **No MySQL.** MySQL has `MATCH ... AGAINST`, but the package does not generate it.
 
-## When to use a custom method instead
+## How do I write a custom full-text query?
 
-For anything beyond "search a term across these text columns, rank by relevance, paginate," drop down to raw Drizzle:
+Drop down to Drizzle in a method on your service. The injected database is `this.config.db`:
 
-```ts accent=drizzle
-class UsersService extends SqlBaseCrudService<User> {
+```ts accent=drizzle title="users.service.ts"
+export class UsersService extends SqlBaseCrudService<User> {
   async findWithSnippet(term: string) {
     return this.config.db
       .select({
@@ -109,7 +124,29 @@ class UsersService extends SqlBaseCrudService<User> {
 }
 ```
 
-## Next
+A custom query skips what the service adds for you: add `isNull(users.deletedAt)` and any tenant condition yourself.
 
-- → [Filtering: structured filters plus `options.search`](/docs/filtering)
-- → [Defining services: custom methods that combine full-text with structured filters](/docs/defining-services)
+## Common questions
+
+<Accordions>
+  <Accordion title="Does fullTextSearch work on MySQL?">
+    No. It is PostgreSQL only and throws an error on any other dialect. Use `options.search` in its default `ilike` mode for a portable substring search.
+  </Accordion>
+  <Accordion title="Can I change the text search language?">
+    Not through the method: it always uses the `'english'` configuration. Write a custom Drizzle query for another language.
+  </Accordion>
+  <Accordion title="Are results ranked?">
+    `fullTextSearch()` orders by `ts_rank` descending, then by the primary key. `findAll` with `search.mode: "fullText"` filters on the same match but keeps your own sort.
+  </Accordion>
+  <Accordion title="Does full-text search return soft-deleted rows?">
+    No. With soft delete on, they are left out of both `data` and `total` unless you pass `withDeleted` or `onlyDeleted` in the options.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Filter />} title="Filtering with Drizzle in NestJS" href="/docs/filtering" description="Structured filters and options.search on findAll and count." />
+  <Card icon={<Boxes />} title="Defining services" href="/docs/defining-services" description="Add custom methods next to the inherited CRUD ones." />
+  <Card icon={<ShieldCheck />} title="Allowlists" href="/docs/allowlists" description="Limit which columns a client may search with searchableColumns." />
+</Cards>

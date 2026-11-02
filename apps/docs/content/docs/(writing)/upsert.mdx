@@ -1,58 +1,145 @@
 ---
-title: Upsert
-description: "upsert and massUpsert insert a row or update the one that already holds its unique key, in one statement: ON CONFLICT DO UPDATE on Postgres, ON DUPLICATE KEY UPDATE on MySQL."
+title: Upsert with Drizzle in NestJS
+description: Upsert rows with Drizzle in NestJS in one statement. upsert and massUpsert insert a row or update the one that holds its unique key.
+icon: GitMerge
 ---
 
-`upsert(dto, { conflictTarget, update })` inserts the row, or updates the existing row that already has the same unique key, in one statement. It returns the row as stored either way.
+To upsert with Drizzle in NestJS, call `upsert(dto, { conflictTarget })` on your service. It inserts the row, or updates the existing row that already holds the same unique key, in one statement, and returns the row as stored either way. On PostgreSQL that statement is `INSERT ... ON CONFLICT DO UPDATE`; on MySQL it is `INSERT ... ON DUPLICATE KEY UPDATE`. `massUpsert` does the same for many rows in one transaction.
 
-```ts
+<Callout title="The conflict target needs a unique constraint">
+  `conflictTarget` must name a column (or columns) with a unique constraint or unique index in the database. Without one, PostgreSQL refuses the `ON CONFLICT` clause.
+</Callout>
+
+## How do I upsert a row?
+
+Call `upsert` with the row and the unique column that decides "already exists":
+
+```ts title="users.sync.ts"
 const user = await users.upsert(
   { email: 'ada@example.com', name: 'Ada', role: 'admin' },
   { conflictTarget: 'email' },
 );
 ```
 
-On Postgres this is `INSERT ... ON CONFLICT (email) DO UPDATE SET name = excluded.name, role = excluded.role, ... RETURNING *`.
+On PostgreSQL this runs:
 
-## Options
-
-| Field | Default | Notes |
-| --- | --- | --- |
-| `conflictTarget` | the primary key | A column or a list of columns with a unique constraint or index. An unknown column is a 400. |
-| `update` | every column you sent, except the conflict target, the primary key and `createdAt` | The columns to overwrite when the row exists. `updatedAt` is included, so it moves on an update. |
-
-Pass `update: []` to keep the existing row untouched. The row still comes back, which makes `upsert` a get-or-create:
-
-```ts
-const tag = await tags.upsert({ name: 'urgent' }, { conflictTarget: 'name', update: [] });
+```sql accent=drizzle title="upsert.sql"
+INSERT INTO users (...) VALUES (...)
+ON CONFLICT (email) DO UPDATE SET name = excluded.name, role = excluded.role, ...
+RETURNING *
 ```
 
-## Which hooks run?
+The signature is `upsert(data, upsertOptions?, options?)`. The second argument is `UpsertOptions`, the third is the usual `SqlOperationOptions` (transaction, relations, counts).
 
-`validateCreate`, `beforeCreate` and `mapCreateDtoToEntity`, because the statement starts as an insert, and [`writableColumns`](/docs/allowlists) applies. The after hooks do not run, since the package cannot tell an insert from an update without an extra query.
+## What options does upsert take?
 
-## Does upsert work with scope, versions and relations?
+`UpsertOptions` has two fields, and both are optional:
 
-Yes. On a [scoped entity](/docs/multi-tenancy) the scope is written onto the row and sits in `ON CONFLICT DO UPDATE ... WHERE`, so a conflict with another tenant's row updates nothing and is a 404 (a 400 on MySQL, which has no such `WHERE`). The scope and [version](/docs/optimistic-locking) columns are never overwritten from the body; the version goes up by one when the row already existed. `options.relations` and `options.counts` load onto the returned row, and the `upsert` [events](/docs/events) fire when global hooks are on.
+<PropsTable
+  props={{
+    conflictTarget: { type: "string | string[]", default: "the primary key", description: "The unique column or columns that decide whether the row already exists. Use the key in your Drizzle table object. An unknown column is a 400. Ignored on MySQL." },
+    update: { type: "string[]", default: "every column you sent", description: "The columns to overwrite when the row exists. The default leaves out the conflict target, the primary key, createdAt, the version column and the scope columns. An unknown column is a 400." },
+  }}
+/>
 
-## Errors
+The default `update` list includes `updatedAt`, because the insert sets it, so the timestamp moves when an existing row is updated. `createdAt` keeps its original value.
 
-The same mapping as `create`. A unique violation on a different key is a 409, a value the column cannot hold is a 400, and a foreign key that points nowhere is a 400.
+## How do I get or create a row without changing it?
 
-```ts
+Pass `update: []`. The existing row stays as it is and still comes back, which turns `upsert` into a get-or-create:
+
+```ts title="tags.sync.ts"
+const tag = await tags.upsert(
+  { name: 'urgent' },
+  { conflictTarget: 'name', update: [] },
+);
+```
+
+With nothing to overwrite, the package sets the conflict target to its own value so that the database still returns the row. On an entity with a [version column](/docs/optimistic-locking), the version still goes up by one when the row existed.
+
+## Which hooks run on upsert?
+
+`validateCreate`, `beforeCreate` and `mapCreateDtoToEntity` run, because the statement starts as an insert, and [`writableColumns`](/docs/allowlists) applies to the body. The after hooks (`afterCreate`, `afterUpdate`) do not run: the package cannot tell an insert from an update without an extra query.
+
+With global hooks on, `upsert` raises one before and one after [event](/docs/events) with the operation name `upsert`.
+
+## Does upsert work with tenant scope, versions and relations?
+
+Yes, on PostgreSQL:
+
+| Feature | What upsert does |
+| --- | --- |
+| [Tenant scope](/docs/multi-tenancy) | Writes the scope onto the inserted row and adds it to `ON CONFLICT DO UPDATE ... WHERE`. A conflict with another tenant's row updates nothing and is a 404. |
+| [Version column](/docs/optimistic-locking) | Sets the version to 1 on insert and adds one on update. The version is never taken from the body. |
+| Scope and version columns | Never overwritten from the body, even if you list them in `update`. |
+| `options.relations`, `options.counts` | Loaded onto the returned row, the same as after `create`. See [Relations on writes](/docs/relations-on-writes). |
+
+## What errors can upsert return?
+
+Upsert maps driver errors the same way `create` does:
+
+| Cause | Status |
+| --- | --- |
+| A unique violation on a different key than the conflict target | 409 |
+| A value the column cannot hold (too long, wrong type, failed check) | 400 |
+| A foreign key that points at no row | 400 |
+| An unknown `conflictTarget` or `update` column | 400 |
+| On a scoped entity, the key belongs to another tenant | 404 |
+
+```ts title="items.sync.ts"
 // sku is unique too: moving row 1 onto row 2's sku is a 409
-await items.upsert({ id: 1, sku: 'A2', ... }, { conflictTarget: 'id' });
+await items.upsert({ id: 1, sku: 'A2', name: 'Lamp' }, { conflictTarget: 'id' });
 ```
 
-## Many rows at once
+The full mapping is on the [errors page](/docs/errors).
 
-`massUpsert(rows, upsertOptions, options?)` is one `INSERT ... ON CONFLICT` for the whole batch, in a transaction. When it fails, the failing items are named in a [`BulkOperationException`](/docs/bulk-operations#what-does-a-failed-bulk-call-return-over-http). Two rows of the same batch with the same conflict key are a 400 on Postgres ("the same key appears more than once in one upsert"), because one statement cannot update a row twice.
+## How do I upsert many rows at once?
 
-## MySQL
+Call `massUpsert(rows, upsertOptions?, options?)`. It sends one `INSERT ... ON CONFLICT` for the whole batch, inside a transaction:
 
-MySQL uses `ON DUPLICATE KEY UPDATE`, which fires on any unique key, so `conflictTarget` does not choose the key there. MySQL has no `RETURNING` either, so the package reads the rows back by `conflictTarget`: send a value for every conflict target column, otherwise it is a 400.
+```ts title="users.import.ts"
+const written = await users.massUpsert(
+  [
+    { email: 'ada@example.com', name: 'Ada' },
+    { email: 'bob@example.com', name: 'Bob' },
+  ],
+  { conflictTarget: 'email' },
+);
+```
 
-## Next
+When the statement fails, the failing items are named in a [`BulkOperationException`](/docs/bulk-operations#what-does-a-failed-bulk-call-return-over-http), each by its `index` in the input array, and nothing is written.
 
-- → [Bulk operations](/docs/bulk-operations)
-- → [Errors](/docs/errors)
+Two rows of the same batch with the same conflict key are a 400 on PostgreSQL ("the same key appears more than once in one upsert"), because one statement cannot update a row twice. Remove duplicates before you call it.
+
+## How does upsert differ on MySQL?
+
+MySQL uses `ON DUPLICATE KEY UPDATE`, and three things change:
+
+- **Any unique key triggers the update.** MySQL does not let you choose the key, so `conflictTarget` does not pick it there.
+- **The rows are read back.** MySQL has no `RETURNING`, so the package selects the rows by the `conflictTarget` columns after the write. Send a value for every conflict target column, otherwise the call is a 400.
+- **Scoped entities are refused.** `ON DUPLICATE KEY UPDATE` has no `WHERE`, so it cannot keep the update inside one tenant. Any upsert on a [scoped entity](/docs/multi-tenancy) is a 400 ("upsert on a scoped entity needs PostgreSQL") rather than a risk of overwriting another tenant's row.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="What does upsert use as the conflict target by default?">
+    The primary key. Pass `conflictTarget` to use another unique column, or a list of columns for a composite unique constraint.
+  </Accordion>
+  <Accordion title="Does upsert tell me whether it inserted or updated?">
+    No. It returns the row as stored in both cases, and the after hooks do not run, because telling the two apart would cost an extra query.
+  </Accordion>
+  <Accordion title="Can I upsert without overwriting the existing row?">
+    Yes. Pass `update: []` and the existing row comes back unchanged, which works as a get-or-create.
+  </Accordion>
+  <Accordion title="Does upsert work on a multi-tenant entity?">
+    On PostgreSQL, yes: the scope is written onto new rows and a conflict with another tenant's row is a 404. On MySQL an upsert on a scoped entity is a 400.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Layers />} title="Bulk operations" href="/docs/bulk-operations" description="massCreate, massUpdate and the other set writes, and the 400 body that names each failed item." />
+  <Card icon={<Lock />} title="Optimistic locking" href="/docs/optimistic-locking" description="Add a version column so a stale write is a 409 instead of a lost update." />
+  <Card icon={<ShieldCheck />} title="Errors" href="/docs/errors" description="Every exception the package throws and the HTTP status it maps to." />
+</Cards>

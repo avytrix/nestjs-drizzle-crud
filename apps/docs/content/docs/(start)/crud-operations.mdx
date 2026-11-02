@@ -1,0 +1,309 @@
+---
+title: CRUD operations with Drizzle in NestJS
+description: The Drizzle ORM NestJS CRUD methods every service inherits, from find and findAll to create, update, softDelete and mass writes, with errors.
+icon: Database
+---
+
+For Drizzle ORM NestJS CRUD, every service that extends `SqlBaseCrudService` inherits the same
+methods: `find`, `findOne`, `findAll`, `findByCursor`, `count` and `exists` to read; `create`,
+`update` and `upsert` to write; `softDelete`, `restore`, `delete` and `forceDelete` to remove; and
+`mass*` versions that write a list in one transaction. Each method is typed against your row and
+DTO types and throws NestJS HTTP exceptions, so a controller can return its result directly.
+
+<Callout title="Missing rows: reads return, writes throw">
+  `find` and `findOne` return `null` for a missing row, and your controller decides whether that
+  is a 404. `update`, `softDelete`, `restore` and `delete` throw `EntityNotFoundException`, which
+  NestJS answers with a 404 on its own.
+</Callout>
+
+## Which methods does a service have?
+
+These are the public methods of `SqlBaseCrudService<T, CreateDto, UpdateDto, FilterDto>`. `T` is
+the row type, and every `options` argument is the `SqlOperationOptions` object listed in
+[the options table](#which-options-does-every-method-take).
+
+### Reads
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `find(id, options?)` | `Promise<T \| null>` | By primary key. Hides soft deleted rows unless `withDeleted`. |
+| `findOne(where, options?)` | `Promise<T \| null>` | First row matching `where`: exact, case-sensitive values, `null` for `IS NULL`, or an operator object. `undefined` values are skipped. |
+| `findAll(filters?, pagination?, options?)` | `Promise<CrudPage<T>>` | `{ data, total, page, limit }`. With `withCount: false`, `total` is `null` and `hasMore` is set. |
+| `findByCursor(filters?, pagination?, options?)` | `Promise<CursorPage<T>>` | `{ data, limit, nextCursor }`, plus `total` when you pass `count: true`. See [Cursor pagination](/docs/cursor-pagination). |
+| `count(filters?, options?)` | `Promise<number>` | Same filters and soft delete rule as `findAll`. |
+| `countBy(column, filters?, options?)` | `Promise<CountByRow[]>` | `[{ value, count }]`, largest group first. See [Aggregates](/docs/aggregates). |
+| `exists(id, options?)` | `Promise<boolean>` | Selects only the primary key. A soft deleted row counts as missing. |
+| `fullTextSearch(term, columns, pagination?, options?)` | `Promise<{ data, total, page, limit }>` | PostgreSQL only, ranked by `ts_rank`. See [Full-text search](/docs/full-text-search). |
+
+### Writes
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `create(dto, options?)` | `Promise<T>` | Runs `validateCreate`, `beforeCreate`, the insert, then `afterCreate`. Sets the timestamps. |
+| `update(id, dto, options?)` | `Promise<T>` | Checks the row exists, runs `validateUpdate` and `beforeUpdate`, updates, then `afterUpdate`. Sets `updatedAt`. |
+| `upsert(dto, upsert?, options?)` | `Promise<T>` | Insert, or update on a conflict. See [Upsert](/docs/upsert). |
+| `softDelete(id, options?)` | `Promise<boolean>` | Sets the soft delete column. Needs soft delete on. |
+| `restore(id, options?)` | `Promise<T>` | Clears the soft delete column and returns the row. Needs soft delete on. |
+| `delete(id, options?)` | `Promise<boolean>` | Hard delete of a live row. |
+| `forceDelete(id, options?)` | `Promise<boolean>` | Hard delete whether the row is soft deleted or not. |
+| `attach`, `detach`, `sync` | `Promise<T>` | Change many-to-many links. See [Relations on writes](/docs/relations-on-writes). |
+
+### Mass writes
+
+Every mass write runs in one transaction and writes all rows or none.
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `massCreate(dtos, options?)` | `Promise<T[]>` | One multi-row `INSERT` (row by row on MySQL when the database generates the keys). |
+| `massUpdate(ids, dto, options?)` | `Promise<T[]>` | One `UPDATE` for every id, unless `beforeUpdate` returns different data per id. Rows come back in `ids` order. |
+| `massUpsert(dtos, upsert?, options?)` | `Promise<T[]>` | One upsert statement for the batch. |
+| `massSoftDelete(ids, options?)` | `Promise<boolean>` | Needs soft delete on. |
+| `massRestore(ids, options?)` | `Promise<T[]>` | Needs soft delete on. |
+| `massDelete(ids, options?)` | `Promise<boolean>` | Hard delete of live rows. |
+| `massForceDelete(ids, options?)` | `Promise<boolean>` | Hard delete, soft deleted or not. |
+
+Duplicate ids in a mass update, delete or restore are written once. Pass `bulkMode: "perItem"` to run each item through the single-row
+method in its own savepoint instead. [Bulk operations](/docs/bulk-operations) covers both modes.
+
+### Helpers
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `parseQuery(query, options?)` | `ParsedCrudQuery` | Turns `@Query()` into `filters`, `pagination` and `options`. See [Query parsing](/docs/query-parsing). |
+| `parseId(raw)` | `Promise<unknown>` | Parses a route id like the matching Nest pipe would. |
+| `idKind()` | `"int" \| "bigint" \| "uuid" \| "string"` | The primary key kind, read from the Drizzle column. |
+
+`executeSqlTransaction` is `protected`: call it from a method on your service, not from a
+controller. See [Transactions](/docs/transactions).
+
+## How do I use them in a service and a controller?
+
+Call the inherited methods directly, and add your own methods to the service when a route needs
+more than one call. This service adds two methods on top of the inherited ones:
+
+```ts title="users/users.service.ts"
+import { type CrudFilter, SqlBaseCrudService } from "nestjs-drizzle-crud";
+import type { users } from "../db/schema";
+import type { CreateUserDto, UpdateUserDto } from "./users.dto";
+
+export type User = typeof users.$inferSelect;
+
+export class UsersService extends SqlBaseCrudService<
+  User,
+  CreateUserDto,
+  UpdateUserDto,
+  CrudFilter
+> {
+  findByEmail(email: string) {
+    return this.findOne({ email });
+  }
+
+  countCreatedSince(since: Date) {
+    return this.count({ created_at: { gte: since } });
+  }
+}
+```
+
+```ts accent=nest title="users/users.controller.ts"
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  NotFoundException,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+} from "@nestjs/common";
+import { CreateUserDto, UpdateUserDto } from "./users.dto";
+import { UsersService } from "./users.service";
+
+@Controller("users")
+export class UsersController {
+  constructor(private readonly users: UsersService) {}
+
+  @Get()
+  list(@Query() query: Record<string, unknown>) {
+    const q = this.users.parseQuery(query);
+    return this.users.findAll(q.filters, q.pagination, q.options);
+  }
+
+  @Get(":id")
+  async get(@Param("id", ParseIntPipe) id: number) {
+    const user = await this.users.find(id, { relations: ["posts"] });
+    if (!user) throw new NotFoundException(`User ${id} not found`);
+    return user;
+  }
+
+  @Post()
+  create(@Body() dto: CreateUserDto) {
+    return this.users.create(dto);
+  }
+
+  @Post("bulk")
+  createMany(@Body() dtos: CreateUserDto[]) {
+    return this.users.massCreate(dtos);
+  }
+
+  @Patch(":id")
+  update(@Param("id", ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
+    return this.users.update(id, dto);
+  }
+
+  @Delete(":id")
+  remove(@Param("id", ParseIntPipe) id: number) {
+    return this.users.softDelete(id);
+  }
+
+  @Post(":id/restore")
+  @HttpCode(200)
+  restore(@Param("id", ParseIntPipe) id: number) {
+    return this.users.restore(id);
+  }
+}
+```
+
+`relations: ["posts"]` only works once the entity declares a `posts` relation; see
+[Relations](/docs/relations). Drop it if yours has none.
+
+## What does findAll return?
+
+`findAll` returns one page and the total count in a `{ data, total, page, limit }` envelope. It
+runs the data query and the `COUNT(*)` query together, so a list costs two queries, plus one
+batched query per eager loaded relation that is not a joined belongs-to.
+
+```ts title="list.ts"
+const page = await users.findAll(
+  { name: { iContains: "ali" } },
+  { page: 2, limit: 10, sortBy: ["-created_at", "name"] },
+);
+// { data: User[], total: 37, page: 2, limit: 10 }
+```
+
+<PropsTable
+  props={{
+    data: { type: "T[]", description: "The rows of this page, with any eager loaded relations attached." },
+    total: { type: "number | null", description: "Rows matching the filters across all pages. null when you passed withCount: false." },
+    page: { type: "number", description: "The page actually served. A missing, non-numeric or lower than 1 page becomes 1." },
+    limit: { type: "number", description: "The page size actually used: the default (20) when missing, clamped to between 1 and maxLimit (100 by default)." },
+    hasMore: { type: "boolean", description: "Only present with withCount: false. True when another page follows, found by fetching one extra row." },
+  }}
+/>
+
+The `pagination` argument takes these keys:
+
+<PropsTable
+  props={{
+    page: { type: "number", default: "1", description: "1-based page number." },
+    limit: { type: "number", default: "20", description: "Page size, capped at pagination.maxLimit." },
+    sortBy: { type: "string | Array<string | SortColumn>", description: "A column, a list such as [\"-created_at\", \"name\"] (a - prefix sorts descending), or { column, order } objects. \"region.name\" sorts by a belongs-to column." },
+    sortOrder: { type: '"asc" | "desc"', default: '"desc"', description: "Direction for a single sortBy string with no prefix. Anything else is a 400." },
+    withCount: { type: "boolean", default: "true", description: "false skips the COUNT(*) query: total is null and hasMore is set." },
+  }}
+/>
+
+With no `sortBy`, rows follow the entity's `defaultSort`, and the primary key is always added
+last so pages never overlap. Note the `sortOrder` default: `sortBy: "name"` on its own sorts
+descending. [Pagination and sorting](/docs/pagination-sorting) covers every rule, and
+[Filtering](/docs/filtering) covers the `filters` object.
+
+## Which exceptions does each method throw?
+
+Each exception extends a NestJS HTTP exception, so the default exception filter returns the right
+status without any setup. They come from
+<Ext to="github">`src/exceptions/crud.exceptions.ts`</Ext>.
+
+| Method | Exception | Status | When |
+| --- | --- | --- | --- |
+| `find`, `findAll`, `count`, `exists` | `ValidationFailedException` | 400 | A value the column type cannot parse, such as `"abc"` for an integer id. |
+| `findOne`, `findAll`, `count` | `BadRequestException` | 400 | An unknown column or operator, a bad `sortOrder`, a name outside an allowlist, or a `findOne` with no usable condition. |
+| `create`, `update`, `upsert` | `DuplicateEntityException` | 409 | A unique constraint is violated. |
+| `create`, `update`, `upsert` | `ValidationFailedException` | 400 | A value too long, out of range or failing a check, a column outside `writableColumns`, or an update with no columns to set. |
+| `create`, `update`, `upsert` | `ForeignKeyViolationException` | 400 | A foreign key points at a row that does not exist. |
+| `update`, `softDelete`, `restore`, `delete`, `forceDelete` | `EntityNotFoundException` | 404 | No row with that id in scope. For `delete`, a soft deleted row also counts as missing. |
+| `update`, `softDelete`, `restore`, `delete` | `StaleVersionException` | 409 | Optimistic locking is on and the row is at another version. |
+| `delete`, `forceDelete` | `EntityInUseException` | 409 | Other rows still reference this one. |
+| `upsert` | `EntityNotFoundException` | 404 | On a scoped entity, the conflicting row belongs to another tenant. |
+| Every `mass*` method | `BulkOperationException` | 400 | One or more items failed. `errors` lists each one with the status it would have had alone; nothing is written. |
+| Every method on a scoped entity | `MissingScopeException` | 403 | The scope needs a context value, such as a tenant id, that the call does not have. |
+
+Two failures are plain `Error`s, which NestJS turns into a 500: `softDelete`, `restore`,
+`massSoftDelete` and `massRestore` on an entity with soft delete off, and `fullTextSearch` on
+MySQL (or `search.mode: "fullText"` there). Both are configuration mistakes, not bad input. [Errors](/docs/errors) shows the response
+bodies and how to write a custom filter.
+
+## How do delete, softDelete and forceDelete differ?
+
+`softDelete` hides a row by setting its `deleted_at` column, `delete` removes a live row, and
+`forceDelete` removes a row whether it is soft deleted or not.
+
+| You call | Row is live | Row is soft deleted |
+| --- | --- | --- |
+| `softDelete(id)` | Sets `deleted_at`, returns `true` | 404 |
+| `restore(id)` | Returns the row, `deleted_at` stays `null` | Clears `deleted_at`, returns the row |
+| `delete(id)` | Removes it, returns `true` | 404 |
+| `forceDelete(id)` | Removes it, returns `true` | Removes it, returns `true` |
+
+Reads skip soft deleted rows by default. Pass `withDeleted: true` to include them, or
+`onlyDeleted: true` for a trash view. [Soft delete](/docs/soft-delete) covers the column setting
+and the trash routes.
+
+## Which options does every method take?
+
+The last argument of every method is `SqlOperationOptions`. A method ignores the keys that do not
+apply to it.
+
+<PropsTable
+  props={{
+    transaction: { type: "Drizzle transaction", description: "Run the call inside a transaction you opened. See Transactions." },
+    relations: { type: "string[]", description: "Relations to eager load, dotted for nested levels: [\"region\", \"states.cities\"]." },
+    select: { type: "string[]", description: "Columns to return instead of all of them. A dotted entry narrows a relation: \"region.code\"." },
+    search: { type: "{ term, columns, mode? }", description: "A text search ANDed with the filters. mode is \"ilike\" (default) or \"fullText\"." },
+    withDeleted: { type: "boolean", default: "false", description: "Include soft deleted rows." },
+    onlyDeleted: { type: "boolean", default: "false", description: "Return only soft deleted rows. A 400 when soft delete is off." },
+    counts: { type: "string[] | Record<string, true | CrudFilter>", description: "Relation counts put on each row under _count." },
+    lock: { type: '"update" | "share" | "none"', description: "FOR UPDATE or FOR SHARE on the read, PostgreSQL only. Use it inside a transaction. See Row locks." },
+    forNoKeyUpdate: { type: "boolean", description: "Take FOR NO KEY UPDATE on the read, PostgreSQL only. Wins over lock." },
+    "hooks.skipBefore": { type: "boolean", default: "false", description: "Skip the before* hook of this call." },
+    "hooks.skipAfter": { type: "boolean", default: "false", description: "Skip the after* hook of this call." },
+    bulkMode: { type: '"set" | "perItem"', default: '"set"', description: "Mass writes: one statement for the batch, or the single-row method per item in a savepoint." },
+    expectedVersion: { type: "number", description: "Optimistic locking: the version the caller last read. Another version is a 409." },
+    expectedVersions: { type: "Record<string, number>", description: "Optimistic locking for mass writes, keyed by id as a string." },
+    skipAllowlists: { type: "boolean", default: "false", description: "Ignore the entity's allowlists for a trusted server-side call." },
+    skipScope: { type: "boolean", default: "false", description: "Run a trusted server-side call without the tenant scope." },
+    context: { type: "CrudContextValue", description: "The context a function scope reads. Defaults to CrudContext.current()." },
+    skipEvents: { type: "boolean", default: "false", description: "Do not raise module-level events for this call." },
+  }}
+/>
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Why does find return null instead of throwing a 404?">
+    A read that finds nothing is not an error in the service, so `find` and `findOne` return `null` and the controller decides. The write methods throw `EntityNotFoundException`, which becomes a 404.
+  </Accordion>
+  <Accordion title="What does findAll return?">
+    An object with `data`, `total`, `page` and `limit`. `page` and `limit` are the values actually used after clamping, and with `withCount: false` the `total` is `null` and `hasMore` is added.
+  </Accordion>
+  <Accordion title="Can I call delete on a soft deleted row?">
+    No, `delete` treats a soft deleted row as missing and throws a 404. Use `forceDelete` to remove a row whether it is soft deleted or not.
+  </Accordion>
+  <Accordion title="Do mass writes stop at the first failure?">
+    No. They check every item, then throw one `BulkOperationException` that lists each failed item with its status, and the transaction writes nothing.
+  </Accordion>
+  <Accordion title="Can I call executeSqlTransaction from a controller?">
+    No, it is a protected method. Add a method to your service that calls it, and call that method from the controller.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Filter />} title="Filtering" href="/docs/filtering" description="Operators, groups and relation filters for findAll, findByCursor and count." />
+  <Card icon={<ListOrdered />} title="Pagination and sorting" href="/docs/pagination-sorting" description="Page sizes, limits, multi-column and relation sorts, and skipping the count." />
+  <Card icon={<Trash2 />} title="Soft delete" href="/docs/soft-delete" description="The deleted_at column, trash views, restore and purge." />
+  <Card icon={<Layers />} title="API reference" href="/docs/api" description="Every signature and type in one place." />
+</Cards>

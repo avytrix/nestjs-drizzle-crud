@@ -1,103 +1,183 @@
 ---
-title: Primary keys
-description: "serial, int, bigint, bigserial, and uuid: RETURNING vs insertId, and the ParseIntPipe warning."
+title: Drizzle UUID primary keys in NestJS
+description: Use a Drizzle uuid primary key in NestJS, or serial and bigint. The key type comes from the column; on MySQL you send the uuid on create.
+icon: KeyRound
 ---
 
-Each entity names its primary key in the `forFeature` config:
+A Drizzle uuid primary key works in NestJS with no extra config: declare `uuid('id').primaryKey().defaultRandom()` and the service reads the key type from the Drizzle column. Serial, integer and bigint keys work the same way. The only setting is `primaryKey`, the key of the column, which defaults to `id`. On MySQL, which has no `RETURNING`, send the uuid in the create body so the service can read the new row back.
 
-| Field | Default | Notes |
-| --- | --- | --- |
-| `primaryKey` | `'id'` | The key of the primary key column in your Drizzle table object. |
-| `primaryKeyType` | `'serial'` | **Deprecated, no effect.** Nothing reads it: the key type comes from the Drizzle column. Still accepted so existing configs compile; removed in the next major version. |
+<Callout type="warn" title="Do not use ParseIntPipe on uuid routes">
+  With a uuid key, route params are strings, and `@Param('id', ParseIntPipe)` rejects every valid
+  request with a 400. Use `ParseUUIDPipe`, or `service.parseId(raw)`, which picks the right check for
+  the key column.
+</Callout>
 
-The primary key is also the last `ORDER BY` column on every `findAll`, which keeps offset pagination stable. See [Pagination & sorting](/docs/pagination-sorting#why-does-every-query-end-with-the-primary-key).
+<PropsTable
+  props={{
+    primaryKey: { type: "string", default: '"id"', description: "The key of the primary key column in your Drizzle table object." },
+    primaryKeyType: { type: '"serial" | "bigserial" | "int" | "bigint" | "uuid"', default: '"serial"', description: "Deprecated, no effect. The key type comes from the Drizzle column. Still accepted so existing configs compile; removed in the next major version." },
+  }}
+/>
 
-## auto-increment (serial / int / bigint / bigserial)
+The primary key is also the last `ORDER BY` column of every `findAll`, which keeps offset
+pagination stable when other sort columns tie. See
+[pagination and sorting](/docs/pagination-sorting#why-does-every-query-end-with-the-primary-key).
 
-The default. Use this for any numeric primary key, regardless of size:
+## How do I use a uuid primary key?
 
-```ts
-// serial: int4, default
-{ service: UsersService, table: users }
+<Steps>
 
-// bigserial: int8, same config
-{ service: EventsService, table: events }
-```
+<Step>
 
-On PostgreSQL the created row is returned via `RETURNING`; on MySQL the driver fills in `insertId` and the service re-reads the row. Both code paths produce the same `Promise<T>` result.
-
-## uuid
+### Declare the column
 
 ```ts accent=drizzle title="db/schema.ts"
-import { pgTable, uuid, varchar } from 'drizzle-orm/pg-core';
+import { pgTable, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
 
 export const tags = pgTable('tags', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: varchar('name', { length: 100 }).notNull().unique(),
+  deleted_at: timestamp('deleted_at', { withTimezone: true }),
 });
 ```
 
+</Step>
+
+<Step>
+
+### Register the service
+
 ```ts accent=nest title="tags/tags.module.ts"
-{
-  service: TagsService,
-  table: tags,
-  config: { primaryKey: 'id' },
-}
-```
-
-### PostgreSQL
-
-Works fully. The created row is returned via `RETURNING` with the DB-generated UUID.
-
-### MySQL
-
-MySQL has no `RETURNING`. The package needs to know the UUID to re-read the row. **Supply the UUID in your create payload**. The service will use it as the lookup key:
-
-```ts
-const newTag = await tagsService.create({ id: crypto.randomUUID(), name: 'urgent' });
-```
-
-Auto-increment keys on MySQL continue to use the driver's `insertId` automatically. Only UUIDs require the explicit value.
-
-<Callout type="warn" title="Don't use ParseIntPipe on uuid routes">
-  With UUID primary keys, route params are strings. `@Param('id', ParseIntPipe)` will reject every valid request with a 400. Use either no pipe or `ParseUUIDPipe`:
-
-  ```ts accent=nest
-  @Get(':id')
-  find(@Param('id', ParseUUIDPipe) id: string) {
-    return this.tags.find(id);
-  }
-  ```
-</Callout>
-
-## Composite primary keys
-
-Not supported out of the box. The package assumes a single-column primary key on every CRUD method (`find(id)`, `update(id, ...)`, etc.). For composite keys, write a custom service method that takes a structured `where` clause and uses raw Drizzle.
-
-## Mixed primary-key strategies
-
-Different entities can use different key types with no extra config. The type comes from each table's Drizzle column:
-
-```ts accent=nest
 DrizzleCrudModule.forFeature([
-  { service: UsersService, table: users },   // serial
-  { service: TagsService, table: tags },     // uuid
-  { service: EventsService, table: events }, // bigserial
+  { service: TagsService, table: tags, config: { timestamps: undefined } },
 ])
 ```
 
-A key that is not named `id` still needs `config: { primaryKey: '<key>' }`.
+`primaryKey` defaults to `'id'`, so a uuid column under that key needs nothing more. This table has
+no timestamp columns, so the entity turns [timestamps](/docs/timestamps) off.
 
-The CRUD methods on each service are typed against the right column shape automatically.
+</Step>
 
-## Choosing between serial and uuid
+<Step>
 
-- **`serial`**. Simpler, smaller index, faster joins. Predictable for debugging.
-- **`uuid`**. Safer for distributed systems (no auto-increment collisions when merging data), safer for public-facing IDs (no enumeration), but larger index and slightly slower joins.
+### Parse the route param as a uuid
 
-For internal entities (join tables, audit logs), `serial` is usually fine. For entities that get exposed in URLs or APIs to other systems, `uuid` is the safer default.
+```ts accent=nest title="tags/tags.controller.ts"
+@Get(':id')
+find(@Param('id', ParseUUIDPipe) id: string) {
+  return this.tags.find(id);
+}
+```
 
-## Next
+</Step>
 
-- → [Soft delete: independent of primary key, but the restore() return type depends on it](/docs/soft-delete)
-- → [Defining services: custom methods that take advantage of the typed PK](/docs/defining-services)
+</Steps>
+
+### On PostgreSQL
+
+It works fully. `create` inserts with `RETURNING` and hands back the row with the uuid the database
+generated.
+
+### On MySQL
+
+MySQL has no `RETURNING`, so after the insert the service reads the row back by its key. For an
+auto-increment key it uses the driver's `insertId`. A uuid has no `insertId`, so supply the value in
+the create body and the service looks the row up by it:
+
+```ts title="tags/tags.seed.ts"
+const tag = await tagsService.create({ id: crypto.randomUUID(), name: 'urgent' });
+```
+
+Only uuid and other non-auto-increment keys need this. Auto-increment keys on MySQL keep using
+`insertId`.
+
+## How do I use an auto-increment key?
+
+Declare it in Drizzle and register the service. Nothing in the config depends on the column type:
+
+```ts accent=nest title="app.module.ts"
+DrizzleCrudModule.forFeature([
+  { service: UsersService, table: users },   // serial: int4
+  { service: EventsService, table: events }, // bigserial: int8
+])
+```
+
+On PostgreSQL the created row comes back through `RETURNING`; on MySQL the driver reports
+`insertId` and the service reads the row back. Both return the same `Promise<T>`.
+
+## How do I parse the id route param?
+
+Call `service.parseId(raw)`. It applies the same check a Nest pipe would, chosen from the key
+column, and throws a 400 on bad input. `service.idKind()` tells you which one applies.
+
+| `idKind()` | Key column | `parseId` does |
+| --- | --- | --- |
+| `"int"` | integer, serial, or a bigint in `number` mode | `ParseIntPipe` |
+| `"bigint"` | bigint or bigserial in `bigint` mode | Checks the digits and returns a `BigInt` |
+| `"uuid"` | uuid | `ParseUUIDPipe` |
+| `"string"` | anything else, including numeric and decimal | Returns the string as is |
+
+The [controller factory](/docs/controller-factory) uses the same logic for its `:id` routes.
+
+## What if the key is not named id?
+
+Set `primaryKey` to the key of the column in your Drizzle table object:
+
+```ts accent=nest title="app.module.ts"
+DrizzleCrudModule.forFeature([
+  { service: AccountsService, table: accounts, config: { primaryKey: 'uid' } },
+])
+```
+
+Every method that takes an `id` (`find`, `update`, `softDelete`, `restore`, `delete` and the mass
+variants) matches against that column.
+
+## Can different entities use different key types?
+
+Yes. Each service reads its key type from its own table, so serial, bigserial and uuid keys can sit
+side by side in one `forFeature` call with no extra config. The methods accept the id as `any`, so
+check the type at the route with a pipe or `parseId`.
+
+## Are composite primary keys supported?
+
+No. Every CRUD method assumes a single-column key (`find(id)`, `update(id, ...)`). For a table with
+a composite key, write a custom service method that builds the `where` clause with raw Drizzle on
+`this.config.db`. See [Define a NestJS Drizzle CRUD service](/docs/defining-services#how-do-i-add-custom-methods).
+
+## Serial or uuid?
+
+| | `serial` / `bigserial` | `uuid` |
+| --- | --- | --- |
+| Index size | Smaller | Larger |
+| Joins | Faster | Slightly slower |
+| Debugging | Easy to read and compare | Harder to read |
+| Merging data from several databases | Keys can collide | No collisions |
+| Exposed in URLs | Easy to guess the next id | Not guessable |
+
+For internal tables (join tables, audit logs), `serial` is usually fine. For rows whose ids appear
+in URLs or in other systems, `uuid` is the safer default.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Do I need to configure anything for a uuid primary key?">
+    No, not when the column key is `id`. The service reads the key type from the Drizzle column. `primaryKeyType` is deprecated and has no effect.
+  </Accordion>
+  <Accordion title="Why does my uuid route return 400?">
+    The route probably uses `ParseIntPipe`. Use `ParseUUIDPipe`, or call `service.parseId(raw)`, which picks the check from the key column.
+  </Accordion>
+  <Accordion title="Do uuid keys work on MySQL?">
+    Yes, if you send the uuid in the create body. MySQL has no `RETURNING`, so the service reads the new row back by that value.
+  </Accordion>
+  <Accordion title="Are composite primary keys supported?">
+    No. The CRUD methods take a single-column key. Write a custom method with raw Drizzle for a table with a composite key.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Boxes />} title="Define a NestJS Drizzle CRUD service" href="/docs/defining-services" description="The service class and where custom methods go." />
+  <Card icon={<Code />} title="Controller factory" href="/docs/controller-factory" description="Generated routes that parse the id for you." />
+  <Card icon={<Layers />} title="Drizzle relations in NestJS" href="/docs/relations" description="Foreign keys, eager loading and relation filters." />
+</Cards>

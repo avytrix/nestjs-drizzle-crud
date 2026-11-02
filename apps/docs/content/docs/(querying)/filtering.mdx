@@ -1,192 +1,219 @@
 ---
-title: Filtering
-description: "Build filter objects for findAll() and count(): bare values, arrays, operators such as gte, between, notIn and contains, or / and / not groups, and relation filters."
+title: Filtering with Drizzle in NestJS
+description: Drizzle filtering in NestJS with findAll and count. Pass exact values, arrays, operators such as gte, between and contains, and or, and, not groups.
+icon: Funnel
 ---
 
-`findAll(filters)` and `count(filters)` accept a plain object keyed by column name. `null` and `undefined` values are skipped, so a query DTO with empty fields can go straight in. A key that is not a column or a configured relation is a 400 (`BadRequestException`), the same as an unknown `sortBy`.
+Drizzle filtering in NestJS works through one plain object: `findAll(filters)` and `count(filters)` take an object keyed by column name, and the package compiles it to a Drizzle `WHERE`. A bare value is an exact match, an array is `IN (...)`, and an object of operators such as `gte`, `between` or `contains` covers everything else. Keys are ANDed, `or`, `and` and `not` group them, and an unknown key is a 400.
 
-## Bare values
+<Callout title="Keys are Drizzle keys">
+  A filter key is the key of the column in your Drizzle table object (`createdAt`), not the SQL
+  column name (`created_at`). The examples on this page use a `users` table served by
+  `UsersService`, with a belongs-to `organization` relation and a has-many `posts` relation.
+</Callout>
 
-```ts
-await service.findAll({
-  status: 'active',           // string: exact match (case-insensitive on text columns)
-  isVerified: true,            // boolean: equality
-  organizationId: 42,          // number: equality
-  role: ['admin', 'editor'],   // array: IN (...)
-  createdAt: new Date('2025-01-01T00:00:00Z'), // Date: equality
+## How do I filter by a column value?
+
+Pass the value under the column key. `null` and `undefined` values are skipped, so a query DTO with empty fields can go straight in.
+
+```ts title="users.service.ts"
+await this.users.findAll({
+  status: "active", // string: exact match (case-insensitive on text columns)
+  isVerified: true, // boolean: equality
+  organizationId: 42, // number: equality
+  role: ["admin", "editor"], // array: IN (...)
+  createdAt: new Date("2025-01-01T00:00:00Z"), // Date: equality
 });
+```
+
+`count` takes the same object, so a list and its total always agree:
+
+```ts title="users.service.ts"
+const active = await this.users.count({ status: "active" });
 ```
 
 ### Can I pass query string values as strings?
 
-Yes. HTTP query values always arrive as strings, and the package handles that per column type:
+Yes. HTTP query values always arrive as strings, and the package handles them by column type:
 
-- **Text columns** (`text`, `varchar`, `char`) compare case-insensitively with `lower(column) = lower(value)` when `sql.caseSensitive` is `false`, the default.
-- **Integer, uuid, enum and other non-text columns** compare with a plain `=`, and Postgres casts the string to the column type. `{ author_id: '1' }` matches `author_id = 1`.
-- **Date and timestamp columns** turn the string into a `Date` first, so `{ createdAt: { gte: '2025-01-01' } }` works. A string that is not a date is a 400.
+| Column | What a string does |
+| --- | --- |
+| `text`, `varchar`, `char` | Compared with `lower(column) = lower(value)` while `sql.caseSensitive` is `false`, the default. |
+| integer, uuid, enum and other non-text columns | Compared with a plain `=`, and PostgreSQL casts the string to the column type. `{ organizationId: "1" }` matches `organization_id = 1`. |
+| date and timestamp (date mode) | Turned into a `Date` first, so `{ createdAt: { gte: "2025-01-01" } }` works. A string that is not a date is a 400. |
 
-A value the column cannot hold, such as `'abc'` for an integer or an enum label that does not exist, is a 400 too, never a raw 500.
+A value the column cannot hold, such as `"abc"` for an integer or an enum label that does not exist, is a 400 too, never a raw 500. To coerce a whole query string up front (numbers, booleans, bigints, dates), use [`parseQuery`](/docs/query-parsing).
 
-<Callout type="warn" title="Strings are exact, not partial">
-  A bare string is an **exact** match. On a text column with
-  `sql.caseSensitive` set to `false` (the default) the package compiles it to
-  `lower(column) = lower(value)`,
-  so the match is case-insensitive and `%` / `_` / `\` in the value are
-  treated as literal data, never wildcards. For partial / pattern
-  matching, use the explicit `ilike` operator with your own `%`
-  wildcards:
-
-  ```ts
-  await service.findAll({ name: { startsWith: 'jo' } }); // starts with "jo"
-  await service.findAll({ name: { contains: 'doe' } });  // contains "doe"
-  await service.findAll({ name: { ilike: 'jo%n' } });    // your own pattern
-  ```
-
-  `startsWith`, `endsWith` and `contains` escape `%`, `_` and `\` for you,
-  so `{ contains: '50%' }` matches the text "50%".
+<Callout type="warn" title="A bare string is an exact match, not a partial one">
+  On a text column `{ name: "jo" }` compiles to `lower(name) = lower('jo')`. The match ignores
+  case, and `%`, `_` and `\` in the value are literal data, never wildcards. For a partial match
+  use `startsWith`, `endsWith` or `contains` (which escape those characters for you, so
+  `{ contains: "50%" }` matches the text "50%"), or `like` / `ilike` with your own pattern.
 </Callout>
 
-## Operator object
+```ts title="users.service.ts"
+await this.users.findAll({ name: { startsWith: "jo" } }); // starts with "jo"
+await this.users.findAll({ name: { contains: "doe" } }); // contains "doe"
+await this.users.findAll({ name: { ilike: "jo%n" } }); // your own pattern
+```
 
-For anything beyond equality, wrap the value in an object with operator keys:
+## How do I use operators like gte, between and contains?
 
-```ts
-await service.findAll({
-  age: { gte: 18, lt: 65 },       // 18 <= age < 65
-  email: { neq: 'system@example.com' },    // not the system account
-  name: { ilike: 'jo%' },         // pattern match: you supply the wildcards
-  archivedAt: { isNull: true },    // archivedAt IS NULL
-  publishedAt: { isNull: false },  // publishedAt IS NOT NULL
-  state: { name: 'Karnataka' },    // filter by related column: see Relations
+Wrap the value in an object of operator keys. Several operators on one column are ANDed.
+
+```ts title="users.service.ts"
+await this.users.findAll({
+  age: { gte: 18, lt: 65 }, // 18 <= age < 65
+  email: { neq: "system@example.com" }, // not the system account
+  name: { ilike: "jo%" }, // pattern match: you supply the wildcards
+  archivedAt: { isNull: true }, // archived_at IS NULL
+  createdAt: { between: ["2025-01-01", "2025-12-31"] }, // both ends inclusive
 });
 ```
 
-Multiple operators in the same object are AND-ed together. An operator the package does not know, such as `{ roughly: 2 }`, is a 400 rather than being dropped.
+An operator the package does not know, such as `{ roughly: 2 }`, is a 400 (`Unknown filter operator: roughly`) rather than being dropped. An operator whose value is `undefined` adds nothing.
 
 ### Operator reference
 
+All 22 operators, as the service and the query parser handle them:
+
 | Operator | SQL | Notes |
 | --- | --- | --- |
-| `eq` | `=` | Exact and case-sensitive, even on text columns. |
-| `gt` / `gte` / `lt` / `lte` | `>` `>=` `<` `<=` | Numeric and date columns. Date strings are parsed. |
+| `eq` | `=` | A plain `=`, with no `lower()`. Case-sensitive on PostgreSQL even on text columns; MySQL's default collations ignore case. |
 | `neq` | `<>` | Not equal. |
-| `like` | `LIKE` | Caller supplies `%` wildcards. |
-| `ilike` | `ILIKE` (PostgreSQL) / `LIKE` (MySQL) | Case-insensitive. Caller supplies `%`. MySQL has no `ILIKE`; its default collations already ignore case. |
+| `gt` / `gte` / `lt` / `lte` | `>` `>=` `<` `<=` | Numeric and date columns. Date strings are parsed. `NaN` or `Infinity` is a 400. |
+| `like` | `LIKE` | You supply the `%` wildcards. The value is passed as is. |
+| `ilike` | `ILIKE` (PostgreSQL), `LIKE` (MySQL) | Case-insensitive, you supply the `%`. MySQL has no `ILIKE`; its default collations already ignore case. |
 | `in` | `IN (...)` | The value must be an array, otherwise 400. |
 | `notIn` | `NOT IN (...)` | The value must be an array, otherwise 400. |
-| `between` | `BETWEEN a AND b` | `[from, to]`, both inclusive. Date strings are parsed. |
+| `between` | `BETWEEN a AND b` | `[from, to]`, both inclusive. Anything other than two values is a 400. Date strings are parsed. |
 | `isNull` | `IS NULL` / `IS NOT NULL` | `true` or `"true"` gives `IS NULL`, `false` or `"false"` gives `IS NOT NULL`. Anything else is a 400. |
 | `isNotNull` | `IS NOT NULL` / `IS NULL` | The mirror of `isNull`. |
-| `startsWith` / `endsWith` / `contains` | `LIKE 'x%'`, `'%x'`, `'%x%'` | Text columns only. The value is escaped. Case-insensitive unless `sql.caseSensitive` is `true` (`ILIKE` on Postgres, `LIKE` on MySQL). |
-| `iStartsWith` / `iEndsWith` / `iContains` | `ILIKE` (PostgreSQL) / `LIKE` (MySQL) | Always case-insensitive, whatever `caseSensitive` says. |
-| `arrayContains` | `@>` | PostgreSQL array columns: the column holds every value. `{ tags: { arrayContains: ['a', 'b'] } }`. |
-| `arrayOverlaps` | `&&` | PostgreSQL array columns: the column holds at least one value. |
-| `jsonContains` | `@> '...'::jsonb` | PostgreSQL `jsonb` columns: `{ meta: { jsonContains: { plan: 'pro' } } }`. |
+| `startsWith` / `endsWith` / `contains` | `LIKE 'x%'`, `'%x'`, `'%x%'` | Text columns and string values only. The value is escaped. Case-insensitive (`ILIKE` on PostgreSQL) unless `sql.caseSensitive` is `true`. |
+| `iStartsWith` / `iEndsWith` / `iContains` | `ILIKE` (PostgreSQL), `LIKE` (MySQL) | Always case-insensitive, whatever `sql.caseSensitive` says. Escaped like the plain forms. |
+| `arrayContains` | `@>` | PostgreSQL array columns: the column holds every value. `{ tags: { arrayContains: ["a", "b"] } }`. |
+| `arrayOverlaps` | `&&` | PostgreSQL array columns: the column holds at least one of the values. |
+| `jsonContains` | `@> '...'::jsonb` | PostgreSQL `jsonb` columns only (not `json`): `{ meta: { jsonContains: { plan: "pro" } } }`. |
 
-A pattern operator on a column that is not text, an array operator on a column that is not an array, or a PostgreSQL only operator on MySQL is a 400 that says so.
+A pattern operator on a column that is not text, an array operator on a column that is not an array, a `jsonContains` on a column that is not `jsonb`, or any of the three PostgreSQL operators on MySQL is a 400 that says so.
 
-## Combining filters
+## How do I combine filters?
 
-```ts
-await service.findAll({
-  status: 'active',
-  role: ['admin', 'editor'],     // status='active' AND role IN (...)
-  createdAt: { gte: new Date('2025-01-01') },
+Put them side by side: every top-level key is ANDed.
+
+```ts title="users.service.ts"
+await this.users.findAll({
+  status: "active",
+  role: ["admin", "editor"], // status = 'active' AND role IN (...)
+  createdAt: { gte: new Date("2025-01-01") },
 });
 ```
-
-All top-level keys are AND-ed.
 
 ## How do I OR two filters?
 
-Put them in an `or` array. `and`, `or` and `not` are group keys; each member is a full filter object, so it can hold columns, relation filters, collection filters and more groups:
+Put them in an `or` array. `and`, `or` and `not` are group keys, and each member is a full filter object, so it can hold columns, relation filters, collection filters and more groups.
 
-```ts
-await posts.findAll({
-  status: 'published',
+```ts title="users.service.ts"
+await this.users.findAll({
+  status: "active",
   or: [
-    { author: { name: 'Ann' } },     // a belongs-to relation
-    { views: { gte: 1000 } },
+    { organization: { name: "Acme" } }, // a belongs-to relation
+    { age: { gte: 30 } },
   ],
-  not: { tags: { name: 'internal' } }, // a many-to-many: no internal tag
+  not: { posts: { status: "draft" } }, // a has-many: no draft post
 });
-// status = 'published'
-//   AND (author.name = 'Ann' OR views >= 1000)
-//   AND NOT (id IN (SELECT ... tags.name = 'internal'))
+// status = 'active'
+//   AND (organization.name = 'Acme' OR age >= 30)
+//   AND NOT (id IN (SELECT ... posts.status = 'draft'))
 ```
 
-Groups nest, work inside a relation filter (`{ states: { or: [{ name: 'Kerala' }, { name: 'Assam' }] } }`) and apply to `count` too. An `or` whose member is empty matches every row, so it adds nothing. A table column named `and`, `or` or `not` wins over the group key.
+How the groups behave:
 
-<Callout type="info" title="NOT and a missing parent">
-  A belongs-to filter inside `not` compares against a `LEFT JOIN`. A row whose
-  parent is missing has `NULL` there, and `NOT (NULL = 'Ann')` is not true, so
-  `{ not: { author: { name: 'Ann' } } }` also leaves out rows with no author.
-  Add `{ or: [{ not: ... }, { author_id: { isNull: true } }] }` if you want them.
+- `and` and `or` take an array of filter objects; `not` takes one filter object. Any other shape is a 400.
+- Groups nest, work inside a relation filter (`{ organization: { or: [{ name: "Acme" }, { name: "Globex" }] } }`) and apply to `count` too.
+- An `or` with an empty member matches every row, so the whole group adds nothing. An empty `and` member is skipped.
+- A table column (or relation) named `and`, `or` or `not` wins over the group key.
+
+<Callout title="NOT and a missing parent">
+  A belongs-to filter inside `not` compares against a `LEFT JOIN`. A row whose parent is missing
+  has `NULL` there, and `NOT (NULL = 'Acme')` is not true, so
+  `{ not: { organization: { name: "Acme" } } }` also leaves out users with no organization. Add
+  `{ or: [{ not: ... }, { organizationId: { isNull: true } }] }` if you want them.
 </Callout>
 
-## List search across columns
+## How do I filter by a related column?
 
-`findAll` and `count` also accept `options.search` when you need a user-facing
-search box to combine with normal filters, pagination, sorting, relation filters,
-and a correct `total` count.
+Use the relation name as the key and a filter on the related table's columns as the value. You need a [relation declared in the entity config](/docs/relations); a relation value that is not an object is a 400.
 
-```ts
-const page = await service.findAll(
-  { status: 'active' },
-  { page: 1, limit: 20, sortBy: 'name', sortOrder: 'asc' },
-  {
-    search: {
-      term: 'john',
-      columns: ['name', 'email'],
-    },
-  },
+```ts title="users.service.ts"
+// belongs-to: joined with a LEFT JOIN
+await this.users.findAll({ organization: { name: "Acme" } });
+
+// has-many: users with at least one published post, as IN (SELECT ...)
+await this.users.findAll({ posts: { status: "published" } });
+```
+
+A top-level belongs-to is joined into the main query. A has-many or many-to-many relation becomes an `IN (SELECT ...)` subquery, so a user with three matching posts still appears once and `total` stays right. With soft delete on, a soft-deleted related row never matches.
+
+When the foreign key is all you need, filter on it directly: `{ organizationId: 42 }` needs no relation at all.
+
+### Can I filter through several relations or quantify a collection?
+
+Yes. Nest the relation names to any depth, and use `some`, `none` or `every` on a has-many or many-to-many relation:
+
+```ts title="users.service.ts"
+await this.users.findAll({ organization: { country: { code: "IN" } } });
+await this.users.findAll({ posts: { none: { status: "draft" } } });
+```
+
+Both compile to `EXISTS` or `NOT EXISTS` subqueries, never joins that multiply rows. [Filtering by relation in Drizzle](/docs/relation-filters) covers paths, quantifiers and the SQL they produce.
+
+## How do I add a search box to a list?
+
+Pass `options.search` to `findAll` or `count`. It searches a term across columns and composes with your filters, pagination, sorting, relation filters and the `total` count.
+
+```ts title="users.service.ts"
+const page = await this.users.findAll(
+  { status: "active" },
+  { page: 1, limit: 20, sortBy: "name", sortOrder: "asc" },
+  { search: { term: "john", columns: ["name", "email"] } },
 );
 
-const total = await service.count(
-  { status: 'active' },
-  { search: { term: 'john', columns: ['name', 'email'] } },
+const total = await this.users.count(
+  { status: "active" },
+  { search: { term: "john", columns: ["name", "email"] } },
 );
 ```
 
-By default, search compiles to cross-column `ILIKE '%term%'` checks joined by
-`OR` (`LIKE` on MySQL). Empty terms and unknown column names are ignored.
+<PropsTable
+  props={{
+    "search.term": { type: "string", required: true, description: "The text to look for. It is trimmed; an empty term adds no condition." },
+    "search.columns": { type: "string[]", required: true, description: "Column keys to search. Names that are not columns are skipped. With searchableColumns set, a column outside it is a 400." },
+    "search.mode": { type: '"ilike" | "fullText"', default: '"ilike"', description: "ilike: ILIKE '%term%' on each column (LIKE on MySQL), joined by OR, with %, _ and \\ in the term escaped. fullText: PostgreSQL to_tsvector @@ plainto_tsquery, unranked." },
+  }}
+/>
 
-```ts
-await service.findAll(
-  {},
+`mode: "fullText"` on MySQL throws a plain `Error`, so it surfaces as a 500. For results ordered by relevance, call `fullTextSearch()` instead; [full-text search in PostgreSQL](/docs/full-text-search) compares the two.
+
+```ts title="users.service.ts"
+await this.users.findAll(
+  { status: "active" },
   { page: 1, limit: 20 },
-  { search: { term: 'john', columns: ['name', 'email'], mode: 'ilike' } },
+  { search: { term: "john doe", columns: ["name", "bio"], mode: "fullText" } },
 );
 ```
-
-For PostgreSQL full-text matching inside the `findAll` / `count` path, set
-`mode: 'fullText'`:
-
-```ts
-await service.findAll(
-  { status: 'active' },
-  { page: 1, limit: 20 },
-  {
-    search: {
-      term: 'john doe',
-      columns: ['name', 'bio'],
-      mode: 'fullText',
-    },
-  },
-);
-```
-
-Use `fullTextSearch()` directly when ranked full-text results are the primary
-operation. Use `findAll(..., ..., { search })` when search needs to compose with
-the list endpoint's filters and count query.
 
 ## What happens with an unknown filter key?
 
-It is rejected with a 400 (`BadRequestException`, message `Unknown filter column: <key>`). Before 3.3.1 the key was dropped, so a typo such as `{ titel: 'x' }` returned every row. The same rule covers a column inside a relation filter (`{ author: { nmae: 'Bob' } }`) and an unknown operator.
+It is rejected with a 400 (`BadRequestException`, message `Unknown filter column: <key>`), the same as an unknown `sortBy`. Before 3.3.1 the key was dropped, so a typo such as `{ nmae: "x" }` returned every row. The same rule covers a column inside a relation filter (`{ organization: { nmae: "Acme" } }`, reported as `organization.nmae`) and an unknown operator.
 
-The simplest controller hands the query string to [`parseQuery`](/docs/query-parsing), which splits off pagination, sort and options, coerces the values and rejects unknown keys before any SQL runs:
+A key outside [`filterableColumns`](/docs/allowlists) is a 400 too, so a client can only filter on the columns you mean to expose.
 
-```ts accent=nest
+## How do I filter from a query string in a controller?
+
+Hand the query to [`parseQuery`](/docs/query-parsing). It splits off pagination, sort and options, coerces the values by column type and rejects unknown keys before any SQL runs.
+
+```ts accent=nest title="users.controller.ts"
 @Get()
 findAll(@Query() query: Record<string, unknown>) {
   const q = this.users.parseQuery(query);
@@ -194,52 +221,42 @@ findAll(@Query() query: Record<string, unknown>) {
 }
 ```
 
-Set [allowlists](/docs/allowlists) so a client can only filter on the columns you mean to expose.
+## How do filters work with pagination and sorting?
 
-## Combining with pagination & sorting
+`findAll` takes three positional arguments: filters, pagination, options. The filters decide which rows match, and the pagination picks the page. See [pagination and sorting](/docs/pagination-sorting) for the full shape.
 
-`findAll` takes three positional arguments: filters, pagination, options. See [Pagination & sorting](/docs/pagination-sorting) for the full shape.
-
-```ts
-await service.findAll(
-  { status: 'active' },
-  { page: 2, limit: 25, sortBy: 'createdAt', sortOrder: 'desc' },
+```ts title="users.service.ts"
+await this.users.findAll(
+  { status: "active" },
+  { page: 2, limit: 25, sortBy: "createdAt", sortOrder: "desc" },
 );
 ```
 
-## Filtering by related columns
+## Common questions
 
-When you've [declared a many-to-one relation](/docs/relations), use the relation name as a filter key. The package will join the related table for you. With soft delete on, a soft-deleted parent never matches.
+<Accordions>
+  <Accordion title="Is a string filter case-sensitive?">
+    A bare string on a text column is not: it compiles to `lower(column) = lower(value)` while `sql.caseSensitive` is `false`, the default. The `eq` operator is a plain `=`, which is case-sensitive on PostgreSQL.
+  </Accordion>
+  <Accordion title="How do I do a partial or LIKE match?">
+    Use `startsWith`, `endsWith` or `contains`, which escape `%`, `_` and `\` in your value. Use `like` or `ilike` when you want to write the pattern and its wildcards yourself.
+  </Accordion>
+  <Accordion title="What happens if I misspell a filter key?">
+    The call fails with a 400 and the message `Unknown filter column: <key>`. Unknown operators and unknown columns inside a relation filter are rejected the same way, so a typo never returns every row.
+  </Accordion>
+  <Accordion title="Can I OR two conditions?">
+    Yes. Put each condition in an `or` array, as in `{ or: [{ role: "admin" }, { age: { gte: 30 } }] }`. `and` and `not` work the same way, and groups nest.
+  </Accordion>
+  <Accordion title="Do array and JSON operators work on MySQL?">
+    No. `arrayContains`, `arrayOverlaps` and `jsonContains` are PostgreSQL only, and on MySQL they are a 400 that says so.
+  </Accordion>
+</Accordions>
 
-```ts
-await service.findAll({
-  state: { name: 'Karnataka' },
-});
-```
+## Next steps
 
-Multi-level filtering works through the intermediate FK column:
-
-```ts
-// cities where state.country_id = 3: no direct relation to countries required
-await service.findAll({
-  state: { countryId: 3 },
-});
-```
-
-## How do I filter through several relations or quantify a collection?
-
-Nest the relations, at any depth, and use `some`, `none` or `every` on a has-many or many-to-many relation:
-
-```ts
-await cities.findAll({ state: { country: { code: 'IN' } } });
-await authors.findAll({ posts: { none: { status: 'draft' } } });
-```
-
-Both compile to subqueries, never joins that multiply rows. See [Relation filters: paths and some, none, every](/docs/relation-filters).
-
-## Next
-
-- → [Parse query strings into filters](/docs/query-parsing)
-- → [Pagination & sorting, `findAll` shape and default sort](/docs/pagination-sorting)
-- → [Relations: eager loading and related-column filters](/docs/relations)
-- → [Relation filters: paths and some, none, every](/docs/relation-filters)
+<Cards>
+  <Card icon={<Code />} title="Parse query strings into filters" href="/docs/query-parsing" description="Turn ?age[gte]=18&status=active into typed filters with one call." />
+  <Card icon={<Filter />} title="Filter by relation" href="/docs/relation-filters" description="Paths through relations and some, none, every on collections." />
+  <Card icon={<ListOrdered />} title="Pagination and sorting" href="/docs/pagination-sorting" description="The findAll envelope, page limits and the default sort." />
+  <Card icon={<ShieldCheck />} title="Allowlists" href="/docs/allowlists" description="Limit which columns a client may filter, sort, select and search." />
+</Cards>

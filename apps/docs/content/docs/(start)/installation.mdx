@@ -1,64 +1,59 @@
 ---
-title: Installation
-description: Install nestjs-drizzle-crud and the required peer dependencies for your database.
+title: Install NestJS with Drizzle ORM
+description: Set up NestJS with Drizzle ORM. Install nestjs-drizzle-crud with its four peers, then the postgres driver or your own MySQL connection.
+icon: Package
 ---
 
-## Package
+To use NestJS with Drizzle ORM through `nestjs-drizzle-crud`, install the package and its four
+required peers: `@nestjs/common`, `@nestjs/core`, `drizzle-orm` and `reflect-metadata`. Then add
+a database driver. On PostgreSQL that is `postgres` if you let the module open the connection; on
+MySQL you install `mysql2` and pass a Drizzle instance you built. The package itself has no runtime
+dependencies.
 
-<InstallTabs />
-
-<Callout type="info">
-  **Latest version: <Version />.** The package is published under
-  [`nestjs-drizzle-crud`](https://www.npmjs.com/package/nestjs-drizzle-crud) on npm.
-  A [`CHANGELOG.md`](https://www.npmjs.com/package/nestjs-drizzle-crud?activeTab=code) is shipped in the npm tarball
-  and mirrored at [Changelog](/docs/changelog).
+<Callout title="Before you start">
+  You need Node 20 or later and a NestJS 10 or later project with decorators turned on. The
+  documented version is <Version />, published as <Ext to="npm">nestjs-drizzle-crud on npm</Ext>.
 </Callout>
 
-## Peer dependencies
+## How do I install it?
 
-The package is unopinionated about which database driver you use. Install only what you need.
+<Steps>
 
-### Always required
+<Step>
 
-<InstallTabs pkg="@nestjs/common @nestjs/core drizzle-orm reflect-metadata" />
+### Install the package and its required peers
 
-### PostgreSQL: required **only** if you use `connectionString`
+<InstallTabs pkg="nestjs-drizzle-crud @nestjs/common @nestjs/core drizzle-orm reflect-metadata" />
 
-When you pass `connectionString` to `forRoot({ dialect: 'postgresql' })`, the module builds the Drizzle connection itself using the [`postgres`](https://www.npmjs.com/package/postgres) driver.
+A NestJS project already has `@nestjs/common`, `@nestjs/core` and `reflect-metadata`, so in
+practice you add the package and `drizzle-orm`.
+
+</Step>
+
+<Step>
+
+### Add the driver for your database
+
+For PostgreSQL with a connection string, install `postgres` (postgres.js):
 
 <InstallTabs pkg="postgres" />
 
-<Callout type="warn">
-  pnpm enforces peer dependencies strictly. If you let the module build the
-  connection from a `connectionString`, make sure `postgres` is installed in
-  your app, otherwise the build will fail with a missing-peer error.
-</Callout>
-
-### MySQL: required (always, for MySQL)
-
-MySQL has no `RETURNING` support, so the package can't build a connection for you from a connection string. You must install `mysql2` and pass a pre-built `db` to `forRoot`. See [the forRoot guide](/docs/for-root) for the full pattern.
+For MySQL, install `mysql2`, which you use to build the Drizzle instance yourself:
 
 <InstallTabs pkg="mysql2" />
 
-### If you pre-build the Drizzle instance (any dialect)
+If you build a PostgreSQL Drizzle instance yourself (node-postgres, PGlite, Neon), install that
+driver instead and skip `postgres`. [Which driver do I need?](#which-driver-do-i-need) explains
+the choice.
 
-If you build the Drizzle instance yourself and pass it to `forRoot` as `db`, you can skip the module's internal driver setup entirely, which means you do not need `postgres` even on PostgreSQL.
+</Step>
 
-```ts accent=nest
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
+<Step>
 
-DrizzleCrudModule.forRoot({
-  dialect: 'postgresql',
-  db: drizzle(postgres(process.env.DATABASE_URL!), { schema }),
-});
-```
+### Turn on decorators
 
-This is also the **recommended pattern for MySQL**.
-
-## TypeScript configuration
-
-The package relies on `Reflect.getMetadata` to read per-service configuration. Make sure your `tsconfig.json` enables decorators:
+NestJS reads constructor types through decorator metadata, and the package reads per-service
+config from the `@CrudService` decorator. A project made with the Nest CLI already has both flags.
 
 ```json title="tsconfig.json"
 {
@@ -69,20 +64,163 @@ The package relies on `Reflect.getMetadata` to read per-service configuration. M
 }
 ```
 
-## Versioning policy
+</Step>
 
-`nestjs-drizzle-crud` follows semver:
+<Step>
 
-- **Patch** (3.0.x → 3.0.y). Bug fixes, no API changes.
-- **Minor** (3.x.0 → 3.y.0). New methods or new options, fully backwards-compatible.
-- **Major** (3.y.0 → 4.0.0). Breaking changes to the public API.
+### Add OpenAPI support, if you want it
 
-This site currently documents **v3.2.2**. The peer dependency `drizzle-orm` is pinned to `>=0.28.0 <1.0.0`.
+`ApiCrudQuery` and `ApiCrudList` document list routes in Swagger. They need `@nestjs/swagger`,
+which the package loads only the first time one of them runs.
 
-See the [Changelog](/docs/changelog) for release-by-release behavior changes.
+<InstallTabs pkg="@nestjs/swagger" />
 
-## Next
+</Step>
 
-You have the package installed. The next page walks through the complete five-step setup in under five minutes: schema, `forRoot`, service, `forFeature`, controller.
+</Steps>
 
-→ [Quick start](/docs/quick-start)
+## Which peer dependencies does it need?
+
+Four peers are required and two are optional. These ranges come from the package's
+`peerDependencies`:
+
+| Package | Version range | Needed when |
+| --- | --- | --- |
+| `@nestjs/common` | `>=10.0.0` | Always |
+| `@nestjs/core` | `>=10.0.0` | Always |
+| `drizzle-orm` | `>=0.28.0 <1.0.0` | Always |
+| `reflect-metadata` | `^0.1.13 \|\| ^0.2.0` | Always |
+| `postgres` | `>=3.0.0` (optional) | You pass `connectionString` with `dialect: "postgresql"` |
+| `@nestjs/swagger` | `>=7.0.0` (optional) | You use `ApiCrudQuery` or `ApiCrudList` |
+
+`mysql2` is not a peer of the package. It is your app's own dependency, because on MySQL you
+create the connection.
+
+## Which driver do I need?
+
+It depends on who builds the connection: let the module build it from a connection string
+(PostgreSQL only), or build a Drizzle instance yourself and pass it as `db` (any dialect).
+
+<Tabs items={["PostgreSQL, connection string", "PostgreSQL, your own db", "MySQL"]}>
+
+<Tab value="PostgreSQL, connection string">
+
+The module creates a postgres.js client, wraps it with `drizzle-orm/postgres-js`, and closes it
+when the app shuts down. Install `postgres`.
+
+```ts accent=nest title="app.module.ts"
+import { Module } from "@nestjs/common";
+import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import * as schema from "./db/schema";
+
+@Module({
+  imports: [
+    DrizzleCrudModule.forRoot({
+      dialect: "postgresql",
+      connectionString: process.env.DATABASE_URL,
+      schema,
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+</Tab>
+
+<Tab value="PostgreSQL, your own db">
+
+Build the Drizzle instance with any PostgreSQL driver and pass it as `db`. The module uses it as
+is and leaves closing it to you. `postgres` is not needed unless that is the driver you chose.
+
+```ts accent=nest title="app.module.ts"
+import { Module } from "@nestjs/common";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import postgres from "postgres";
+import * as schema from "./db/schema";
+
+@Module({
+  imports: [
+    DrizzleCrudModule.forRoot({
+      dialect: "postgresql",
+      db: drizzle(postgres(process.env.DATABASE_URL!), { schema }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+</Tab>
+
+<Tab value="MySQL">
+
+A `connectionString` only works for PostgreSQL, so on MySQL you always pass `db`. MySQL has no
+`RETURNING`, so the package reads written rows back with a `SELECT` instead.
+
+```ts accent=nest title="app.module.ts"
+import { Module } from "@nestjs/common";
+import { drizzle } from "drizzle-orm/mysql2";
+import mysql from "mysql2/promise";
+import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+
+@Module({
+  imports: [
+    DrizzleCrudModule.forRoot({
+      dialect: "mysql",
+      db: drizzle(mysql.createPool(process.env.DATABASE_URL!)),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+</Tab>
+
+</Tabs>
+
+<Callout type="warn" title="connectionString without the driver">
+  `postgres` is an optional peer, so neither npm nor pnpm installs it for you. If you pass
+  `connectionString` and it is missing, the app fails at startup when the module imports it.
+  Install it, or pass your own `db`.
+</Callout>
+
+To read the connection settings from `ConfigService` instead of `process.env`, use
+[`forRootAsync`](/docs/for-root-async). Every `forRoot` option is on the
+[forRoot page](/docs/for-root).
+
+## How are versions numbered?
+
+The package follows semver:
+
+- **Patch** releases fix bugs and do not change the API.
+- **Minor** releases add methods or options and stay backwards compatible.
+- **Major** releases may change or remove public API, such as the deprecated exceptions and
+  config flags marked for removal.
+
+The [changelog](/docs/changelog) lists what changed in each release. The npm tarball ships the
+same `CHANGELOG.md`.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Which version of drizzle-orm does nestjs-drizzle-crud support?">
+    Any `drizzle-orm` from 0.28.0 up to, but not including, 1.0.0, as declared in the package's peer dependencies.
+  </Accordion>
+  <Accordion title="Do I need the postgres package?">
+    Only when you pass `connectionString` with `dialect: "postgresql"`. If you build the Drizzle instance yourself and pass it as `db`, install whichever driver you used instead.
+  </Accordion>
+  <Accordion title="Can the module open a MySQL connection from a connection string?">
+    No. Building a connection from `connectionString` is supported for PostgreSQL only. On MySQL, create the pool with `mysql2`, wrap it with `drizzle-orm/mysql2` and pass it as `db`.
+  </Accordion>
+  <Accordion title="Does nestjs-drizzle-crud work with NestJS 10 and 11?">
+    Yes. The peer range for `@nestjs/common` and `@nestjs/core` is 10.0.0 and later, and the example app in the repository runs on NestJS 11.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Rocket />} title="Quick start" href="/docs/quick-start" description="Wire one table end to end: schema, module, service and controller." />
+  <Card icon={<Server />} title="forRoot" href="/docs/for-root" description="Every connection and project default option the module accepts." />
+  <Card icon={<Database />} title="CRUD operations" href="/docs/crud-operations" description="The read and write methods every service inherits." />
+</Cards>

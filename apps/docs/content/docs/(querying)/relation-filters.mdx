@@ -1,42 +1,50 @@
 ---
-title: Relation filters, paths and some, none, every
-description: "Filter through relations at any depth (state.country.code) and quantify collections with some, none and every. Compiled to EXISTS and NOT EXISTS subqueries, so rows are never multiplied."
+title: Filter by relation in Drizzle ORM
+description: "Drizzle filter by relation in NestJS: paths at any depth and some, none, every on collections, compiled to EXISTS subqueries that never multiply rows."
+icon: Network
 ---
 
-A relation filter can go on through the related table's own relations, to any depth, and a filter on a collection can say `some`, `none` or `every`. Everything below the first belongs-to join compiles to an `EXISTS` or `NOT EXISTS` subquery, so parent rows are never multiplied and `total` stays right.
+To filter by relation with Drizzle in this package, use the relation name as a filter key: `{ state: { country: { code: "IN" } } }` follows a path through relations to any depth, and `{ states: { none: { name: "Kerala" } } }` quantifies a collection with `some`, `none` or `every`. Only the top-level belongs-to is joined. Everything else compiles to an `IN`, `EXISTS` or `NOT EXISTS` subquery, so parent rows are never multiplied and `total` stays right.
 
-```ts
+<Callout title="Declare the relations first">
+  A relation filter only works on relations declared in the entity's `relations` config, and a
+  collection needs `type: "hasMany"` or `type: "manyToMany"`. Without a `type` the relation is a
+  belongs-to. [Relations](/docs/relations) covers the config; [Filtering with Drizzle in
+  NestJS](/docs/filtering) covers the column operators used inside a relation filter.
+</Callout>
+
+```ts title="countries.service.ts"
 // Cities in India: city -> state -> country
-await cities.findAll({ state: { country: { code: 'IN' } } });
+await this.cities.findAll({ state: { country: { code: "IN" } } });
 
-// Authors with no draft posts
-await authors.findAll({ posts: { none: { status: 'draft' } } });
+// Countries with no state called Kerala
+await this.countries.findAll({ states: { none: { name: "Kerala" } } });
 ```
 
 ## How do I filter through more than one relation?
 
-Nest the relation names, as declared in each relation's own `relations` config:
+Nest the relation names, as declared in each relation's own `relations` config. A belongs-to chain from cities to countries looks like this:
 
-```ts accent=nest
+```ts accent=nest title="cities.crud.ts"
 relations: {
   state: {
     table: states,
-    localKey: 'state_id',
+    localKey: "state_id",
     relations: {
-      country: { table: countries, localKey: 'country_id' },
+      country: { table: countries, localKey: "country_id" },
     },
   },
 }
 ```
 
-```ts
-await cities.findAll({ state: { country: { code: 'IN' } } });
-await cities.count({ state: { name: 'Kerala', country: { code: 'IN' } } });
+```ts title="cities.service.ts"
+await this.cities.findAll({ state: { country: { code: "IN" } } });
+await this.cities.count({ state: { name: "Kerala", country: { code: "IN" } } });
 ```
 
-The top-level belongs-to (`state`) is joined as before. Each deeper level is a correlated `EXISTS`:
+The top-level belongs-to (`state`) is joined with a `LEFT JOIN`. Each deeper level is a correlated `EXISTS` on its own table alias:
 
-```sql
+```sql accent=drizzle title="generated.sql"
 select ... from cities
 left join states on cities.state_id = states.id
 where exists (
@@ -45,59 +53,92 @@ where exists (
 )
 ```
 
-Each subquery gets its own table alias, so a relation back to a table already in the query (a self relation) still resolves. Soft-deleted related rows never match.
+Because each subquery gets its own alias, a relation back to a table already in the query (a self relation) still resolves. With soft delete on, a soft-deleted related row never matches, at any level.
 
 ## How do I use some, none and every?
 
-On a has-many or many-to-many relation, the value is a filter (meaning `some`) or an object of quantifiers:
+On a has-many or many-to-many relation, the value is either a filter (meaning `some`) or an object whose keys are all quantifiers:
 
 | Filter | Keeps parents that | SQL |
 | --- | --- | --- |
-| `{ posts: { status: 'draft' } }` | have at least one matching row | `id IN (SELECT ...)` |
-| `{ posts: { some: { status: 'draft' } } }` | the same | `id IN (SELECT ...)` |
-| `{ posts: { some: {} } }` | have any row at all | `id IN (SELECT ...)` |
-| `{ posts: { none: { status: 'draft' } } }` | have no matching row | `NOT EXISTS (...)` |
-| `{ posts: { none: {} } }` | have no rows at all | `NOT EXISTS (...)` |
-| `{ posts: { every: { status: 'published' } } }` | have no row that fails the filter | `NOT EXISTS (... AND NOT coalesce(filter, false))` |
+| `{ states: { name: "Kerala" } }` | have at least one matching row | `id IN (SELECT ...)` |
+| `{ states: { some: { name: "Kerala" } } }` | the same | `id IN (SELECT ...)` |
+| `{ states: { some: {} } }` | have any row at all | `id IN (SELECT ...)` |
+| `{ states: { none: { name: "Kerala" } } }` | have no matching row | `NOT EXISTS (...)` |
+| `{ states: { none: {} } }` | have no rows at all | `NOT EXISTS (...)` |
+| `{ states: { every: { name: { startsWith: "Ba" } } } }` | have no row that fails the filter | `NOT EXISTS (... AND NOT coalesce(filter, false))` |
 
-Several quantifiers in one object are ANDed: `{ posts: { some: { status: 'draft' }, none: { views: 0 } } }`.
+Rules worth knowing:
+
+- Several quantifiers in one object are ANDed: `{ states: { some: { name: "Kerala" }, none: { code: "XX" } } }`.
+- An empty plain filter, `{ states: {} }`, adds nothing. Write `{ states: { some: {} } }` to mean "has at least one".
+- The object counts as quantifiers only when every key is `some`, `none` or `every` and the related table has no column by that name. Mixing a quantifier with a column (`{ some: {...}, name: "x" }`) is read as a plain filter, so `some` is an unknown column and the call is a 400.
+- A quantifier value must be an object of column filters, otherwise 400.
 
 ## What does every mean for a parent with no rows?
 
-It matches. `every` means "no related row fails the filter", which is true when there are none, as in Prisma. Add `some: {}` when you need at least one: `{ posts: { some: {}, every: { status: 'published' } } }`. A row whose filter evaluates to NULL (a NULL column, say) counts as failing. Soft-deleted related rows are ignored by all three.
+It matches. `every` means "no related row fails the filter", which is true when there are none, as in Prisma. Add `some: {}` when you need at least one:
 
-## Do they work in groups and counts?
-
-Yes. A relation filter, at any depth and with any quantifier, can sit inside `and`, `or` and `not`, and `count` and `findByCursor` use the same compiler:
-
-```ts
-await authors.count({
-  or: [{ posts: { every: { status: 'published' } } }, { name: 'Cy' }],
+```ts title="countries.service.ts"
+await this.countries.findAll({
+  states: { some: {}, every: { name: { startsWith: "Ba" } } },
 });
-await cities.count({ not: { state: { country: { code: 'IN' } } } });
-await cities.count({ state: { cities: { some: { name: 'Mysuru' } } } }); // a collection under a belongs-to
 ```
 
-## How do I send them in a query string?
+A related row whose filter evaluates to `NULL` (a `NULL` column, say) counts as failing, which is what the `coalesce(..., false)` is for. Soft-deleted related rows are ignored by all three quantifiers. An `every` with an empty filter adds nothing.
 
-Brackets or dots, as with one level:
+## Do relation filters work in groups and counts?
 
-```txt
+Yes. A relation filter, at any depth and with any quantifier, can sit inside `and`, `or` and `not`, and `findAll`, `findByCursor`, `count` and `countBy` all build their `WHERE` with the same compiler:
+
+```ts title="countries.service.ts"
+await this.countries.count({
+  or: [{ states: { every: { name: { startsWith: "Ba" } } } }, { code: "IN" }],
+});
+await this.cities.count({ not: { state: { country: { code: "IN" } } } });
+await this.cities.count({ state: { cities: { some: { name: "Mysuru" } } } }); // a collection under a belongs-to
+await this.countries.count({ states: { cities: { some: { name: "Mysuru" } } } }); // a collection under a collection
+```
+
+## How do I send relation filters in a query string?
+
+Use brackets or dots, the same as for one level. [`parseQuery`](/docs/query-parsing) builds the filter object for you:
+
+```txt title="requests.http"
 GET /cities?state[country][code]=IN
 GET /cities?state.country.code=IN
-GET /authors?posts[none][status]=draft
-GET /authors?posts[every][views][gte]=10
-GET /authors?posts[some]=
+GET /countries?states[none][name]=Kerala
+GET /countries?states[every][name][startsWith]=Ba
+GET /countries?states[some]=
 ```
 
-`posts[some]=` with no column means "has at least one". See [Parse query strings](/docs/query-parsing).
+`states[some]=` with no column means "has at least one".
 
-## How do allowlists treat a path?
+## How do allowlists treat a relation path?
 
-`filterableColumns` names the full dotted path to the column: `'state.country.code'` allows the city filter above and nothing else on `country`. Quantifiers do not appear in the path, so `'posts.status'` allows `posts[none][status]` as well as `posts[status]`.
+`filterableColumns` names the full dotted path to the column. `"state.country.code"` allows the city filter above and nothing else on `country`. Quantifiers do not appear in the path, so `"states.name"` allows `states[none][name]` as well as `states[name]`. See [allowlists](/docs/allowlists).
 
-## Next
+## Common questions
 
-- → [Filtering: every operator, and or / not groups](/docs/filtering)
-- → [Relations](/docs/relations)
-- → [Aggregates](/docs/aggregates)
+<Accordions>
+  <Accordion title="Does filtering by a has-many relation duplicate rows?">
+    No. A has-many or many-to-many filter compiles to `IN (SELECT ...)` or `NOT EXISTS (...)`, never a join, so each parent appears once and `total` and pagination stay correct.
+  </Accordion>
+  <Accordion title="Which relations are joined?">
+    Only a belongs-to at the top level of the filter, with a `LEFT JOIN`. A belongs-to deeper in a path is an `EXISTS` subquery, and a collection is always a subquery.
+  </Accordion>
+  <Accordion title="Does every match a parent with no related rows?">
+    Yes, as in Prisma. Combine it with `some: {}` when the parent must have at least one related row.
+  </Accordion>
+  <Accordion title="Are soft-deleted related rows considered?">
+    No. With soft delete on for the related table, a soft-deleted row never matches a relation filter, and `some`, `none` and `every` all ignore it.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Filter />} title="Filtering with Drizzle in NestJS" href="/docs/filtering" description="Every column operator, and or, and, not groups." />
+  <Card icon={<Workflow />} title="Relations" href="/docs/relations" description="Declare belongs-to, has-many and many-to-many relations." />
+  <Card icon={<Hash />} title="Aggregates" href="/docs/aggregates" description="Count related rows per parent with counts and countBy." />
+</Cards>

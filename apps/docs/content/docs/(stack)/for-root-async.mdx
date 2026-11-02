@@ -1,27 +1,57 @@
 ---
-title: forRootAsync
-description: Configure the database connection asynchronously, e.g. from ConfigService.
+title: Drizzle forRootAsync with ConfigService
+description: NestJS Drizzle forRootAsync with ConfigService builds the database config at startup from env, secrets or any provider you inject into useFactory.
+icon: Workflow
 ---
 
-`DrizzleCrudModule.forRootAsync(options)` is the asynchronous variant of `forRoot`. Use it when your configuration is built at runtime, typically read from `ConfigService` after env validation.
+`DrizzleCrudModule.forRootAsync({ imports, inject, useFactory })` is the async form of `forRoot` for NestJS Drizzle apps that read their config from `ConfigService`. Nest calls your `useFactory` at startup with the providers listed in `inject`, and the object it returns (or resolves to) is the same `DrizzleCrudConfig` that [`forRoot`](/docs/for-root) takes, with the same defaults filled in.
 
-## Signature
+<Callout title="Only useFactory">
+  `forRootAsync` takes `imports`, `inject` and `useFactory`. It does not accept `useClass` or
+  `useExisting`; wrap a config class in a factory instead, as shown further down.
+</Callout>
+
+## What does forRootAsync take?
 
 ```ts accent=nest
-DrizzleCrudModule.forRootAsync({
-  imports?: ModuleClass[];
-  useFactory: (...deps: any[]) => Promise<DrizzleCrudConfig> | DrizzleCrudConfig;
+DrizzleCrudModule.forRootAsync(options: {
+  imports?: any[];
   inject?: any[];
+  useFactory: (...deps: any[]) => DrizzleCrudConfig | Promise<DrizzleCrudConfig>;
 }): DynamicModule
 ```
 
-## Example: with `@nestjs/config`
+<PropsTable
+  props={{
+    useFactory: { type: "(...deps) => config", required: true, description: "Returns a DrizzleCrudConfig, or a promise of one. Receives the providers in inject, in the same order." },
+    inject: { type: "any[]", default: "[]", description: "Providers to pass to useFactory, such as ConfigService." },
+    imports: { type: "any[]", default: "[]", description: "Modules that export the injected providers. Not needed for a global module such as ConfigModule with isGlobal: true." },
+  }}
+/>
+
+The module is global, exactly like `forRoot`, and exports the same tokens (`DRIZZLE_DB`, `DRIZZLE_CRUD_CONFIG`, `DRIZZLE_CONNECTION`, `CrudEventBus`).
+
+## How do I read the config from ConfigService?
+
+<Steps>
+
+<Step>
+
+### Install @nestjs/config
+
+<InstallTabs pkg="@nestjs/config" />
+
+</Step>
+
+<Step>
+
+### Inject ConfigService into the factory
 
 ```ts accent=nest title="app.module.ts"
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
-import { schema } from './db/schema';
+import * as schema from './db/schema';
 
 @Module({
   imports: [
@@ -29,9 +59,9 @@ import { schema } from './db/schema';
     DrizzleCrudModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (cfg: ConfigService) => ({
+      useFactory: (config: ConfigService) => ({
         dialect: 'postgresql',
-        connectionString: cfg.getOrThrow<string>('DATABASE_URL'),
+        connectionString: config.getOrThrow<string>('DATABASE_URL'),
         schema,
         defaults: {
           pagination: { defaultLimit: 20, maxLimit: 100 },
@@ -43,9 +73,15 @@ import { schema } from './db/schema';
 export class AppModule {}
 ```
 
-The `useFactory` may return a `Promise<DrizzleCrudConfig>` if you need to read from a remote source (Vault, AWS SSM, etc.) before constructing the config object.
+`getOrThrow` stops startup with a clear error when the variable is missing, instead of failing later on the first query.
 
-## Example: pre-built Drizzle instance with config
+</Step>
+
+</Steps>
+
+## How do I build my own Drizzle instance in the factory?
+
+Return `db` instead of `connectionString`. Use this on MySQL, or when the pool size or SSL settings come from config:
 
 ```ts accent=nest title="app.module.ts"
 import { Module } from '@nestjs/common';
@@ -53,20 +89,18 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
-import { schema } from './db/schema';
+import * as schema from './db/schema';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     DrizzleCrudModule.forRootAsync({
-      imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (cfg: ConfigService) => {
-        const client = postgres(cfg.getOrThrow<string>('DATABASE_URL'));
-        return {
-          dialect: 'postgresql',
-          db: drizzle(client, { schema }),
-        };
+      useFactory: (config: ConfigService) => {
+        const client = postgres(config.getOrThrow<string>('DATABASE_URL'), {
+          max: config.get<number>('DB_POOL_SIZE', 10),
+        });
+        return { dialect: 'postgresql', db: drizzle(client, { schema }) };
       },
     }),
   ],
@@ -74,51 +108,91 @@ import { schema } from './db/schema';
 export class AppModule {}
 ```
 
-## Example: multiple injected services
+A `db` you pass in is yours: the module does not close it on shutdown. Only a connection the module built from `connectionString` is closed for you.
 
-```ts
+## Can the factory be async?
+
+Yes. Return a promise when you fetch a value at startup, for example a password from a secrets manager:
+
+```ts accent=nest title="app.module.ts"
 DrizzleCrudModule.forRootAsync({
-  imports: [ConfigModule, FeatureFlagsModule],
-  inject: [ConfigService, FeatureFlagsService],
-  useFactory: (cfg: ConfigService, flags: FeatureFlagsService) => ({
+  imports: [SecretsModule],
+  inject: [ConfigService, SecretsService],
+  useFactory: async (config: ConfigService, secrets: SecretsService) => ({
     dialect: 'postgresql',
-    connectionString: cfg.getOrThrow('DATABASE_URL'),
+    connectionString: await secrets.get('DATABASE_URL'),
     schema,
-    sql: {
-      caseSensitive: flags.isEnabled('case-sensitive-filters'),
-    },
+    sql: { caseSensitive: config.get<boolean>('CASE_SENSITIVE_FILTERS', false) },
   }),
 })
 ```
 
-## `useClass` / `useExisting`
+`SecretsModule` and `SecretsService` stand for your own module. Nest waits for the promise before it builds any service, so a rejected promise stops startup.
 
-`forRootAsync` exposes `useFactory` directly. It does **not** accept `useClass` or `useExisting`. If you need a class-based config, wrap it:
+## How do I use a config class?
 
-```ts
-class CrudConfigService {
-  constructor(private readonly cfg: ConfigService) {}
-  create() {
-    return { dialect: 'postgresql' as const, /* ... */ };
+Provide the class from a module, import that module, and call it from the factory:
+
+```ts accent=nest title="crud-config.module.ts"
+import { Injectable, Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { DrizzleCrudConfig } from 'nestjs-drizzle-crud';
+import * as schema from './db/schema';
+
+@Injectable()
+export class CrudConfigService {
+  constructor(private readonly config: ConfigService) {}
+
+  create(): DrizzleCrudConfig {
+    return {
+      dialect: 'postgresql',
+      connectionString: this.config.getOrThrow<string>('DATABASE_URL'),
+      schema,
+    };
   }
 }
 
+@Module({ providers: [CrudConfigService], exports: [CrudConfigService] })
+export class CrudConfigModule {}
+```
+
+```ts accent=nest title="app.module.ts"
 DrizzleCrudModule.forRootAsync({
-  imports: [ConfigModule],
-  inject: [CrudConfigService, ConfigService],
-  useFactory: (svc: CrudConfigService) => svc.create(),
+  imports: [CrudConfigModule],
+  inject: [CrudConfigService],
+  useFactory: (crudConfig: CrudConfigService) => crudConfig.create(),
 })
 ```
 
-## When to use `forRoot` vs `forRootAsync`
+## When should I use forRoot instead?
 
-Use `forRoot` when the config object can be built statically at module-evaluation time. Use `forRootAsync` when any of:
+Use [`forRoot`](/docs/for-root) when the config is a plain object you can build when the module file loads. Use `forRootAsync` when any of these hold:
 
-- The connection string is read from `process.env` and you want validation via `ConfigService`.
-- The Drizzle instance is built from config (e.g. dynamic pool size).
-- You depend on another provider in `useFactory` (feature flags, secrets manager).
+- The connection string goes through `ConfigService` and its validation.
+- The Drizzle instance is built from config values, such as the pool size.
+- The config depends on another provider: feature flags, a secrets manager, a tenant registry.
 
-## Next
+## Common questions
 
-- → [forFeature: bind services to tables](/docs/for-feature)
-- → [Reference: DrizzleCrudConfig type](/docs/config-types)
+<Accordions>
+  <Accordion title="Does forRootAsync support useClass or useExisting?">
+    No. It accepts `useFactory` with `inject` and `imports`. Provide your config class from a module and call it from the factory.
+  </Accordion>
+  <Accordion title="Do I need imports: [ConfigModule] when ConfigModule is global?">
+    No. With `isGlobal: true`, `ConfigService` resolves without it. Listing it does no harm.
+  </Accordion>
+  <Accordion title="Can useFactory return a promise?">
+    Yes. Nest waits for it before building the connection and the services, and a rejection stops startup.
+  </Accordion>
+  <Accordion title="Are the defaults the same as forRoot?">
+    Yes. The object your factory returns goes through the same normalization, so soft delete, timestamps, pagination and the `sql` flags get the same defaults.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Layers />} title="forFeature" href="/docs/for-feature" description="Bind each service to its table and override defaults per entity." />
+  <Card icon={<Database />} title="NestJS Drizzle module forRoot options" href="/docs/for-root" description="Every option and its default." />
+  <Card icon={<Braces />} title="Config types" href="/docs/config-types" description="The full DrizzleCrudConfig type." />
+</Cards>

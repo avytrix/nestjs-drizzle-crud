@@ -1,27 +1,18 @@
 ---
-title: forFeature
-description: Bind a service to its table, and override per-entity configuration.
+title: Drizzle forFeature in NestJS
+description: Drizzle forFeature in NestJS binds each CRUD service to its table and merges per-entity config over the project defaults from forRoot, one level deep.
+icon: Layers
 ---
 
-`DrizzleCrudModule.forFeature(entities)` is called inside each feature module. It binds one or more services to their tables and constructs them with the correct merged configuration.
+`DrizzleCrudModule.forFeature(entities)` is the Drizzle forFeature call for NestJS feature modules. It binds each CRUD service to its Drizzle table, builds the service with the project defaults from `forRoot` merged with any per-entity config, and exports it so your controllers can inject it. Call it once per feature module, with one entry per service.
 
-## Signature
+<Callout type="warn" title="Do not list the service in providers">
+  `forFeature` already provides and exports the service. Adding it to the module's `providers`
+  makes Nest construct it a second time without the merged config, and startup fails. Services
+  are not `@Injectable()` for the same reason.
+</Callout>
 
-```ts accent=nest
-DrizzleCrudModule.forFeature(entities: CrudFeature[]): DynamicModule
-```
-
-Where `CrudFeature` is:
-
-```ts
-interface CrudFeature {
-  service: typeof SqlBaseCrudService;
-  table: any;                 // Drizzle table
-  config?: Partial<SqlCrudConfig>;  // per-entity overrides
-}
-```
-
-## Basic usage
+## How do I register a service?
 
 ```ts accent=nest title="users/users.module.ts"
 import { Module } from '@nestjs/common';
@@ -31,22 +22,75 @@ import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 
 @Module({
-  imports: [
-    DrizzleCrudModule.forFeature([
-      { service: UsersService, table: users },
-    ]),
-  ],
+  imports: [DrizzleCrudModule.forFeature([{ service: UsersService, table: users }])],
   controllers: [UsersController],
-  providers: [UsersService],
 })
 export class UsersModule {}
 ```
 
-The module registers `UsersService` as a provider, passing it a fully-built `SqlCrudConfig` derived from the global `forRoot` defaults + any per-entity overrides you supply here.
+Each entry is a `CrudFeature`:
 
-## Per-entity overrides
+<PropsTable
+  props={{
+    service: { type: "class extending SqlBaseCrudService", required: true, description: "The service class. It is also the injection token." },
+    table: { type: "Drizzle table", required: true, description: "The table the service reads and writes." },
+    config: { type: "CrudFeatureConfig", description: "Per-entity overrides. Every key is optional." },
+  }}
+/>
 
-Anything in `config` overrides the project defaults for that entity. The type is `CrudFeatureConfig`: every `SqlCrudConfig` key is optional, and `softDelete`, `timestamps`, `pagination` and `sql` merge with the project defaults one level deep. `pagination: { defaultLimit: 5 }` keeps the project's `maxLimit`, and `sql: { caseSensitive: true }` keeps `useReturning`.
+Several services can share one call. Each becomes its own provider, built independently:
+
+```ts accent=nest title="blog/blog.module.ts"
+DrizzleCrudModule.forFeature([
+  { service: UsersService, table: users },
+  { service: PostsService, table: posts, config: postsCrud },
+  { service: CommentsService, table: comments, config: { softDelete: { enabled: false } } },
+])
+```
+
+## In what order do the config layers merge?
+
+Config reaches a service through three layers, and each one overrides the one before:
+
+1. **Project defaults.** The `forRoot` or `forRootAsync` config, with defaults filled in for soft delete, timestamps, pagination and the `sql` flags.
+2. **Per entity.** The `@CrudService` decorator metadata, then the `config` object from `forFeature`, then the injected `db` and the `table`.
+3. **Service construction.** The service constructor spreads the result over its own built-in defaults and validates it.
+
+`softDelete`, `timestamps`, `pagination` and `sql` merge one level deep at every layer, so an override names only what it changes. `pagination: { defaultLimit: 5 }` keeps the project's `maxLimit`, and `sql: { caseSensitive: true }` keeps `useReturning`. Every other key replaces the value below it. `timestamps: undefined` turns timestamps off for that entity.
+
+When behaviour looks wrong, check which layer set the value before you look anywhere else.
+
+## What can I override per entity?
+
+The type is `CrudFeatureConfig`. Defaults marked "project" come from `forRoot`:
+
+<PropsTable
+  props={{
+    primaryKey: { type: "string", default: '"id"', description: "The key of the primary key column in the table object." },
+    "softDelete.enabled": { type: "boolean", default: "project (true)", description: "Soft delete for this entity." },
+    "softDelete.column": { type: "string", default: '"deleted_at"', description: "The key of the soft-delete column in the table object, not the SQL name." },
+    "timestamps.createdAt": { type: "string", default: '"created_at"', description: "Key of the created-at column. Set timestamps: undefined to turn timestamps off." },
+    "timestamps.updatedAt": { type: "string", default: '"updated_at"', description: "Key of the updated-at column." },
+    "pagination.defaultLimit": { type: "number", default: "project (20)", description: "Rows per page for this entity." },
+    "pagination.maxLimit": { type: "number", default: "project (100)", description: "Highest limit a caller may ask for on this entity." },
+    defaultSort: { type: "SortColumn[]", description: "ORDER BY for findAll when the caller sends no sortBy, applied in order. The primary key is always added last." },
+    "sql.caseSensitive": { type: "boolean", default: "project (false)", description: "Case sensitivity of bare string filters for this entity." },
+    "sql.useReturning": { type: "boolean", default: "project", description: "RETURNING after writes for this entity." },
+    relations: { type: "RelationsConfig", description: "belongsTo, hasMany and manyToMany relations keyed by name." },
+    scope: { type: "object | (ctx) => object", description: "Column values ANDed into every read and write, such as a tenant id." },
+    versionColumn: { type: "string", description: "An integer column for optimistic locking. A stale version is a 409." },
+    filterableColumns: { type: "string[]", description: "Columns a caller may filter by. Unset allows all." },
+    sortableColumns: { type: "string[]", description: "Columns a caller may sort by. Unset allows all." },
+    selectableColumns: { type: "string[]", description: "Columns a caller may select. Unset allows all." },
+    searchableColumns: { type: "string[]", description: "Columns search may look in. Unset allows all." },
+    loadableRelations: { type: "string[]", description: "Relations a caller may load or count. Unset allows all." },
+    writableColumns: { type: "string[]", description: "Columns create, update and upsert may write; any other column is a 400." },
+    writableRelations: { type: "string[]", description: "Relations a create body may write, and that attach, detach and sync may change." },
+    primaryKeyType: { type: "string", description: "Deprecated, no effect. The key type comes from the Drizzle column." },
+  }}
+/>
+
+Each of these has its own page: [relations](/docs/relations), [multi-tenancy](/docs/multi-tenancy) for `scope`, [optimistic locking](/docs/optimistic-locking) for `versionColumn`, and [allowlists](/docs/allowlists) for the column lists.
 
 ```ts accent=nest title="posts/posts.module.ts"
 DrizzleCrudModule.forFeature([
@@ -54,99 +98,96 @@ DrizzleCrudModule.forFeature([
     service: PostsService,
     table: posts,
     config: {
-      primaryKey: 'id',
-      softDelete: { enabled: true, column: 'deleted_at' },
-      // Default ORDER BY for findAll() when the caller passes no sortBy.
+      softDelete: { enabled: true },
       defaultSort: [
         { column: 'position', order: 'asc' },
-        { column: 'created_at', order: 'desc' }, // tiebreaker
+        { column: 'created_at', order: 'desc' },
       ],
       relations: {
         author: { table: users, localKey: 'author_id', references: 'id' },
       },
+      filterableColumns: ['title', 'author_id', 'author.name'],
     },
   },
 ])
 ```
 
-### What you can override
+## Does a camelCase schema need extra config?
 
-| Field | Effect |
-| --- | --- |
-| `primaryKey` | Key of the primary key column (default `'id'`). |
-| `primaryKeyType` | **Deprecated, no effect.** The key type comes from the Drizzle column. See [Primary keys](/docs/primary-keys). |
-| `softDelete` | `{ enabled?: boolean; column?: string }`. `column` is the key in your Drizzle table object, `'deleted_at'` by default. |
-| `timestamps` | `{ createdAt?: string; updatedAt?: string }`. Keys of the timestamp columns, `'created_at'` / `'updated_at'` by default. `timestamps: undefined` turns them off for this entity. |
-| `pagination` | `{ defaultLimit?: number; maxLimit?: number }`. Per-entity override of the global `defaults.pagination`; a missing key keeps the project value. |
-| `defaultSort` | Ordered column list for `findAll()` when no `sortBy` is passed. |
-| `sql` | Per-entity dialect tuning. |
-| `relations` | Belongs-to, has-many and many-to-many relations, keyed by relation name. See [Relations](/docs/relations). |
-| `filterableColumns`, `sortableColumns`, `selectableColumns`, `searchableColumns`, `loadableRelations` | What a caller may filter, sort, select, search and eager-load. Unset allows everything. See [Allowlists](/docs/allowlists). |
-| `writableColumns` | The columns create, update and upsert may write; anything else is a 400. Unset, the package ignores the columns it manages. See [Allowlists](/docs/allowlists#which-columns-can-a-body-write-by-default). |
+Yes, when your keys differ from the defaults. Settings name the key in the Drizzle table object, not the database column. For `deletedAt: timestamp('deleted_at')` and friends:
 
-### Does a camelCase schema need extra config?
-
-Yes, when your keys differ from the defaults. Settings name the **key** in the Drizzle table object, not the database column. For `deletedAt: timestamp('deleted_at')` and friends:
-
-```ts
-config: {
-  softDelete: { column: 'deletedAt' },
-  timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' },
-}
-```
-
-The service checks these keys at startup. A key that is not on the table stops the app with a message such as `softDelete.column is "deleted_at", but the table has no column under that key. The column "deleted_at" is declared under the key "deletedAt"; set softDelete.column to "deletedAt".`
-
-## Multiple entities in one feature module
-
-```ts
+```ts accent=nest title="users/users.module.ts"
 DrizzleCrudModule.forFeature([
-  { service: UsersService, table: users },
-  { service: PostsService, table: posts },
-  { service: CommentsService, table: comments, config: { /* ... */ } },
+  {
+    service: UsersService,
+    table: users,
+    config: {
+      softDelete: { column: 'deletedAt' },
+      timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' },
+    },
+  },
 ])
 ```
 
-Each service is registered as its own provider and is independently constructed.
+The service checks these keys when it is built. A key that is not on the table stops the app with a message that names the right one, for example: `softDelete.column is "deleted_at", but the table has no column under that key. The column "deleted_at" is declared under the key "deletedAt"; set softDelete.column to "deletedAt".`
 
-## `@CrudService` decorator
+## Can I put the config on the service class?
 
-You can also attach per-entity config to the service class itself with the `@CrudService` decorator. The `forFeature` `config` field still wins when both are set. The merge order is **global defaults → decorator metadata → `forFeature` config**.
+Yes, with `@CrudService`. Its metadata is the first per-entity layer, so `forFeature` config wins where both set a key, and the `forFeature` table wins over the decorator's. The decorator's type asks for `dialect`, `table` and `primaryKey`:
 
-```ts
-import { CrudService } from 'nestjs-drizzle-crud';
+```ts title="tags/tags.service.ts"
+import { type CrudFilter, CrudService, SqlBaseCrudService } from 'nestjs-drizzle-crud';
+import { tags } from '../db/schema';
+import type { CreateTagDto } from './dto/create-tag.dto';
+import type { UpdateTagDto } from './dto/update-tag.dto';
+
+type Tag = typeof tags.$inferSelect;
 
 @CrudService({
+  dialect: 'postgresql',
+  table: tags,
   primaryKey: 'id',
   softDelete: { enabled: true, column: 'deleted_at' },
+  filterableColumns: ['name'],
 })
-export class TagsService extends SqlBaseCrudService<Tag> {}
+export class TagsService extends SqlBaseCrudService<Tag, CreateTagDto, UpdateTagDto, CrudFilter> {}
 ```
 
-The decorator is mostly a convenience for keeping the config next to the service definition. Use `forFeature` `config` for config that's data-driven or varies per feature module.
+The decorator keeps the config next to the service, and it lets [`ApiCrudList`](/docs/openapi) and the controller factory's `openapi: true` read the table and allowlists from the class. For config that varies per module, keep it in `forFeature`, or in a shared constant you spread into both.
 
-## Verifying the merged config
+## How do I check the merged config?
 
-The fully-built config for each entity is available in the `DRIZZLE_CRUD_CONFIG` DI token. Inject it in tests to verify the merge worked:
+`DRIZZLE_CRUD_CONFIG` holds only the project layer: `dialect`, `defaults`, `sql` and `hooks.enableGlobalHooks`, with defaults filled in. It does not include per-entity overrides. The fully merged config of one entity lives on the service as the protected `config` property, which a test can read:
 
-```ts
-import { Inject } from '@nestjs/common';
-import { DRIZZLE_CRUD_CONFIG } from 'nestjs-drizzle-crud';
-
-@Injectable()
-export class ConfigInspector {
-  constructor(@Inject(DRIZZLE_CRUD_CONFIG) public readonly cfg: any) {}
-}
+```ts title="posts.module.spec.ts"
+const posts = moduleRef.get(PostsService);
+expect((posts as any).config.pagination).toEqual({ defaultLimit: 5, maxLimit: 100 });
 ```
 
-<Callout type="info">
-  The injected `DRIZZLE_CRUD_CONFIG` is the **normalized** global config (the
-  result of applying defaults). It does **not** include the per-entity
-  overrides. To inspect a single entity's resolved config, use
-  `DRIZZLE_DB` + read it off the constructed service instance.
-</Callout>
+## Common questions
 
-## Next
+<Accordions>
+  <Accordion title="Should I add the service to the module's providers?">
+    No. `forFeature` provides and exports it. Listing it again makes Nest build a second instance without a config, which fails at startup.
+  </Accordion>
+  <Accordion title="Which wins, @CrudService or the forFeature config?">
+    The `forFeature` config. The merge order is project defaults, then decorator metadata, then `forFeature` config, then the injected `db` and table.
+  </Accordion>
+  <Accordion title="Does a partial pagination override lose the project maxLimit?">
+    No. `softDelete`, `timestamps`, `pagination` and `sql` merge one level deep, so `pagination: { defaultLimit: 5 }` keeps the project `maxLimit`.
+  </Accordion>
+  <Accordion title="How do I turn timestamps off for one entity?">
+    Set `timestamps: undefined` in that entity's `forFeature` config. An explicit `undefined` replaces the project value.
+  </Accordion>
+  <Accordion title="Does DRIZZLE_CRUD_CONFIG include per-entity overrides?">
+    No. It is the normalized project config only. Each service holds its own merged config.
+  </Accordion>
+</Accordions>
 
-- → [Defining services: empty subclass + custom methods](/docs/defining-services)
-- → [Reference: SqlCrudConfig type](/docs/config-types)
+## Next steps
+
+<Cards>
+  <Card icon={<Boxes />} title="Defining services" href="/docs/defining-services" description="An empty subclass, and when to add methods of your own." />
+  <Card icon={<Server />} title="NestJS CRUD controller generator" href="/docs/controller-factory" description="Generate the REST routes for a registered service." />
+  <Card icon={<Braces />} title="Config types" href="/docs/config-types" description="The full SqlCrudConfig and CrudFeatureConfig types." />
+</Cards>

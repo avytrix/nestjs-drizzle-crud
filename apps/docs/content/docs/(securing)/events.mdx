@@ -1,13 +1,28 @@
 ---
-title: Global hooks and write events
-description: "Turn on hooks.enableGlobalHooks and subscribe to CrudEventBus for before and after events on every write, bulk and upsert included. For audit trails and cache busting."
+title: NestJS Drizzle CRUD events and audit logs
+description: NestJS Drizzle CRUD events fire before and after every write on one CrudEventBus, once per call, bulk included. Use them for audit logs and cache busting.
+icon: BellRing
 ---
 
-With `hooks.enableGlobalHooks: true`, every service raises a before event and an after event for each write on a module-level `CrudEventBus`: create, update, upsert, soft delete, restore, delete, attach, detach and sync, with each mass write raising one pair for the whole batch. Subscribe once and you see every entity, which is what an audit trail or a cache needs.
+NestJS Drizzle CRUD events in `nestjs-drizzle-crud` are module-level notifications raised before and after every write. Turn on `hooks.enableGlobalHooks`, and every service publishes a before event and an after event on one `CrudEventBus` for create, update, upsert, soft delete, restore, delete, attach, detach and sync. A mass write raises one pair for the whole batch. Subscribe once and you see every entity, which is what an audit log or a cache needs.
+
+<Callout title="Off by default">
+  With `enableGlobalHooks` off, no events fire. If you set `hooks.subscribers` without it, the module logs a warning at startup.
+</Callout>
+
+## How do I turn on CRUD events?
+
+<Steps>
+
+<Step>
+
+### Enable global hooks in `forRoot`
+
+Set `hooks.enableGlobalHooks` and, optionally, list subscribers inline:
 
 ```ts accent=nest title="app.module.ts"
 DrizzleCrudModule.forRoot({
-  dialect: 'postgresql',
+  dialect: "postgresql",
   connectionString: process.env.DATABASE_URL,
   hooks: {
     enableGlobalHooks: true,
@@ -18,17 +33,27 @@ DrizzleCrudModule.forRoot({
 });
 ```
 
-## How do I subscribe from a provider?
+In `forRootAsync`, the factory can return `hooks.subscribers` built from injected services.
 
-Inject `CrudEventBus` and call `subscribe`. It returns a function that unsubscribes:
+</Step>
+
+<Step>
+
+### Subscribe from a provider
+
+Inject `CrudEventBus` and call `subscribe`. It returns a function that removes the subscriber again:
 
 ```ts accent=nest title="audit.service.ts"
-import { Injectable, type OnModuleInit } from '@nestjs/common';
-import { CrudEventBus } from 'nestjs-drizzle-crud';
+import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
+import { CrudEventBus, DRIZZLE_DB } from "nestjs-drizzle-crud";
+import { auditLog } from "./db/schema";
 
 @Injectable()
 export class AuditService implements OnModuleInit {
-  constructor(private readonly bus: CrudEventBus) {}
+  constructor(
+    private readonly bus: CrudEventBus,
+    @Inject(DRIZZLE_DB) private readonly db: any,
+  ) {}
 
   onModuleInit() {
     this.bus.subscribe({
@@ -45,11 +70,24 @@ export class AuditService implements OnModuleInit {
 }
 ```
 
-Writing through `event.transaction` puts the audit row in the same transaction as the write, so both commit or both roll back. In `forRootAsync` the factory can return `hooks.subscribers` built from injected services.
+Writing through `event.transaction` puts the audit row in the same transaction as the write, so both commit or both roll back.
+
+</Step>
+
+</Steps>
+
+<PropsTable
+  props={{
+    "hooks.enableGlobalHooks": { type: "boolean", default: "false", description: "Hand the module's CrudEventBus to every service so its writes raise events." },
+    "hooks.subscribers": { type: "CrudSubscriber[]", description: "Subscribers added to the bus when it is created." },
+    skipEvents: { type: "boolean", default: "false", description: "Call option: raise no events for this call." },
+    events: { type: "CrudEventBus", description: "Service config: the bus to publish on. The module sets it; pass your own when you build a service by hand." },
+  }}
+/>
 
 ## What does a subscriber look like?
 
-Every method is optional:
+An object of optional listener methods. `beforeWrite` and `afterWrite` see every operation; the named methods see one:
 
 | Method | Called for |
 | --- | --- |
@@ -62,16 +100,18 @@ Every method is optional:
 | `beforeDelete`, `afterDelete` | `delete`, `forceDelete`, `massDelete`, `massForceDelete` |
 | `beforeAttach` / `afterAttach`, `beforeDetach` / `afterDetach`, `beforeSync` / `afterSync` | the many-to-many link methods |
 
-`entities: ['posts', 'authors']` limits a subscriber to those table names. Listeners run in the order they subscribed and are awaited.
+`entities: ["posts", "authors"]` limits a subscriber to those table names. Subscribers run one after another in the order they subscribed, and every listener is awaited. Within one subscriber, `beforeWrite` or `afterWrite` runs before the named method.
 
 ## What is in an event?
 
-```ts
+Every listener receives one `CrudEvent`:
+
+```ts title="crud-event.ts"
 interface CrudEvent<T = any> {
   entity: string;            // the table name
-  operation: 'create' | 'update' | 'upsert' | 'softDelete' | 'restore'
-    | 'delete' | 'attach' | 'detach' | 'sync';
-  phase: 'before' | 'after';
+  operation: "create" | "update" | "upsert" | "softDelete" | "restore"
+    | "delete" | "attach" | "detach" | "sync";
+  phase: "before" | "after";
   bulk: boolean;             // true for the mass methods
   ids: unknown[];            // primary keys; empty before a create or upsert
   input?: unknown;           // the DTO, the array of DTOs, or the related ids
@@ -81,44 +121,67 @@ interface CrudEvent<T = any> {
 }
 ```
 
+A force delete is reported as `delete`. `context` is the call's `options.context`, or the [`CrudContext`](/docs/multi-tenancy#where-does-the-context-come-from) of the request, so an audit row can record the tenant or user.
+
 ## How do bulk writes raise events?
 
-Once per call, with `bulk: true`, all the ids in `ids` and every written row in `rows`. A `massUpdate` of 500 rows is two events, not a thousand. With `bulkMode: 'perItem'` each item goes through the single-row method, so you get one pair of events per item with `bulk: false`.
+Once per call. A mass write raises one before event and one after event with `bulk: true`, every id in `ids` and every written row in `rows`, from inside its transaction. A `massUpdate` of 500 rows is two events, not a thousand.
+
+With `bulkMode: "perItem"` each item goes through the single-row method instead, so you get one pair of events per item with `bulk: false`. See [Bulk operations](/docs/bulk-operations).
 
 ## Can a listener stop a write?
 
-A before listener that throws stops it: nothing is written and the caller gets the error (a Nest `HttpException` keeps its status). An after listener that throws inside a transaction rolls the write back. Every mass write runs in a transaction; a single write only does when you pass one in `options.transaction`.
+Yes, a before listener can. If it throws, nothing is written and the caller gets the error (a Nest `HttpException` keeps its status). An after listener that throws inside a transaction rolls the write back. Every mass write runs in a transaction; a single write only does when you pass one in `options.transaction`.
 
-## How do I bust a cache?
+## How do I bust a cache on write?
 
-```ts
-bus.subscribe({
-  entities: ['products'],
+Subscribe to the entity and drop the keys its ids touch:
+
+```ts accent=nest title="cache.service.ts"
+this.bus.subscribe({
+  entities: ["products"],
   afterWrite: (e) => {
-    for (const id of e.ids) cache.delete(`product:${id}`);
-    cache.delete('products:list');
+    for (const id of e.ids) this.cache.delete(`product:${id}`);
+    this.cache.delete("products:list");
   },
 });
 ```
 
 ## How do events relate to the per-service hooks?
 
-They are separate and both run. The protected hooks on a service (`beforeCreate`, `afterUpdate`, ...) keep working as before and still follow `options.hooks.skipBefore` / `skipAfter`. Events follow `options.skipEvents` instead, so skipping a hook never silently skips the audit trail. See [Hooks and validation](/docs/hooks-validation).
-
-With `enableGlobalHooks` off (the default) no events fire, and the module warns at startup if `hooks.subscribers` is set anyway.
+They are separate and both run. The protected hooks on a service (`beforeCreate`, `afterUpdate` and the rest) run per row and follow `options.hooks.skipBefore` / `skipAfter`. Events run once per call and follow `options.skipEvents` instead, so skipping a hook never silently skips the audit trail. See [Drizzle hooks and validation in NestJS](/docs/hooks-validation).
 
 ## How do I use events without the module?
 
 Pass a bus in the config when you build a service by hand, as in tests:
 
-```ts
+```ts title="posts.service.spec.ts"
 const bus = new CrudEventBus();
 bus.subscribe({ afterWrite: (e) => seen.push(e) });
 const posts = new PostsService({ ...config, events: bus });
 ```
 
-## Next
+## Common questions
 
-- → [Hooks and validation](/docs/hooks-validation)
-- → [Bulk operations](/docs/bulk-operations)
-- → [forRoot options](/docs/for-root)
+<Accordions>
+  <Accordion title="Do CRUD events fire once per row in a mass write?">
+    No. A mass write raises one before and one after event for the whole call, with every id in `ids` and `bulk: true`. Only `bulkMode: "perItem"` raises one pair per item.
+  </Accordion>
+  <Accordion title="Do events fire for reads?">
+    No. Events cover writes only: create, update, upsert, soft delete, restore, delete, attach, detach and sync.
+  </Accordion>
+  <Accordion title="Does skipping hooks also skip events?">
+    No. `hooks.skipBefore` and `hooks.skipAfter` skip the per-service hooks only. Pass `skipEvents: true` to skip the events of a call.
+  </Accordion>
+  <Accordion title="How do I write an audit row in the same transaction as the write?">
+    Insert through `event.transaction` when it is set. The audit row then commits or rolls back with the write it records.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Workflow />} title="Drizzle hooks and validation in NestJS" href="/docs/hooks-validation" description="Per-service hooks that validate, map and react to each row." />
+  <Card icon={<Boxes />} title="Bulk insert and update with Drizzle" href="/docs/bulk-operations" description="Mass writes in one statement, one transaction and one event pair." />
+  <Card icon={<Database />} title="forRoot" href="/docs/for-root" description="Every project-wide option, hooks included." />
+</Cards>

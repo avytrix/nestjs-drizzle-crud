@@ -1,114 +1,142 @@
 ---
-title: Pagination & sorting
-description: "The findAll() return shape, withCount: false to skip COUNT(*), default sort, and sortBy: one column, several columns, or a belongs-to relation column such as region.name."
+title: Pagination and sorting with Drizzle
+description: "Drizzle pagination in NestJS with findAll: page and limit (20 rows by default, at most 100), withCount: false to skip COUNT(*), and multi-column sorts."
+icon: ArrowDownUp
 ---
 
-`findAll(filters?, pagination?, options?)` returns a paginated result envelope, **not** a bare array.
+For Drizzle pagination in NestJS, call `findAll(filters, { page, limit, sortBy })` on your service. It returns `{ data, total, page, limit }`, not a bare array. `page` starts at 1, `limit` defaults to 20 and is capped at 100, and `total` counts every matching row. `sortBy` takes one column, a list such as `['status', '-created_at']`, or a belongs-to column such as `author.name`. The primary key is always the last sort column, so pages never repeat or skip rows.
 
-## Return shape
+<Callout title="Column names are table keys">
+  `sortBy`, `defaultSort` and the examples on this page name the key in your Drizzle table object (`created_at` in `created_at: timestamp('created_at')`), not the SQL column name. The examples use a `posts` table with snake_case keys and a `PostsService`.
+</Callout>
 
-```ts
-type FindAllResult<T> = {
+## What does findAll return?
+
+A page envelope: the rows, the count of matching rows, and the `page` and `limit` that were actually used.
+
+```ts title="query.interface.ts"
+interface CrudPage<T> {
   data: T[];
-  total: number;   // total rows matching the filter, ignoring pagination
-  page: number;    // echo of the page you requested (1-indexed)
-  limit: number;   // echo of the limit you requested, after capping
-};
+  total: number;     // rows matching the filter and search, ignoring pagination
+  page: number;      // the page used, 1-indexed, after clamping
+  limit: number;     // the limit used, after clamping to maxLimit
+  hasMore?: boolean; // only with withCount: false
+}
 ```
 
-```ts
-const { data, total, page, limit } = await service.findAll(
-  { status: 'active' },
+```ts title="posts.controller.ts"
+const { data, total, page, limit } = await this.postsService.findAll(
+  { status: 'published' },
   { page: 2, limit: 25 },
-  { search: { term: 'john', columns: ['name', 'email'] } },
+  { search: { term: 'drizzle', columns: ['title', 'body'] } },
 );
-// data: 25 active users matching "john" for page 2
-// total: 240 active users matching "john"
-// page: 2
+// data:  25 published posts matching "drizzle", rows 26 to 50
+// total: 240 published posts matching "drizzle"
+// page:  2
 // limit: 25
 ```
 
-<Callout type="info">
-  The pagination argument is **optional**. When omitted, `findAll` uses
-  `defaults.pagination.defaultLimit` (default `20`) and starts at page 1.
-  `total` is the row count after filters and `options.search`, but before
-  pagination, so it stays correct across pages.
-</Callout>
+`total` is counted after filters, `options.search`, the tenant scope and soft delete, but before `LIMIT` and `OFFSET`, so it stays the same on every page. The data query and the count query run at the same time.
 
-## Pagination options
+The pagination argument is optional. Leave it out and `findAll` returns the first page, up to `defaultLimit` rows.
 
-| Field | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `page` | `number` | `1` | 1-indexed. |
-| `limit` | `number` | `defaults.pagination.defaultLimit` | Capped at `defaults.pagination.maxLimit` (default `100`). |
-| `sortBy` | `string \| Array<string \| SortColumn>` | `defaultSort` (entity) | One column, or a list. See below. |
-| `sortOrder` | `'asc' \| 'desc'` | `'desc'` | Direction for a single `sortBy` string. |
-| `withCount` | `boolean` | `true` | `false` skips the count query. See below. |
+## Which pagination options are there?
+
+Five fields, all optional.
+
+<PropsTable
+  props={{
+    page: { type: "number", default: "1", description: "1-indexed page number. Values below 1 become 1." },
+    limit: { type: "number", default: "pagination.defaultLimit (20)", description: "Rows per page. Capped at pagination.maxLimit (100 by default)." },
+    sortBy: { type: "string | Array<string | { column: string; order?: 'asc' | 'desc' }>", default: "the entity's defaultSort", description: "One column, a list, or a comma separated string. A dotted name sorts by a belongs-to relation column." },
+    sortOrder: { type: "'asc' | 'desc'", default: "'desc'", description: "Direction for a single sortBy string without a - or + prefix. Any other value is a 400." },
+    withCount: { type: "boolean", default: "true", description: "false skips the COUNT(*) query: total is null and hasMore is set." },
+  }}
+/>
 
 ## How do I skip the count query?
 
-Pass `withCount: false`. `findAll` then runs one query instead of two, `total` is `null`, and `hasMore` says whether another page follows:
+Pass `withCount: false`. `findAll` then runs one query instead of two, `total` is `null`, and `hasMore` says whether another page follows.
 
-```ts
-const page = await posts.findAll({}, { page: 3, limit: 20, withCount: false });
+```ts title="posts.controller.ts"
+const page = await this.postsService.findAll({}, { page: 3, limit: 20, withCount: false });
 // { data: [...20 rows], total: null, page: 3, limit: 20, hasMore: true }
 ```
 
 `hasMore` comes from fetching one row more than the page and dropping it, so it costs nothing extra. `COUNT(*)` is the expensive half of a list on a big table, and infinite scroll or a "next" button does not need it. From a query string, `?withCount=false` sets it.
 
-The return type follows the option: with `withCount: false` written in the call, `total` is typed `null` and `hasMore` is a `boolean`; with nothing (or `true`), `total` is a `number`. When the value is only known at run time, as with the output of `parseQuery`, `total` is typed `number | null`. With the count on, the envelope has no `hasMore` key, the same as before.
+The return type follows the option:
 
-## Sorting
+| Call | `total` type | `hasMore` |
+| --- | --- | --- |
+| `withCount: false` written in the call | `null` | `boolean`, always present |
+| `withCount` left out or `true` | `number` | absent |
+| A value known only at run time (the output of `parseQuery`) | `number \| null` | `boolean \| undefined` |
 
-### Explicit `sortBy`
+## How do I sort by one column?
 
-```ts
-await service.findAll(
-  {},
-  { sortBy: 'createdAt', sortOrder: 'desc' },
-);
+Pass the column as a string. A single string sorts in `sortOrder`, which defaults to `'desc'`.
+
+```ts title="posts.controller.ts"
+await this.postsService.findAll({}, { sortBy: 'created_at' });
+// ORDER BY created_at DESC, id ASC
+
+await this.postsService.findAll({}, { sortBy: 'created_at', sortOrder: 'asc' });
+// ORDER BY created_at ASC, id ASC
 ```
 
-A single string sorts by one column in `sortOrder`, which defaults to `'desc'`, as it always has.
+A `-` prefix forces descending and a `+` prefix forces ascending, whatever `sortOrder` says.
 
-### How do I sort by several columns?
+## How do I sort by several columns?
 
-Pass a list. Each entry sorts ascending unless it starts with `-`; an entry can also be a `{ column, order }` object. A comma separated string means the same list.
+Pass a list. In a list, each entry sorts ascending unless it starts with `-`. An entry can also be a `{ column, order }` object, where `order` defaults to `'asc'`. A comma separated string means the same list.
 
-```ts
-await service.findAll({}, { sortBy: ['status', '-createdAt'] });
+```ts title="posts.controller.ts"
+await this.postsService.findAll({}, { sortBy: ['status', '-created_at'] });
 // ORDER BY status ASC, created_at DESC, id ASC
 
-await service.findAll({}, { sortBy: [{ column: 'views', order: 'desc' }, { column: 'title' }] });
-await service.findAll({}, { sortBy: 'status,-createdAt' }); // same as the first
+await this.postsService.findAll({}, {
+  sortBy: [{ column: 'views', order: 'desc' }, { column: 'title' }],
+});
+// ORDER BY views DESC, title ASC, id ASC
+
+await this.postsService.findAll({}, { sortBy: 'status,-created_at' }); // same as the first
 ```
 
-### How do I sort by a related column?
+`sortOrder` does not apply to list entries. A column listed twice is sorted once, by its first entry.
 
-Write it as `relation.column`. It works for a top-level belongs-to relation, which is joined for the data query only (the count query stays unjoined):
+## How do I sort by a related column?
 
-```ts
-await countries.findAll({}, { sortBy: ['region.name', 'name'] });
-// LEFT JOIN regions ... ORDER BY regions.name ASC, countries.name ASC, countries.id ASC
+Write it as `relation.column`. It works for a top-level belongs-to relation, which is joined for the data query only. The count query stays unjoined unless a filter needs the relation.
+
+```ts title="posts.controller.ts"
+await this.postsService.findAll({}, { sortBy: ['author.name', '-created_at'] });
+// LEFT JOIN authors ... ORDER BY authors.name ASC, posts.created_at DESC, posts.id ASC
 ```
 
-A has-many or many-to-many column cannot be sorted on, because a row has many of them; that is a 400. So is an unknown column, and a column outside [`sortableColumns`](/docs/allowlists). Over HTTP, [`parseQuery`](/docs/query-parsing) reads `?sortBy=region.name,-name`.
+These are a 400:
+
+- a has-many or many-to-many column, because a row has many of them,
+- a column that does not exist on the table or the relation,
+- a column outside [`sortableColumns`](/docs/allowlists) when that allowlist is set.
+
+Over HTTP, [`parseQuery`](/docs/query-parsing) reads `?sortBy=author.name,-created_at`. It always hands the service a list, so an unprefixed column in the query string sorts ascending unless `?sortOrder=desc` is set: `?sortBy=views` is `views ASC`, while `findAll({}, { sortBy: 'views' })` is `views DESC`.
 
 ### Why does every query end with the primary key?
 
-So that pages are stable. Postgres returns rows that tie on the sort columns in no fixed order, and without any `ORDER BY` the order can change between two queries. Offset pagination over an unstable order repeats some rows and skips others. Since 3.3.1 the primary key is always the last `ORDER BY` column (ascending), unless it is already in the list:
+So that pages are stable. Postgres returns rows that tie on the sort columns in no fixed order, and without any `ORDER BY` the order can change between two queries. Offset pagination over an unstable order repeats some rows and skips others. Since 3.3.1 the primary key is always the last `ORDER BY` column (ascending), unless it is already in the list.
 
-```ts
-await service.findAll({}, { sortBy: 'views', sortOrder: 'desc' });
+```ts title="posts.controller.ts"
+await this.postsService.findAll({}, { sortBy: 'views', sortOrder: 'desc' });
 // ORDER BY views DESC, id ASC
 
-await service.findAll();
+await this.postsService.findAll();
 // no sortBy and no defaultSort: ORDER BY id ASC
 ```
 
-### Default sort per entity
+## How do I set a default sort for an entity?
 
-Define an ordered list of columns in `forFeature` config. They're applied as the `ORDER BY` clause when no explicit `sortBy` is passed. The first column is the primary sort, the rest are tiebreakers.
+Set `defaultSort` in the entity's `forFeature` config. It is an ordered list: the first column is the primary sort and the rest are tiebreakers. It applies whenever the caller passes no `sortBy`.
 
 ```ts accent=nest title="posts/posts.module.ts"
 DrizzleCrudModule.forFeature([
@@ -122,25 +150,26 @@ DrizzleCrudModule.forFeature([
       ],
     },
   },
-])
+]);
 ```
 
-```ts
+```ts title="posts.controller.ts"
+await this.postsService.findAll();
 // ORDER BY position ASC, created_at DESC, id ASC
-await service.findAll();
 
-// ORDER BY name DESC, id ASC : the default is replaced, not appended
-await service.findAll({}, { sortBy: 'name' });
+await this.postsService.findAll({}, { sortBy: 'title' });
+// ORDER BY title DESC, id ASC: the default is replaced, not extended
 ```
 
 <Callout type="warn" title="sortBy replaces defaultSort">
-  An explicit `sortBy` **replaces** the entity's `defaultSort` entirely. The
-  primary key tiebreaker is still added.
+  An explicit `sortBy` replaces the entity's `defaultSort` entirely. Only the primary key tiebreaker is still added.
 </Callout>
 
-### Opt-in `created_at` fallback
+Each entry's `order` defaults to `'asc'`. An unknown column in `defaultSort` is a config mistake, not a request error, so it never throws. The column is skipped, and each query that falls back to `defaultSort` logs `[nestjs-drizzle-crud] defaultSort references unknown column "<col>"; skipping.` A caller `sortBy` with an unknown column is a 400 instead.
 
-Set `defaults.sortOrder` in `forRoot` to apply a `created_at` fallback to every entity that doesn't define its own `defaultSort`:
+### Can every entity sort by created_at by default?
+
+Yes. Set `defaults.sortOrder` in `forRoot`. Every entity that has no `defaultSort` of its own and has a `timestamps.createdAt` column then sorts by that column in this direction.
 
 ```ts accent=nest title="app.module.ts"
 DrizzleCrudModule.forRoot({
@@ -148,65 +177,101 @@ DrizzleCrudModule.forRoot({
   connectionString: process.env.DATABASE_URL,
   schema,
   defaults: {
-    sortOrder: 'desc', // every findAll() orders by created_at DESC unless overridden
+    sortOrder: 'desc', // findAll() orders by created_at DESC unless told otherwise
   },
 });
 ```
 
-Per-column `order` defaults to `'asc'` when you don't specify it. Unknown columns in `defaultSort` are skipped and emit a `[nestjs-drizzle-crud] defaultSort references unknown column "<col>"; skipping.` warning at startup. They never throw. (Caller-supplied `sortBy` is different: it throws on unknown columns, see below.)
+Leave `defaults.sortOrder` out and entities without a `defaultSort` sort by the primary key alone.
 
-## Cap on `limit`
+## How do I change the page size limits?
 
-`limit` is capped at `defaults.pagination.maxLimit`. Anything over the cap is silently lowered to the cap. To return more rows per page, raise the cap in `forRoot`:
+Set `pagination` under `defaults` in `forRoot` for every entity, or in an entity's `forFeature` config for that entity alone.
 
-```ts
-defaults: {
-  pagination: { defaultLimit: 20, maxLimit: 200 },
-}
+<PropsTable
+  props={{
+    "pagination.defaultLimit": { type: "number", default: "20", description: "Rows per page when the caller passes no limit." },
+    "pagination.maxLimit": { type: "number", default: "100", description: "The largest limit a caller can get. A larger limit is lowered to this, without an error." },
+  }}
+/>
+
+```ts accent=nest title="app.module.ts"
+DrizzleCrudModule.forRoot({
+  dialect: 'postgresql',
+  connectionString: process.env.DATABASE_URL,
+  schema,
+  defaults: {
+    pagination: { defaultLimit: 20, maxLimit: 200 },
+  },
+});
 ```
 
-Either key can be set on its own, at the project level or per entity. `pagination: { defaultLimit: 5 }` keeps `maxLimit` at 100. Before 3.3.1 a per-entity override with one key dropped the other, and the query ran with no limit at all.
+Either key can be set on its own: `pagination: { defaultLimit: 5 }` keeps `maxLimit` at 100, because the settings merge one level deep. Before 3.3.1 a per-entity override with one key dropped the other, and the query ran with no limit at all.
 
-<Callout type="info">
-  The cap is enforced on every call. If you genuinely need to return every row
-  (e.g. an export endpoint), use a custom method that bypasses `findAll` and
-  calls Drizzle directly.
+<Callout title="The cap cannot be turned off">
+  The cap applies on every call, so a client cannot ask for a million rows. For an export endpoint that needs every row, walk the table with [cursor pagination](/docs/cursor-pagination), or write a custom service method over `this.config.db`.
 </Callout>
 
-## Clamping & fail-fast
+## Which inputs are clamped and which are a 400? [#clamping-fail-fast]
 
-Pagination and sorting inputs are normalized before they reach SQL. Bad input is either silently clamped to a safe value or rejected as `BadRequestException` (→ 400), depending on the failure mode.
+Pagination input is clamped to a safe value and never throws. Sort and filter input that cannot be right is a `BadRequestException` (400).
 
-**Silently clamped (never throws):**
+Clamped, never throws:
 
-| Input | Result |
+| Input | Becomes |
 | --- | --- |
+| `page` missing or `NaN` | `1` |
 | `page < 1` | `1` |
+| `limit` missing or `NaN` | `defaultLimit` |
 | `limit <= 0` | `1` |
 | `limit > maxLimit` | `maxLimit` |
-| `page` / `limit` not a finite number | `1` / `defaultLimit` |
+| A fraction, such as `limit: 10.7` | Rounded down: `10` |
 
-A `LIMIT 0` or negative `OFFSET` can never reach SQL. Every value is clamped via the package's shared `resolvePagination` helper.
+A `LIMIT 0` or a negative `OFFSET` never reaches SQL. The same clamp (`resolvePagination`) runs in `findAll`, `findByCursor` and `fullTextSearch`.
 
-**Throws `BadRequestException` (→ 400):**
+A `BadRequestException` (400):
 
 | Input | Why |
 | --- | --- |
-| Caller `sortBy` not a column on the table (or on a belongs-to relation) | Mirrors the unknown-column guard, typos surface immediately instead of returning unsorted data. |
-| Caller `sortBy` outside `sortableColumns` | See [Allowlists](/docs/allowlists). |
-| Caller `sortOrder` other than `'asc'` / `'desc'` | Without the guard, anything other than `'desc'` silently sorted ascending. |
-| `{ gt / gte / lt / lte: NaN }` or `{ …: Infinity }` | Reaches SQL as an opaque 500; rejected as 400 instead. |
-| A filter key that is not a column or relation, or an unknown operator | Dropping it would return every row for a typo. See [Filtering](/docs/filtering#what-happens-with-an-unknown-filter-key). |
-| A date filter value that is not a date | `{ createdAt: { gte: 'garbage' } }`. |
+| A caller `sortBy` that is not a column of the table or of a belongs-to relation | A typo surfaces at once instead of returning rows in the wrong order. |
+| A caller `sortBy` outside `sortableColumns` | See [allowlists](/docs/allowlists). |
+| A `sortBy` list entry that is neither a string nor `{ column, order }` | The shape is checked before any SQL runs. |
+| A `sortOrder` other than `'asc'` or `'desc'` | Before this check, anything other than `'desc'` silently sorted ascending. |
+| `{ gt, gte, lt, lte }` with `NaN` or `Infinity` | It would reach SQL as an opaque 500. |
+| A filter key that is not a column or relation, or an unknown operator | Dropping it would return every row for a typo. See [unknown filter keys](/docs/filtering#what-happens-with-an-unknown-filter-key). |
+| A date filter value that is not a date | For example `{ created_at: { gte: 'garbage' } }`. |
 
-For the full per-method exception table (404 / 409 / 400 / 500 mapping), see [Errors](/docs/errors).
+For the full per-method table of 400, 404, 409 and 500 responses, see [errors](/docs/errors).
 
-## Cursor-based pagination
+## When should I use cursor pagination instead?
 
-`findAll` is offset based. For deep pages, infinite scroll or lists that change while people read them, use `findByCursor`, which returns a `nextCursor` instead of a page number. See [Cursor pagination](/docs/cursor-pagination).
+When people scroll deep into a list, or the list changes while they read it. `findAll` is offset based: page 500 still reads and throws away 499 pages of rows, and a row inserted on page 1 shifts every later page by one. `findByCursor` returns a `nextCursor` instead of a page number and avoids both. See [cursor pagination with Drizzle](/docs/cursor-pagination).
 
-## Next
+## Common questions
 
-- → [Cursor pagination with `findByCursor`](/docs/cursor-pagination)
-- → [Relations: eager loading via `options.relations`](/docs/relations)
-- → [Bulk operations: transactional pagination-free reads](/docs/bulk-operations)
+<Accordions>
+  <Accordion title="What is the default page size?">
+    20 rows, from `pagination.defaultLimit`. A caller can ask for up to `pagination.maxLimit` rows, which is 100 unless you raise it in `forRoot` or `forFeature`.
+  </Accordion>
+  <Accordion title="Does a limit above maxLimit throw an error?">
+    No. It is lowered to `maxLimit`, and the response's `limit` field shows the value that was used.
+  </Accordion>
+  <Accordion title="Why is total null in my response?">
+    The call passed `withCount: false` (or `?withCount=false`), which skips the `COUNT(*)` query. Use `hasMore` to decide whether to show a next page.
+  </Accordion>
+  <Accordion title="Does sortBy add to defaultSort or replace it?">
+    It replaces it. Only the primary key tiebreaker is still added at the end.
+  </Accordion>
+  <Accordion title="Can I sort by a has-many relation column?">
+    No. A row has many values for that column, so the sort is a 400. Only top-level belongs-to columns, written as `relation.column`, can be sorted on.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<ListOrdered />} title="Cursor pagination with Drizzle" href="/docs/cursor-pagination" description="Keyset pages with findByCursor for deep lists and infinite scroll." />
+  <Card icon={<Filter />} title="Filtering with Drizzle in NestJS" href="/docs/filtering" description="Operators, OR groups and search to narrow the rows before you page them." />
+  <Card icon={<Terminal />} title="Parse query strings into filters" href="/docs/query-parsing" description="Turn ?page=2&sortBy=-created_at into findAll arguments." />
+  <Card icon={<Shield />} title="NestJS Drizzle filter and column allowlists" href="/docs/allowlists" description="Limit which columns a caller may sort by with sortableColumns." />
+</Cards>

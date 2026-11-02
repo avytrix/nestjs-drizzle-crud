@@ -1,94 +1,167 @@
 ---
-title: Transactions
-description: Use executeSqlTransaction() to span multiple service calls in one atomic unit.
+title: Drizzle transactions in NestJS
+description: Run Drizzle transactions in NestJS across several service calls. Open one with executeSqlTransaction or db.transaction and pass the handle to each call.
+icon: Workflow
 ---
 
-For operations that span multiple services (or multiple calls to the same service), the package exposes `executeSqlTransaction()` for explicit transaction control.
+To run Drizzle transactions in NestJS, open a transaction and pass its handle to every call as `{ transaction: tx }`. Inside a service, `this.executeSqlTransaction(async (tx) => ...)` opens it; anywhere else, inject `DRIZZLE_DB` and call Drizzle's `db.transaction`. The transaction commits when the callback resolves and rolls back when it throws, so every call that received `tx` succeeds or fails together.
 
-## The helper
+<Callout type="warn" title="A call without the handle is outside the transaction">
+  Only calls that receive `{ transaction: tx }` join the transaction. A call that leaves it out runs outside the transaction, commits on its own, and is not rolled back when the callback throws.
+</Callout>
 
-```ts twoslash
+## How do I run several writes in one transaction?
+
+Call `executeSqlTransaction` from a method on your service and pass `tx` to each call:
+
+```ts title="users.service.ts"
 import { SqlBaseCrudService } from 'nestjs-drizzle-crud';
-type User = { id: number; name: string; email: string };
-type Profile = { id: number; userId: number; bio: string };
-class UsersService extends SqlBaseCrudService<User, Omit<User, 'id'>, Partial<User>, Partial<User>> {
-  // Called from a service method: executeSqlTransaction is protected.
-  doIt(profiles: ProfilesService) {
+import type { ProfilesService } from '../profiles/profiles.service';
+
+export class UsersService extends SqlBaseCrudService<User, CreateUserDto> {
+  signUp(dto: CreateUserDto, profiles: ProfilesService) {
     return this.executeSqlTransaction(async (tx) => {
-      const user = await this.create({ name: 'Ada', email: 'ada@example.com' }, { transaction: tx });
-      await profiles.create({ userId: user.id, bio: 'Mathematician' }, { transaction: tx });
+      const user = await this.create(dto, { transaction: tx });
+      await profiles.create({ userId: user.id, bio: '' }, { transaction: tx });
       return user;
     });
   }
 }
-class ProfilesService extends SqlBaseCrudService<Profile, Omit<Profile, 'id'>, Partial<Profile>, Partial<Profile>> {}
-// ---cut---
-const users = new UsersService({} as any);
-users.doIt(new ProfilesService({} as any));
 ```
 
-`executeSqlTransaction` opens a transaction on the configured database, runs the callback, commits on success, and rolls back on any thrown error.
+`executeSqlTransaction` is `protected`, so you call it from inside the service, not from a controller. It returns whatever the callback returns.
 
-## Passing `{ transaction: tx }` to methods
+<PropsTable
+  props={{
+    operation: { type: "async (tx) => result", required: true, description: "The work to run. Commit on resolve, roll back on throw." },
+    existingTransaction: { type: "Drizzle transaction", description: "Run the callback inside this transaction instead of opening a new one. No savepoint is created." },
+  }}
+/>
 
-Every CRUD method accepts an optional last argument of `SqlOperationOptions`. Pass `{ transaction: tx }` to enlist the call in an existing transaction:
+## How do I start a transaction outside a service?
 
-```ts
-const tx = await users.executeSqlTransaction(async (tx) => {
-  // both writes share the same transaction
-  const user = await users.create({ name: 'Ada' }, { transaction: tx });
-  const profile = await profiles.create({ userId: user.id }, { transaction: tx });
-  return { user, profile };
-});
+Inject `DRIZZLE_DB`, the Drizzle instance the module built, and call `db.transaction` yourself. This suits an orchestrating provider that coordinates several CRUD services:
+
+```ts accent=nest title="signup.service.ts"
+import { Inject, Injectable } from '@nestjs/common';
+import { DRIZZLE_DB } from 'nestjs-drizzle-crud';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { UsersService } from '../users/users.service';
+import { ProfilesService } from '../profiles/profiles.service';
+
+@Injectable()
+export class SignupService {
+  constructor(
+    @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase,
+    private readonly users: UsersService,
+    private readonly profiles: ProfilesService,
+  ) {}
+
+  signUp(dto: CreateUserDto) {
+    return this.db.transaction(async (tx) => {
+      const user = await this.users.create(dto, { transaction: tx });
+      await this.profiles.create({ userId: user.id, bio: '' }, { transaction: tx });
+      return user;
+    });
+  }
+}
 ```
 
-<Callout type="info">
-  The `tx` handle is a Drizzle transaction object. It's typed as `any` in
-  `SqlOperationOptions` so the package doesn't depend on a specific
-  Drizzle transaction type. Pass it through to other Drizzle calls if you
-  need to drop down to raw queries inside the transaction.
-</Callout>
+`DrizzleCrudModule.forRoot` registers `DRIZZLE_DB` globally, so any provider can inject it. Your CRUD services themselves must not inject it: `forFeature` builds them and hands them the database already (see [Defining services](/docs/defining-services)).
 
-## Mixing package methods with raw Drizzle
+## Which methods accept a transaction?
 
-```ts accent=drizzle
-import { eq } from 'drizzle-orm';
-import { posts, users } from './db/schema';
+Every read and write method takes `SqlOperationOptions` as its last argument, and `transaction` is one of its fields:
 
-await users.executeSqlTransaction(async (tx) => {
-  const user = await users.create({ name: 'Ada' }, { transaction: tx });
-  // Raw Drizzle inside the same transaction:
-  await tx.insert(posts).values({ authorId: user.id, title: 'Hello' });
-});
+<PropsTable
+  props={{
+    transaction: { type: "any (a Drizzle transaction)", description: "Run this call inside the given transaction. Typed as any so the package does not depend on one driver's transaction type." },
+  }}
+/>
+
+Some methods open their own transaction when you do not pass one, and join yours when you do:
+
+| Method | Without `transaction` | With `transaction` |
+| --- | --- | --- |
+| `massCreate`, `massUpdate`, `massUpsert`, the other mass writes | Opens its own transaction | Joins yours, with savepoints inside it |
+| `attach`, `detach`, `sync` | Opens its own transaction | Joins yours |
+| `create` with nested relations | Opens its own transaction | Joins yours |
+| `find`, `findAll`, `create`, `update`, `delete` and the other single-row calls | Runs on the pool, no transaction | Joins yours |
+
+So a single `update` is not wrapped in a transaction of its own: its existence check and its `UPDATE` are two statements. Pass a transaction when they must see the same snapshot, or use [optimistic locking](/docs/optimistic-locking) so the `UPDATE` re-checks the version.
+
+## Can I mix package methods with raw Drizzle?
+
+Yes. `tx` is the standard Drizzle transaction handle, so anything you can do with `db` you can do with `tx`, inside the same transaction:
+
+```ts title="users.service.ts"
+import { posts } from '../db/schema';
+
+createWithWelcomePost(dto: CreateUserDto) {
+  return this.executeSqlTransaction(async (tx) => {
+    const user = await this.create(dto, { transaction: tx });
+    // Raw Drizzle in the same transaction:
+    await tx.insert(posts).values({ authorId: user.id, title: 'Hello' });
+    return user;
+  });
+}
 ```
 
-The `tx` is the standard Drizzle transaction handle. Anything you can do with `db` you can do with `tx`, and it'll be enlisted in the same transaction.
+## What happens when I nest transactions?
 
-## Nesting
+It depends on what you pass:
 
-`executeSqlTransaction` can be nested in code, but each call opens its own savepoint. If an inner callback throws, the outer transaction is unaffected. For most use cases, prefer a single top-level `executeSqlTransaction` per request.
-
-## Failure modes
-
-| Failure | Behavior |
+| Inside a transaction callback you call | Result |
 | --- | --- |
-| The callback throws | The transaction is rolled back. The error propagates to the caller. |
-| A nested `massCreate` throws `BulkOperationException` | The transaction is rolled back. The exception propagates. |
-| The connection drops mid-transaction | The database rolls back. The package surfaces the underlying error. |
+| A package method with `{ transaction: tx }` | Runs in the same transaction. |
+| `this.executeSqlTransaction(cb, tx)` | Runs `cb` in the same transaction. No savepoint. |
+| `this.executeSqlTransaction(cb)` without `tx` | Opens a second, independent transaction. It commits or rolls back on its own. |
+| `tx.transaction(cb)` (Drizzle) | Opens a savepoint. A throw inside rolls back only the savepoint, if you catch it. |
 
-## When to use transactions
+For most requests, one top-level transaction with `tx` passed everywhere is the right shape.
 
-- **Cross-service atomicity**. Creating a `User` and a `Profile` in one atomic unit.
-- **Read-modify-write consistency**. Read a row, decide based on its value, write back, all in one transaction.
-- **Bulk operations that need external side effects in the same atomic unit**. See [Bulk operations](/docs/bulk-operations).
+## What happens when something fails?
 
-## When **not** to use transactions
+The transaction rolls back and the error reaches your caller:
 
-- **Read-only queries**, `findAll`, `count`, `findOne` don't need a transaction.
-- **Independent writes**. If the operations can fail or succeed independently, separate transactions are usually better (smaller blast radius on failure).
-- **Long-running operations**. Transactions hold locks. Don't include network calls, queue publishes, or unbounded `await`s inside a transaction.
+| Failure | Behaviour |
+| --- | --- |
+| The callback throws | Rolled back. The error propagates. |
+| A `massCreate` inside throws `BulkOperationException` | Rolled back. The exception propagates as a 400. |
+| An after-event subscriber throws | Rolled back, because [events](/docs/events) fire inside the transaction. |
+| The connection drops mid-transaction | The database rolls back. The driver error propagates. |
 
-## Next
+## When should I use a transaction?
 
-- → [Bulk operations: transactional by default, but `executeSqlTransaction` is for cross-service work](/docs/bulk-operations)
-- → [Lifecycle hooks, `before*` / `after*` fire on every CRUD call, including those inside transactions](/docs/hooks-validation)
+Use one when several writes must succeed or fail together:
+
+- **Cross-service atomicity.** Creating a user and its profile as one unit.
+- **Read, decide, write.** Read a row, decide based on its value, write back. Add a [row lock](/docs/row-locks) so no one changes the row in between.
+- **Bulk writes plus related changes.** A `massUpdate` and the audit rows that go with it.
+
+Skip it for read-only queries, which need no transaction, and for writes that can succeed or fail independently. Keep network calls, queue publishes and other slow `await`s out of the callback: a transaction holds its locks until it ends.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Can I call executeSqlTransaction from a controller?">
+    No. It is a protected method, so call it from a method on your service. Outside a service, inject `DRIZZLE_DB` and call `db.transaction`.
+  </Accordion>
+  <Accordion title="Do bulk methods need my own transaction?">
+    No. Every mass write opens its own transaction. Pass `{ transaction: tx }` only when the bulk call must commit together with other writes.
+  </Accordion>
+  <Accordion title="Does a nested executeSqlTransaction create a savepoint?">
+    No. Without the second argument it opens a separate transaction, and with it the callback runs in the same transaction. Use Drizzle's `tx.transaction` for a savepoint.
+  </Accordion>
+  <Accordion title="Do hooks and events run inside the transaction?">
+    Yes, when you pass one. Hooks and module-level events run during the call while the transaction is open, and the event payload carries it, so a subscriber can write in the same transaction.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Lock />} title="Row locks with SELECT FOR UPDATE" href="/docs/row-locks" description="Lock rows inside a transaction so no one changes them between your read and your write." />
+  <Card icon={<Layers />} title="Bulk insert and update with Drizzle" href="/docs/bulk-operations" description="Mass writes that run in their own transaction and name every failed item." />
+  <Card icon={<BellRing />} title="NestJS Drizzle CRUD events and audit logs" href="/docs/events" description="Subscribers that run inside the write's transaction." />
+</Cards>

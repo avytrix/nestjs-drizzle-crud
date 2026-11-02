@@ -1,41 +1,52 @@
 ---
-title: Relations
-description: Eager-load belongs-to, has-many, many-to-many and nested relations in Drizzle CRUD without N+1 queries, and filter by related columns.
+title: Drizzle relations in NestJS
+description: Declare Drizzle relations in NestJS and eager-load belongs-to, has-many, many-to-many and nested relations without N+1 queries.
+icon: GitMerge
 ---
 
-Declare relations in the entity's `forFeature` config under `relations`, keyed by relation name, then eager-load them with `options.relations`. Three kinds are supported, and any of them can nest:
+Drizzle relations in NestJS are declared in the entity's `forFeature` config under `relations`, keyed by relation name, and loaded with `options.relations` on any read or write. Three shapes are supported, and each can nest: belongs-to (an object or `null`), has-many and many-to-many (arrays). No shape ever runs a query per row, so eager loading a page of 50 rows costs the same number of queries as a page of 5.
 
-- **belongs-to** (many-to-one / one-to-one): a foreign key on this table points at another table. Loaded with a `LEFT JOIN` in the same query, resolves to an object or `null`.
-- **has-many** (one-to-many): a foreign key on the *other* table points back here. Loaded with **one extra batched query per relation**, resolves to an array.
-- **many-to-many**: a join table holds a foreign key to each side. Loaded with **one extra batched query per relation**, resolves to an array.
+<Callout title="Only a top-level belongs-to is joined">
+  A belongs-to declared on the service's own table rides along in the main query as a `LEFT JOIN`.
+  Everything else (has-many, many-to-many, and every nested level whatever its shape) is loaded by
+  one batched `IN (...)` query per relation. A collection is never joined, because a join would
+  multiply parent rows and break `total` and pagination.
+</Callout>
 
-No shape ever runs a query per row, so eager loading a page of 50 rows costs the same number of queries as a page of 5.
+These relations are config objects that point at Drizzle tables. The package does not read Drizzle's
+own `relations()` helper, so you can keep or drop that for the Drizzle query API as you like.
 
 ## How do I avoid N+1 queries?
 
-Ask for the relation instead of looping. `find`, `findOne` and `findAll` accept `options.relations`, and the service does the batching for you:
+Ask for the relation instead of looping. `find`, `findOne`, `findAll` and `findByCursor` accept
+`options.relations`, and the service batches the loads:
 
-```ts
+```ts title="countries/countries.reads.ts"
 // 3 queries for the whole page: data, count, and all states in one IN (...)
-const page = await countries.findAll(
+const page = await countriesService.findAll(
   {},
   { page: 1, limit: 50 },
   { relations: ['region', 'states'] },
 );
 ```
 
-The alternative, fetching countries and then querying states inside a loop, is 1 + N queries. That is the pattern this replaces.
+Fetching the countries and then querying states inside a loop is 1 + N queries. That is the pattern
+this replaces.
 
-| Relation type | SQL | Extra queries | Result shape |
+| Relation | SQL | Extra queries | Result |
 | --- | --- | --- | --- |
-| `belongsTo` (default) | `LEFT JOIN` in the main query | 0 | object, or `null` when unmatched |
+| top-level `belongsTo` (default) | `LEFT JOIN` in the main query | 0 | object, or `null` when unmatched |
 | `hasMany` | `SELECT ... WHERE fk IN (parent keys)` | 1 per relation, for the whole page | array, `[]` when empty |
 | `manyToMany` | `SELECT ... FROM join JOIN target ... WHERE fk IN (parent keys)` | 1 per relation, for the whole page | array, `[]` when empty |
-| nested (any shape) | as above, against the level above it | 1 per relation per level | as above |
+| nested (any shape, including belongs-to) | batched `IN (...)` against the level above | 1 per relation per level | as above |
 
-Relations load concurrently, so three collections are three parallel queries, not three round trips in sequence.
+Sibling relations load concurrently, so three collections are three parallel queries, not three
+round trips in sequence.
 
-## Declaring a belongs-to relation
+## How do I declare a belongs-to relation?
+
+Name the foreign-key column on this table with `localKey`. A belongs-to is a many-to-one or
+one-to-one link, and it is the default `type`.
 
 ```ts accent=nest title="cities/cities.module.ts"
 import { cities, states } from '../db/schema';
@@ -46,7 +57,7 @@ DrizzleCrudModule.forFeature([
     table: cities,
     config: {
       relations: {
-        // cities.state_id -> states.id  (references defaults to 'id')
+        // cities.state_id -> states.id (references defaults to 'id')
         state: { table: states, localKey: 'state_id', references: 'id' },
       },
     },
@@ -54,17 +65,22 @@ DrizzleCrudModule.forFeature([
 ])
 ```
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `<relationName>` | `string` | The key used to refer to the relation in filters and eager loads. |
-| `table` | `Drizzle table` | The target table. |
-| `type` | `'belongsTo' \| 'hasMany'?` | Defaults to `'belongsTo'`. |
-| `localKey` | `string` | The column on the *current* table that holds the FK. Required for belongs-to. |
-| `references` | `string?` | The column on the target table to match against. Defaults to `'id'`. |
+<PropsTable
+  props={{
+    table: { type: "Drizzle table", required: true, description: "The target table." },
+    type: { type: '"belongsTo" | "hasMany" | "manyToMany"', default: '"belongsTo"', description: "The relation shape." },
+    localKey: { type: "string", required: true, description: "The column on this table that holds the foreign key. Required for belongs-to." },
+    references: { type: "string", default: '"id"', description: "The column on the target table the foreign key points at." },
+    relations: { type: "RelationsConfig", description: "Relations of the target table, so a dotted path can load them. Same shape as this map." },
+  }}
+/>
 
-## Declaring a has-many relation
+The key of the entry (`state` here) is the relation name. You use it in `options.relations`, in
+filters, in `select` paths and as the property on the returned row.
 
-Set `type: 'hasMany'` and name the column on the *child* table that points back at this one:
+## How do I declare a has-many relation?
+
+Set `type: 'hasMany'` and name the column on the child table that points back here with `foreignKey`:
 
 ```ts accent=nest title="countries/countries.module.ts"
 import { countries, regions, states } from '../db/schema';
@@ -85,15 +101,20 @@ DrizzleCrudModule.forFeature([
 ])
 ```
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `foreignKey` | `string` | The column on the *target* table pointing back here. Required for has-many. |
-| `parentKey` | `string?` | The column on the *current* table that `foreignKey` matches. Defaults to that table's primary key: the configured `primaryKey` at the top level, the related table's own primary key column at a nested level. |
-| `orderBy` | `SortColumn[]?` | How to order the collection, applied in SQL. |
+<PropsTable
+  props={{
+    foreignKey: { type: "string", required: true, description: "The column on the target table that points back at this one. Required for has-many." },
+    parentKey: { type: "string", description: "The column on this table that foreignKey matches. Defaults to this table's primary key: the configured primaryKey at the top level, the related table's own primary key column at a nested level." },
+    orderBy: { type: "SortColumn[]", description: "How to order each collection, applied in SQL: [{ column, order }]." },
+  }}
+/>
 
-A relation missing its key column throws when the service is constructed, so a typo shows up at startup instead of as an empty array at runtime.
+When the service is built, it checks that each relation has its `table` and the settings its shape
+requires (`localKey`, `foreignKey`, or the three `through` settings), including nested relations,
+and throws with the relation's path if one is missing. It does not check that the named columns
+exist, so a misspelled column name leaves the relation out of the result instead of failing.
 
-## Declaring a many-to-many relation
+## How do I declare a many-to-many relation?
 
 Name the join table and its two foreign-key columns:
 
@@ -115,34 +136,36 @@ config: {
 }
 ```
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `through` | `Drizzle table` | The join table. Required for many-to-many. |
-| `throughLocalKey` | `string` | The join-table column matching this table's `parentKey`. |
-| `throughForeignKey` | `string` | The join-table column matching `references` on the target table. |
-| `references` | `string?` | The target column. Defaults to `'id'`. |
-| `parentKey` | `string?` | The column on the current table. Defaults to that table's primary key, as for has-many. |
+<PropsTable
+  props={{
+    through: { type: "Drizzle table", required: true, description: "The join table. Required for many-to-many." },
+    throughLocalKey: { type: "string", required: true, description: "The join-table column that matches parentKey on this table." },
+    throughForeignKey: { type: "string", required: true, description: "The join-table column that matches references on the target table." },
+    references: { type: "string", default: '"id"', description: "The target column." },
+    parentKey: { type: "string", description: "The column on this table. Defaults to its primary key, as for has-many." },
+  }}
+/>
 
-<Callout type="info" title="Nested collections key on their own table">
-  Before 3.3.1 a nested collection borrowed the root service's `primaryKey`.
-  With a root keyed on `uid`, `comment.author.posts` looked for
-  `author.uid` and came back empty. A nested level now uses the primary key
-  column of the table it hangs off (`authors.id` here), so no `parentKey` is
-  needed unless the join column is something else.
-</Callout>
-
-```ts
-await countries.find(1, { relations: ['tags'] });
+```ts title="countries/countries.reads.ts"
+await countriesService.find(1, { relations: ['tags'] });
 // { id: 1, name: 'India', tags: [{ id: '...', name: 'himalayan' }, ...] }
 ```
 
-The join table never appears in the result. Its key is used to group each row onto the right parent and then removed.
+The join table never appears in the result. Its key travels with each row long enough to group it
+onto the right parent, and is then removed.
+
+<Callout title="Nested collections key on their own table">
+  Before 3.3.1 a nested collection borrowed the root service's `primaryKey`. With a root keyed on
+  `uid`, `comment.author.posts` looked for `author.uid` and came back empty. A nested level now uses
+  the primary key column of the table it hangs off (`authors.id` here), so `parentKey` is only needed
+  when the join column is something else.
+</Callout>
 
 ## How do I eager-load a relation of a relation?
 
 Give the relation its own `relations` map, then address it with a dotted path in `options.relations`:
 
-```ts accent=nest
+```ts accent=nest title="countries/countries.module.ts"
 config: {
   relations: {
     states: {
@@ -157,28 +180,31 @@ config: {
 }
 ```
 
-```ts
+```ts title="countries/countries.reads.ts"
 // 4 queries for the page: data, count, all states, all cities
-const page = await countries.findAll({}, { page: 1, limit: 50 }, {
+const page = await countriesService.findAll({}, { page: 1, limit: 50 }, {
   relations: ['states', 'states.cities'],
 });
-// data[0].states[0].cities -> [{ id, name, state_id }, ...]
+// page.data[0].states[0].cities -> [{ id, name, state_id }, ...]
 ```
 
-Each level is one batched query for *every* row at that level, so 50 countries with 200 states and 900 cities is still 4 queries. Nesting works for every shape, including a belongs-to chain:
+Each level is one batched query for every row at that level, so 50 countries with 200 states and 900
+cities is still 4 queries. Nesting works for every shape, including a belongs-to chain:
 
-```ts
-await cities.find(1, { relations: ['state.country'] });
+```ts title="cities/cities.reads.ts"
+await citiesService.find(1, { relations: ['state.country'] });
 // { id: 1, name: 'Bengaluru', state: { id: 7, name: 'Karnataka', country: { id: 3, name: 'India' } } }
 ```
 
-Asking for `state.country` pulls in `state` on its own, so you do not have to list both.
+Asking for `state.country` pulls in `state` on its own, so you do not have to list both. A name that
+is not configured is dropped, along with the rest of its path.
 
-## Ordering a collection
+## How do I order a collection?
 
-Set `orderBy` on the relation and the children come back sorted by SQL, not by insertion order:
+Set `orderBy` on the relation, and the children come back sorted by SQL rather than in insertion
+order:
 
-```ts accent=nest
+```ts accent=nest title="countries/countries.module.ts"
 states: {
   table: states,
   type: 'hasMany',
@@ -187,12 +213,15 @@ states: {
 }
 ```
 
-An `orderBy` entry naming a column that does not exist is warned about and skipped, the same way `defaultSort` behaves.
+An `orderBy` entry that names a column the target table does not have is warned about and skipped,
+the same way `defaultSort` behaves.
 
-## Eager loading
+## What does an eager-loaded row look like?
 
-```ts
-await countries.find(1, { relations: ['region', 'states'] });
+The relation appears as a property named after it:
+
+```ts title="countries/countries.reads.ts"
+await countriesService.find(1, { relations: ['region', 'states'] });
 // {
 //   id: 1,
 //   name: 'India',
@@ -205,65 +234,73 @@ await countries.find(1, { relations: ['region', 'states'] });
 // }
 ```
 
-An unmatched belongs-to relation comes back as `null`, never as an object full of nulls. A parent with no children comes back as `[]`, so callers can iterate without a guard.
+An unmatched belongs-to comes back as `null`, never as an object full of nulls. A parent with no
+children gets `[]`, so callers can iterate without a guard.
 
-Soft delete is respected on both sides: when it is enabled and the child table has the configured column, deleted children are excluded from the collection.
+Soft delete applies to related tables too. When soft delete is on for the service and a related
+table has a column under the same key, its deleted rows are hidden: a deleted parent loads as `null`
+and deleted children are left out of the collection. See [Soft delete in Drizzle ORM](/docs/soft-delete).
 
 ## Why is a collection not joined?
 
-Because a join would break the page. One country with four states becomes four rows, `count(*)` returns 4 instead of 1, and `limit 50` silently cuts a country in half. The batched `IN (...)` query keeps one row per parent and keeps `total` honest. This applies to has-many and many-to-many alike.
+Because a join would break the page. One country with four states becomes four rows, `count(*)`
+returns 4 instead of 1, and `limit 50` cuts a country in half. The batched `IN (...)` query keeps one
+row per parent and keeps `total` honest. This holds for has-many and many-to-many alike.
 
-The same reasoning applies to filters, so filtering by a child column compiles to a subquery:
+The count query follows the same rule. `findAll` joins the eager-loaded belongs-to relations and the
+relations your filters use into the data query, but only the filter relations into the count query,
+so eager loading never changes `total`.
 
-```ts
-// countries.id IN (SELECT country_id FROM states WHERE lower(name) = lower('Kerala'))
-await countries.findAll({ states: { name: 'Kerala' } });
-```
+## How do I filter by a related column?
 
-That is "parents with at least one matching child". Many-to-many filters work the same way, through the join table. Both support the same operators as any other filter, and the predicate is applied to the count query too.
+Use the relation name as a filter key, with a nested object of the related table's columns:
 
-## Filtering by related columns
-
-Use the relation name as a filter key with a nested object of the **related table's** columns:
-
-```ts
-// belongs-to: joined, then filtered
-await cities.findAll({ state: { name: 'Karnataka' } });
+```ts title="cities/cities.reads.ts"
+// belongs-to at the top level: joined, then filtered
+await citiesService.findAll({ state: { name: 'Karnataka' } });
 
 // combine with normal column filters and operators
-await cities.findAll({
+await citiesService.findAll({
   name: { ilike: 'B%' },
   state: { country_id: 3 },
 });
-
-// has-many: subquery, no join
-await countries.findAll({ states: { name: { ilike: 'K%' } } });
-
-// many-to-many: subquery through the join table, no join
-await countries.findAll({ tags: { name: 'himalayan' } });
 ```
 
-## Multi-level filtering
+A filter on a collection compiles to a subquery, never a join, for the same reason a collection is
+never joined:
 
-Multi-level filtering works through the intermediate table's columns (e.g. filter cities by `state.country_id`), so you usually do not need a direct relation to the far table.
+```ts title="countries/countries.reads.ts"
+// countries.id IN (SELECT country_id FROM states WHERE lower(name) = lower('Kerala'))
+await countriesService.findAll({ states: { name: 'Kerala' } });
 
-```ts
-// cities → states (direct relation) → countries (via state.country_id)
-await cities.findAll({
-  state: { country_id: 3 },
-});
+// many-to-many: a subquery through the join table
+await countriesService.findAll({ tags: { name: 'himalayan' } });
 ```
 
-Or filter through the relation chain itself, `{ state: { country: { code: 'IN' } } }`, and quantify collections with `some`, `none` and `every`. See [Relation filters](/docs/relation-filters).
+That reads as "parents with at least one matching child". Collection filters accept the same
+operators as any other filter, and the predicate applies to the count query too.
 
-You can also declare a direct relation to the far table if the queries are frequent. Each declared relation is joined (belongs-to) or batched (has-many) independently when it is referenced in a filter or in `options.relations`.
+### How do I filter across more than one level?
 
-## Selecting relation columns
+Often you can filter on the intermediate table's columns, so you do not need a relation to the far
+table:
 
-`options.select` takes dotted paths, so you can narrow a relation instead of hydrating every column:
+```ts title="cities/cities.reads.ts"
+// cities -> states (direct relation) -> countries (via states.country_id)
+await citiesService.findAll({ state: { country_id: 3 } });
+```
 
-```ts
-await countries.findAll(
+Or filter through the relation chain itself, `{ state: { country: { code: 'IN' } } }`. Below the
+first belongs-to, each level is an `EXISTS` subquery on an aliased table rather than a join. Use
+`some`, `none` and `every` to quantify collections. See [Relation filters](/docs/relation-filters)
+for the full syntax.
+
+## How do I select relation columns?
+
+`options.select` takes dotted paths, so you can narrow a relation instead of loading every column:
+
+```ts title="countries/countries.reads.ts"
+await countriesService.findAll(
   {},
   { page: 1, limit: 20 },
   {
@@ -274,20 +311,57 @@ await countries.findAll(
 // { id, name, region: { code }, states: [{ name, country_id }] }
 ```
 
-The child keeps its foreign key even when you do not list it, because that column is what maps each child back to its parent. See [column selection](/docs/column-selection) for the full rules.
+The child keeps its foreign key even when you do not list it, because that column maps each child
+back to its parent. The parent likewise keeps any key a nested level needs. See
+[column selection](/docs/column-selection) for the full rules.
 
-## Limitations
+## Can clients request relations over HTTP?
 
-- **Belongs-to joins are always `LEFT`.** Filter by `id: { isNotNull: true }` if you need to drop the unmatched rows.
-- **A collection is not paginated per parent.** `orderBy` sorts the children, but every matching child is returned. Use a custom method when you need "the latest three per parent".
-- **Join-table columns are not returned.** If the join table carries data of its own (a role, a position), model it as an entity with two belongs-to relations.
+Yes. [`parseQuery`](/docs/query-parsing) turns `?with=region,states` into `options.relations` and
+`?region[name]=Asia` into a relation filter. Limit what a client may load with the
+`loadableRelations` [allowlist](/docs/allowlists); listing `states.cities` also allows `states`.
+
+## What are the limits?
+
+- **A top-level belongs-to is always a `LEFT` join.** To drop rows with no match, filter on the
+  relation: `{ state: { id: { isNotNull: true } } }`.
+- **A collection is not paginated per parent.** `orderBy` sorts the children, but every matching
+  child is returned. Write a custom method for "the latest three per parent".
+- **Join-table columns are not returned.** If the join table carries data of its own (a role, a
+  position), model it as an entity with two belongs-to relations.
 
 ## Can I load relations on a write, or count them?
 
-Yes. `create`, `update`, `upsert` and the mass writes take `options.relations` and return the rows with them loaded, and a create body can write children too. See [Relations on writes](/docs/relations-on-writes). `options.counts` adds `_count` for collections; see [Aggregates](/docs/aggregates).
+Yes. `create`, `update`, `restore`, `upsert` and the mass writes take `options.relations` and return
+the rows with them loaded, using the same batched loaders, and a create body can write children too.
+See [Relations on writes](/docs/relations-on-writes). `options.counts` adds a `_count` object for
+collections, one grouped query per relation; see [Aggregates](/docs/aggregates).
 
-## Next
+## Common questions
 
-- → [Column selection: dotted paths and partial rows](/docs/column-selection)
-- → [Primary keys: including uuid, which affects relation FKs](/docs/primary-keys)
-- → [Filtering: the full filter spec including operator reference](/docs/filtering)
+<Accordions>
+  <Accordion title="Does eager loading cause N+1 queries?">
+    No. A top-level belongs-to is joined into the main query, and every other relation costs one batched query per relation per level for the whole result, whatever the row count.
+  </Accordion>
+  <Accordion title="Which relation types are supported?">
+    Belongs-to (the default), has-many and many-to-many through a join table. Any of them can nest with a dotted path such as `states.cities`.
+  </Accordion>
+  <Accordion title="Why are has-many relations not loaded with a JOIN?">
+    A join returns one row per child, which inflates `total` and breaks `limit`. A batched `IN (...)` query keeps one row per parent.
+  </Accordion>
+  <Accordion title="Does the package use Drizzle's relations() helper?">
+    No. Relations are declared in the `forFeature` config and point at Drizzle tables directly.
+  </Accordion>
+  <Accordion title="What does an unmatched belongs-to relation return?">
+    `null`, never an object of nulls. An empty has-many or many-to-many relation returns `[]`.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Filter />} title="Relation filters" href="/docs/relation-filters" description="Filter through relation chains with some, none and every." />
+  <Card icon={<Table />} title="Column selection" href="/docs/column-selection" description="Dotted select paths and partial rows." />
+  <Card icon={<Workflow />} title="Relations on writes" href="/docs/relations-on-writes" description="Nested creates and loading relations after a write." />
+  <Card icon={<KeyRound />} title="Drizzle UUID primary keys in NestJS" href="/docs/primary-keys" description="Key types, which relation keys point at." />
+</Cards>

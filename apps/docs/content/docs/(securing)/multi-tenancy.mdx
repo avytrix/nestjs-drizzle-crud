@@ -1,39 +1,55 @@
 ---
-title: Multi-tenancy and ownership scoping
-description: "Scope every read, count and write to a tenant or owner with one config key: scope: (ctx) => ({ tenant_id: ctx.tenantId }). Another tenant's id is a 404, and a missing tenant is a 403."
+title: Multi-tenancy with Drizzle in NestJS
+description: Build a NestJS multi tenant API on Drizzle with one scope key. Every read and write is limited to the caller's tenant; a missing tenant is a 403.
+icon: Users
 ---
 
-Set `scope` on an entity and every query the service runs is limited to the rows that match it: reads, counts, cursors, writes, bulk writes, upserts, soft deletes, restores and force deletes. A create writes the scope onto the new row. You cannot forget it in one place, because no method runs without it.
+To build a NestJS multi tenant API on Drizzle with `nestjs-drizzle-crud`, set `scope` on an entity, for example `scope: (ctx) => ({ tenant_id: ctx.tenantId })`. Every query the service runs is then limited to the rows that match it: reads, counts, cursors, writes, bulk writes, upserts, soft deletes, restores and force deletes. A create writes the scope onto the new row. Another tenant's row is a 404, and a request without a tenant is a 403.
+
+<Callout title="You cannot forget it in one method">
+  The scope is not a filter you add per call. Every read builds its WHERE from the same row scope, and every UPDATE and DELETE from the same write predicate, so no method runs without it.
+</Callout>
+
+## How do I scope an entity to a tenant?
+
+<Steps>
+
+<Step>
+
+### Add `scope` to the entity config
+
+The scope reads the call's context and returns the `column: value` pairs every row must match:
 
 ```ts accent=nest title="projects.crud.ts"
+import type { CrudFeatureConfig } from "nestjs-drizzle-crud";
+
 export const projectsCrud = {
   scope: (ctx) => ({ tenant_id: ctx.tenantId }),
 } satisfies CrudFeatureConfig;
 ```
 
-## What does a scope look like?
+</Step>
 
-`column: value` pairs, each an exact match (`null` means `IS NULL`). Either fixed, or a function of the call's context:
+<Step>
 
-```ts
-scope: { region_id: 1 }                                   // fixed
-scope: (ctx) => ({ tenant_id: ctx.tenantId })             // per request
-scope: (ctx) => ({ tenant_id: ctx.tenantId, owner_id: ctx.userId })
-scope: (ctx) => (ctx.isAdmin ? null : { tenant_id: ctx.tenantId })
-```
+### Put the tenant in the request context
 
-Returning `null` leaves that call unscoped on purpose, for an admin or a background job. A key that is not a column throws. The function runs synchronously, so resolve anything async (the user, their tenant) in middleware and put the result in the context.
-
-## Where does the context come from?
-
-From `options.context` on the call, or else from `CrudContext`, which keeps a per-request value in Node's `AsyncLocalStorage` so it follows the request through every `await`:
+`CrudContext.middleware` resolves the context from the request and runs the rest of the request inside it:
 
 ```ts accent=nest title="projects.module.ts"
-import { type MiddlewareConsumer, Module, type NestModule } from '@nestjs/common';
-import { CrudContext, DrizzleCrudModule } from 'nestjs-drizzle-crud';
+import { type MiddlewareConsumer, Module, type NestModule } from "@nestjs/common";
+import { CrudContext, DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { projects } from "../db/schema";
+import { ProjectsController } from "./projects.controller";
+import { projectsCrud } from "./projects.crud";
+import { ProjectsService } from "./projects.service";
 
 @Module({
-  imports: [DrizzleCrudModule.forFeature([{ service: ProjectsService, table: projects, config: projectsCrud }])],
+  imports: [
+    DrizzleCrudModule.forFeature([
+      { service: ProjectsService, table: projects, config: projectsCrud },
+    ]),
+  ],
   controllers: [ProjectsController],
 })
 export class ProjectsModule implements NestModule {
@@ -45,19 +61,60 @@ export class ProjectsModule implements NestModule {
 }
 ```
 
-Outside a request, wrap the work yourself:
+</Step>
 
-```ts
+<Step>
+
+### Call the service as usual
+
+`projects.findAll()` now returns only the caller's projects, and `projects.update(id, dto)` on another tenant's id is a 404. The example app does exactly this in `apps/api/src/projects`, reading the tenant from an `x-tenant-id` header so the e2e suite can switch tenants.
+
+</Step>
+
+</Steps>
+
+## What does a scope look like?
+
+`column: value` pairs, each an exact match (`null` means `IS NULL`). Either a fixed object, or a function of the call's context:
+
+```ts title="scopes.ts"
+scope: { region_id: 1 }                                   // fixed
+scope: (ctx) => ({ tenant_id: ctx.tenantId })             // per request
+scope: (ctx) => ({ tenant_id: ctx.tenantId, owner_id: ctx.userId })
+scope: (ctx) => (ctx.isAdmin ? null : { tenant_id: ctx.tenantId })
+```
+
+<PropsTable
+  props={{
+    scope: { type: "CrudScopeValues | ((context: CrudContextValue) => CrudScopeValues | null)", description: "The column values every row must match. A function that returns null leaves that call unscoped on purpose." },
+    "options.context": { type: "Record<string, unknown>", default: "CrudContext.current()", description: "The context a function scope reads, per call. Wins over CrudContext." },
+    "options.skipScope": { type: "boolean", default: "false", description: "Run a trusted, server-side call without the entity's scope." },
+  }}
+/>
+
+Returning `null` leaves that call unscoped on purpose, for an admin or a background job. A key that is not a column of the table throws, and so does a function that returns something other than an object or `null`. The function runs synchronously, so resolve anything async (the user, their tenant) in middleware or a guard and put the result in the context.
+
+## Where does the context come from?
+
+From `options.context` on the call, or else from `CrudContext`, which keeps a per-request value in Node's `AsyncLocalStorage` so it follows the request through every `await` without being passed by hand. Outside a request, wrap the work yourself:
+
+```ts accent=nest title="report.job.ts"
 await CrudContext.run({ tenantId: 7 }, () => projects.findAll());
 await projects.findAll({}, {}, { context: { tenantId: 7 } }); // per call, wins over CrudContext
 CrudContext.current(); // the active context, or undefined
 ```
 
+| `CrudContext` member | What it does |
+| --- | --- |
+| `run(context, fn)` | Runs `fn` with `context` as the current context and returns its result. |
+| `current()` | The context of the running code, or `undefined` outside one. |
+| `middleware(resolve)` | An Express style middleware: calls `resolve(req)` and runs the rest of the request inside the result. A throw in `resolve` goes to `next(error)`. |
+
 ## What happens without a tenant?
 
 The call fails closed. When the scope function returns `undefined` for a column (no tenant on the request), the service throws `MissingScopeException`, a 403, instead of running unscoped. A trusted server-side call can opt out with `skipScope: true`:
 
-```ts
+```ts accent=nest title="billing.job.ts"
 await projects.count({}, { skipScope: true }); // every tenant
 ```
 
@@ -67,26 +124,49 @@ All of them:
 
 | Area | Methods | Another tenant's row |
 | --- | --- | --- |
-| Reads | `find`, `findOne`, `exists`, `findAll`, `findByCursor`, `count`, `countBy`, `fullTextSearch`, relation `counts` | not found: `null`, `false`, or left out of the page and the total |
+| Reads | `find`, `findOne`, `exists`, `findAll`, `findByCursor`, `count`, `countBy`, `fullTextSearch`, relation `counts` | Not found: `null`, `false`, or left out of the page and the total. |
 | Single writes | `update`, `softDelete`, `restore`, `delete`, `forceDelete` | 404 |
 | Upsert | `upsert`, `massUpsert` | 404 (the conflicting row is not updated) |
 | Bulk | `massUpdate`, `massSoftDelete`, `massRestore`, `massDelete`, `massForceDelete` | 400 with a 404 entry for that id, nothing written |
 | Links | `attach`, `detach`, `sync` | 404 |
 
-The scope is ANDed into the existence check and into the `UPDATE` or `DELETE` statement itself, so a row cannot change tenant between the two. On upsert it sits in the `ON CONFLICT DO UPDATE ... WHERE`, which MySQL does not have, so a scoped upsert on MySQL is a 400.
+The scope is ANDed into the existence check and into the `UPDATE` or `DELETE` statement itself, so a row cannot change tenant between the two. On upsert it sits in the `ON CONFLICT DO UPDATE ... WHERE`. MySQL's `ON DUPLICATE KEY UPDATE` has no `WHERE`, so a scoped upsert on MySQL is a 400 (`upsert on a scoped entity needs PostgreSQL`).
 
 ## What does a create or update do with the scope column?
 
 `create`, `massCreate` and `upsert` write the scope values onto the row, over whatever the body said, so a client cannot create a row in another tenant. `update` never sets the scope columns: they are dropped from the `SET`, so a body cannot move a row to another tenant. An update whose only column was the scope column is a 400 (nothing to update).
 
-With [nested create](/docs/relations-on-writes), child rows get the scope values too when their table has the same columns, and attach only links targets in the caller's tenant when the related table has the scope column.
+With [nested create](/docs/relations-on-writes), child rows get the scope values too when their table has the same columns, and `attach` only links targets in the caller's tenant when the related table has the scope column.
 
 ## Are related tables scoped?
 
 On reads, no. The scope applies to the service's own table; a relation loaded with `relations` or counted with `counts` follows its foreign key. That is safe when related rows always share the parent's tenant, which a foreign key usually guarantees. Give a related table its own service with its own scope when it is queried on its own.
 
-## Next
+## Common questions
 
-- → [CRUD controller factory](/docs/controller-factory)
-- → [Optimistic locking](/docs/optimistic-locking)
-- → [Errors: MissingScopeException and the rest](/docs/errors)
+<Accordions>
+  <Accordion title="Does a request without a tenant see every row?">
+    No. When the scope function returns `undefined` for a column, the call throws `MissingScopeException`, a 403. Only a function that returns `null`, or a call with `skipScope: true`, runs unscoped.
+  </Accordion>
+  <Accordion title="What does a client get for another tenant's id?">
+    A 404 on a write and `null` on a read, the same as an id that does not exist. The response never reveals that the row exists in another tenant.
+  </Accordion>
+  <Accordion title="Can a client move a row to another tenant with an update?">
+    No. The scope columns are dropped from the `SET` of every update, and a create always writes the caller's scope values over the body.
+  </Accordion>
+  <Accordion title="Does scoped upsert work on MySQL?">
+    No. MySQL's `ON DUPLICATE KEY UPDATE` cannot carry the scope condition, so a scoped upsert on MySQL is a 400 rather than a write that could touch another tenant's row.
+  </Accordion>
+  <Accordion title="Are eager-loaded relations filtered by tenant?">
+    No. The scope applies to the service's own table, and relations follow their foreign keys. Give a related table its own scoped service when clients query it directly.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Server />} title="NestJS CRUD controller generator" href="/docs/controller-factory" description="Generate scoped REST routes for an entity in one call." />
+  <Card icon={<Lock />} title="Drizzle optimistic locking with versions" href="/docs/optimistic-locking" description="Refuse a write that names a stale version with a 409." />
+  <Card icon={<Shield />} title="Error handling in NestJS with Drizzle" href="/docs/errors" description="MissingScopeException and every other exception, with its status." />
+  <Card icon={<Users />} title="Need a team?" href="/docs/commercial-support" description="Avytrix Technologies maintains this library and builds multi-tenant NestJS and Drizzle backends. See what they can take on." />
+</Cards>

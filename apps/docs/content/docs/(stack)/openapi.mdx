@@ -1,56 +1,80 @@
 ---
-title: OpenAPI (Swagger) docs for list queries
-description: "ApiCrudQuery and ApiCrudList document page, limit, sortBy, cursor, withCount, search, fields, with, counts and every filterable column in Swagger, from the entity's allowlists."
+title: NestJS Drizzle Swagger docs for lists
+description: ApiCrudList documents NestJS Drizzle list routes in Swagger. It covers paging, sort, cursor, search, relations and every filter column from your allowlists.
+icon: FileCode
 ---
 
-`@ApiCrudList(source)` documents a list route in Swagger: every query parameter `parseQuery` reads (page, limit, sort, cursor, withCount, search, fields, relations, counts) plus each filterable column with its type, and the page envelope as the 200 response. `@ApiCrudQuery(source)` does the parameters alone.
+For NestJS Drizzle Swagger docs, put `@ApiCrudList(source)` on a list route. It documents every query parameter `parseQuery` reads (page, limit, sort, cursor, withCount, search, fields, relations, counts) plus one parameter per filterable column with its type, and it adds the page envelope as the 200 response. `@ApiCrudQuery(source)` adds the parameters alone. Both read the same table and allowlists the service uses.
+
+<Callout title="@nestjs/swagger is optional">
+  `@nestjs/swagger` is an optional peer dependency. The package loads it lazily, the first time
+  one of these decorators is applied, so an app that never uses them never loads it. If it is not
+  installed, applying a decorator throws an error that tells you to install it.
+</Callout>
+
+## How do I document a list route?
+
+<Steps>
+
+<Step>
+
+### Install @nestjs/swagger
+
+<InstallTabs pkg="@nestjs/swagger" />
+
+</Step>
+
+<Step>
+
+### Share the entity config
+
+Put the allowlists and relations in one constant, so `forFeature` and the decorator read the same facts:
+
+```ts title="countries.crud.ts"
+import type { CrudFeatureConfig } from 'nestjs-drizzle-crud';
+
+export const countriesCrud = {
+  filterableColumns: ['name', 'code', 'region.name'],
+  sortableColumns: ['name', 'code'],
+  searchableColumns: ['name'],
+} satisfies CrudFeatureConfig;
+```
+
+Spread it into the module: `DrizzleCrudModule.forFeature([{ service: CountriesService, table: countries, config: countriesCrud }])`.
+
+</Step>
+
+<Step>
+
+### Decorate the route
 
 ```ts accent=nest title="countries.controller.ts"
+import { Controller, Get, Query } from '@nestjs/common';
 import { ApiCrudList } from 'nestjs-drizzle-crud';
 import { countries } from '../db/schema';
 import { countriesCrud } from './countries.crud';
+import { CountriesService } from './countries.service';
 
-@Get()
-@ApiCrudList({ table: countries, ...countriesCrud })
-findAll(@Query() query: Record<string, unknown>) {
-  const q = this.countries.parseQuery(query);
-  return this.countries.findAll(q.filters, q.pagination, q.options);
+@Controller('countries')
+export class CountriesController {
+  constructor(private readonly countries: CountriesService) {}
+
+  @Get()
+  @ApiCrudList({ table: countries, ...countriesCrud })
+  findAll(@Query() query: Record<string, unknown>) {
+    const q = this.countries.parseQuery(query);
+    return q.isCursor
+      ? this.countries.findByCursor(q.filters, q.pagination, q.options)
+      : this.countries.findAll(q.filters, q.pagination, q.options);
+  }
 }
 ```
 
-## Do I need @nestjs/swagger?
+</Step>
 
-Only if you use these decorators. `@nestjs/swagger` is an optional peer dependency: the package requires it the first time one of the decorators runs, so an app without Swagger never loads it and has nothing new to install. Without it installed, applying a decorator throws an error that says so.
+<Step>
 
-```bash
-pnpm add @nestjs/swagger
-```
-
-## What do I pass as the source?
-
-The same facts the service uses, so the docs match what the API accepts:
-
-- **A config object with the table**: `{ table, relations, filterableColumns, sortableColumns, selectableColumns, searchableColumns, loadableRelations, allowTrash }`. Keep the entity config in one constant and spread it into both `forFeature` and the decorator.
-- **A service class decorated with `@CrudService({ table, ... })`**, whose metadata already holds the table and lists. A class without that metadata throws, naming what to pass instead.
-
-Config set only in `forFeature` is not visible when the decorator runs, which is why the shared constant is the usual pattern.
-
-## What gets documented?
-
-| Parameter | Documented when |
-| --- | --- |
-| `page`, `limit`, `sortBy`, `sortOrder`, `withCount`, `fields` | always; `sortBy` and `fields` list the sortable and selectable columns |
-| `with`, `counts` | the entity has relations; `with` lists the loadable ones |
-| `search` | `searchableColumns` (or `searchColumns`) is set |
-| `cursor`, `count` | unless `{ cursor: false }` |
-| `withDeleted`, `onlyDeleted` | `allowTrash: true`, and not on a trash route (`{ trash: true }`) |
-| one parameter per filter column | every entry of `filterableColumns`, or every column when it is unset |
-
-A relation path is written the way a query string sends it: `region.name` becomes `region[name]`. Each filter parameter carries the column's OpenAPI type (integer, number, boolean, date-time, uuid, an enum's values) and lists the bracket operators. Every parameter is optional.
-
-`ApiCrudList` adds the 200 response: `{ data, total, page, limit, hasMore, nextCursor }`, with the row schema built from the table's columns and `total` marked nullable for `withCount=false`.
-
-## How do I serve the document?
+### Serve the document
 
 ```ts accent=nest title="main.ts"
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -65,18 +89,81 @@ SwaggerModule.setup('docs', app, () =>
 
 The UI is at `/docs` and the JSON at `/docs-json`.
 
+</Step>
+
+</Steps>
+
+## What do I pass as the source?
+
+The table plus the same allowlists the service uses, so the docs match what the API accepts. There are two shapes:
+
+- **A config object with the table**: `{ table, relations, filterableColumns, sortableColumns, selectableColumns, searchableColumns, loadableRelations, allowTrash }`. Every key except `table` is optional. This is the usual pattern, with the shared constant spread in.
+- **A service class decorated with `@CrudService({ table, ... })`**, whose metadata already holds the table and the lists. A class without that metadata throws an error that names what to pass instead.
+
+Config set only in `forFeature` is not visible when the decorator runs, because decorators run when the class is defined. That is why the shared constant matters.
+
+## Which decorator do I use?
+
+<PropsTable
+  props={{
+    "ApiCrudList(source, options?)": { type: "MethodDecorator", description: "Every query parameter, plus the 200 response with the page envelope and the row schema." },
+    "ApiCrudQuery(source, options?)": { type: "MethodDecorator", description: "The query parameters only. Use it when you document the response yourself." },
+    "options.cursor": { type: "boolean", default: "true", description: "Document cursor and count. Set false on a route that only pages by offset." },
+    "options.trash": { type: "boolean", default: "false", description: "The route lists the trash: leave out withDeleted and onlyDeleted." },
+  }}
+/>
+
+## What gets documented?
+
+Each parameter appears only when the entity can use it:
+
+| Parameter | Documented when |
+| --- | --- |
+| `page`, `limit`, `sortBy`, `sortOrder`, `withCount`, `fields` | always; `sortBy` and `fields` list the sortable and selectable columns |
+| `with`, `counts` | the entity has relations; `with` lists the loadable ones |
+| `search` | `searchColumns` or `searchableColumns` is set |
+| `cursor`, `count` | unless `{ cursor: false }` |
+| `withDeleted`, `onlyDeleted` | `allowTrash: true`, and not on a trash route (`{ trash: true }`) |
+| one parameter per filter column | every entry of `filterableColumns`, or every column when it is unset |
+
+A relation path is written the way a query string sends it: `region.name` becomes `region[name]`. Each filter parameter carries the column's OpenAPI type (integer, number, boolean, date-time, uuid, int64 for a bigint, an enum's values) and lists the bracket operators, such as `name[startsWith]=In`. Every parameter is optional.
+
+`ApiCrudList` also adds the 200 response: `{ data, total, page, limit, hasMore, nextCursor }`. The row schema comes from the table's columns, nullable columns are marked nullable, and `total` is nullable because `withCount=false` skips the count.
+
 ## Does the controller factory document itself?
 
-Yes, with the `openapi` option of [`createCrudController`](/docs/controller-factory). It applies `ApiCrudList` to the list route and `ApiCrudList(source, { trash: true })` to the trash route:
+Yes, through the `openapi` option of [`createCrudController`](/docs/controller-factory). It applies `ApiCrudList(source)` to the list route and `ApiCrudList(source, { trash: true })` to the trash route:
 
-```ts accent=nest
-createCrudController(ProjectsService, {
+```ts accent=nest title="projects.controller.ts"
+@Controller('projects')
+export class ProjectsController extends createCrudController(ProjectsService, {
   openapi: { table: projects, ...projectsCrud },
-});
+}) {}
 ```
 
-## Next
+Pass `openapi: true` instead when the service carries `@CrudService` metadata.
 
-- → [CRUD controller factory](/docs/controller-factory)
-- → [Parse query strings into filters](/docs/query-parsing)
-- → [Allowlists](/docs/allowlists)
+## Common questions
+
+<Accordions>
+  <Accordion title="Do I need @nestjs/swagger to use nestjs-drizzle-crud?">
+    No. It is an optional peer dependency, loaded only when you apply `ApiCrudQuery` or `ApiCrudList`. Without the decorators you have nothing extra to install.
+  </Accordion>
+  <Accordion title="Why are my forFeature allowlists missing from the Swagger docs?">
+    The decorator runs when the class is defined and cannot see `forFeature` config. Keep the config in one constant and spread it into both `forFeature` and the decorator.
+  </Accordion>
+  <Accordion title="How is a relation filter named in Swagger?">
+    The way a query string sends it: the allowlist entry `region.name` is documented as the parameter `region[name]`.
+  </Accordion>
+  <Accordion title="What is the difference between ApiCrudQuery and ApiCrudList?">
+    `ApiCrudQuery` documents the query parameters only. `ApiCrudList` adds the 200 response with the page envelope and the row schema.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Server />} title="NestJS CRUD controller generator" href="/docs/controller-factory" description="Generate the routes and document them with one option." />
+  <Card icon={<Filter />} title="Parse query strings" href="/docs/query-parsing" description="What each documented parameter does at runtime." />
+  <Card icon={<ShieldCheck />} title="Allowlists" href="/docs/allowlists" description="Choose which columns callers may filter, sort, select and search." />
+</Cards>

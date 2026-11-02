@@ -1,41 +1,75 @@
 ---
-title: Quick start
-description: A five-step walkthrough that takes a fresh Drizzle schema to a working CRUD controller in under five minutes.
+title: NestJS Drizzle CRUD quick start
+description: Build NestJS Drizzle CRUD endpoints for one table. Define the schema, configure the module, add an empty service and call it from a controller.
+icon: Rocket
 ---
 
-This guide walks you through wiring a complete CRUD surface for a `users` table in a fresh NestJS + Drizzle project. By the end you'll have a controller exposing `GET /users`, `GET /users/:id`, `POST /users`, `PUT /users/:id`, and `DELETE /users/:id`, all backed by the `SqlBaseCrudService` base class.
+To build NestJS Drizzle CRUD endpoints with `nestjs-drizzle-crud`, you define a Drizzle table,
+call `DrizzleCrudModule.forRoot` once, write an empty service class that extends
+`SqlBaseCrudService`, bind it to the table with `forFeature`, and call its methods from a
+controller. The result is a `users` API with list, get, create, update and delete routes, plus
+filtering, sorting and pagination from the query string.
+
+<Callout title="What you need first">
+  Node 20 or later and a PostgreSQL database you can reach through a `DATABASE_URL`. The steps use
+  PostgreSQL because the module can open that connection for you; for MySQL, follow
+  [the MySQL tab in Installation](/docs/installation#which-driver-do-i-need) at step 4.
+</Callout>
+
+## How do I go from an empty project to CRUD endpoints?
 
 <Steps>
 
 <Step>
 
-### Define your Drizzle schema
+### Create a NestJS project
 
-```ts accent=drizzle title="db/schema.ts"
-import { pgTable, serial, varchar, timestamp } from 'drizzle-orm/pg-core';
+Skip this step if you already have one.
 
-export const users = pgTable('users', {
-  id: serial('id').primaryKey(),
-  name: varchar('name', { length: 100 }).notNull(),
-  email: varchar('email', { length: 255 }).notNull().unique(),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true })
-    .defaultNow()
-    .notNull()
-    .$onUpdate(() => new Date()),
-  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+<RunTabs command="@nestjs/cli new users-api" />
+
+</Step>
+
+<Step>
+
+### Install the package and the PostgreSQL driver
+
+<InstallTabs pkg="nestjs-drizzle-crud drizzle-orm postgres" />
+
+`@nestjs/common`, `@nestjs/core` and `reflect-metadata` come with the Nest project. See
+[Install NestJS with Drizzle ORM](/docs/installation) for the full peer list.
+
+</Step>
+
+<Step>
+
+### Define the Drizzle table
+
+```ts accent=drizzle title="src/db/schema.ts"
+import { pgTable, serial, timestamp, varchar } from "drizzle-orm/pg-core";
+
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 100 }).notNull(),
+  email: varchar("email", { length: 255 }).notNull().unique(),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deleted_at: timestamp("deleted_at", { withTimezone: true }),
 });
-
-export const schema = { users };
-export type User = typeof users.$inferSelect;
 ```
 
-<Callout type="info">
-  The `createdAt` / `updatedAt` / `deletedAt` columns are conventional. The
-  package refers to them by their **key** in the table object, and its
-  defaults are the snake_case keys `created_at`, `updated_at` and
-  `deleted_at`. This schema uses camelCase keys, so step 4 names them. See
-  [Timestamps](/docs/timestamps) and [Soft delete](/docs/soft-delete).
+Create the table in your database with your usual migration tool (drizzle-kit, for example).
+
+The `created_at`, `updated_at` and `deleted_at` keys are not decoration. Soft delete and
+timestamps are on by default, and the package looks for columns under exactly those keys in the
+table object. Matching them means the service needs no config.
+
+<Callout type="warn" title="camelCase keys need config">
+  With `createdAt: timestamp("created_at")` the key is `createdAt`, so name it in `forFeature`:
+  `config: { softDelete: { column: "deletedAt" }, timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" } }`.
+  A key the table does not have stops the app at startup with a message that names the key to
+  use. A table with no `deleted_at` needs `softDelete: { enabled: false }`. See
+  [Soft delete](/docs/soft-delete) and [Timestamps](/docs/timestamps).
 </Callout>
 
 </Step>
@@ -44,16 +78,16 @@ export type User = typeof users.$inferSelect;
 
 ### Configure the module once
 
-```ts accent=nest title="app.module.ts"
-import { Module } from '@nestjs/common';
-import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
-import { schema } from './db/schema';
-import { UsersModule } from './users/users.module';
+```ts accent=nest title="src/app.module.ts"
+import { Module } from "@nestjs/common";
+import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import * as schema from "./db/schema";
+import { UsersModule } from "./users/users.module";
 
 @Module({
   imports: [
     DrizzleCrudModule.forRoot({
-      dialect: 'postgresql',
+      dialect: "postgresql",
       connectionString: process.env.DATABASE_URL,
       schema,
     }),
@@ -63,35 +97,50 @@ import { UsersModule } from './users/users.module';
 export class AppModule {}
 ```
 
-The module creates and owns the connection, exposes it globally, and closes it on application shutdown.
+`forRoot` registers the module globally, so every feature module can use the connection. Because
+the module built the connection from `connectionString`, it also closes it on shutdown. Call
+`app.enableShutdownHooks()` in `main.ts` so that happens on `SIGTERM` too.
 
 </Step>
 
 <Step>
 
-### Create an empty service
+### Write an empty service
 
-```ts title="users/users.service.ts"
-import { SqlBaseCrudService } from 'nestjs-drizzle-crud';
-import type { User } from '../db/schema';
+```ts title="src/users/users.service.ts"
+import { type CrudFilter, SqlBaseCrudService } from "nestjs-drizzle-crud";
+import type { users } from "../db/schema";
+import type { CreateUserDto, UpdateUserDto } from "./users.dto";
 
-export interface CreateUserDto { name: string; email: string }
-export interface UpdateUserDto { name?: string; email?: string }
-export interface UserFilterDto { name?: string; email?: string }
+export type User = typeof users.$inferSelect;
 
 export class UsersService extends SqlBaseCrudService<
   User,
   CreateUserDto,
   UpdateUserDto,
-  UserFilterDto
+  CrudFilter
 > {}
 ```
 
-<Callout type="warn">
-  The service is an **empty subclass**. Do **not** inject the db, do **not**
-  pass `dialect` or `db` to `super(...)`, and do **not** add a
-  `@Inject('DRIZZLE_DB')` constructor, `forFeature` constructs the service for
-  you. The table is bound in `forFeature`, **not** in the service.
+```ts title="src/users/users.dto.ts"
+export class CreateUserDto {
+  name!: string;
+  email!: string;
+}
+
+export class UpdateUserDto {
+  name?: string;
+  email?: string;
+}
+```
+
+The four type parameters are the row type, the create DTO, the update DTO and the filter type.
+All four are required. `CrudFilter` accepts every filter the package understands.
+
+<Callout type="warn" title="Keep the service empty">
+  No `@Injectable()`, no constructor, no injected `db`. `forFeature` builds the service and hands
+  it its config, so a constructor parameter or a provider entry breaks registration. Override the
+  protected hooks (`validateCreate`, `beforeCreate` and so on) when you need custom logic.
 </Callout>
 
 </Step>
@@ -100,69 +149,63 @@ export class UsersService extends SqlBaseCrudService<
 
 ### Bind the service to its table
 
-```ts accent=nest title="users/users.module.ts"
-import { Module } from '@nestjs/common';
-import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
-import { users } from '../db/schema';
-import { UsersController } from './users.controller';
-import { UsersService } from './users.service';
+```ts accent=nest title="src/users/users.module.ts"
+import { Module } from "@nestjs/common";
+import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { users } from "../db/schema";
+import { UsersController } from "./users.controller";
+import { UsersService } from "./users.service";
 
 @Module({
   imports: [
-    DrizzleCrudModule.forFeature([
-      {
-        service: UsersService,
-        table: users,
-        // camelCase keys in the schema, so name them. A key the table does not
-        // have stops the app at startup with the key to use.
-        config: {
-          softDelete: { column: 'deletedAt' },
-          timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' },
-        },
-      },
-    ]),
+    DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]),
   ],
   controllers: [UsersController],
-  providers: [UsersService],
 })
 export class UsersModule {}
 ```
+
+`forFeature` provides and exports `UsersService`. Do not also list it under `providers`: Nest
+would then build its own copy with no config.
 
 </Step>
 
 <Step>
 
-### Use it in a controller
+### Call the service from a controller
 
-```ts accent=nest title="users/users.controller.ts"
+```ts accent=nest title="src/users/users.controller.ts"
 import {
   Body,
   Controller,
   Delete,
   Get,
+  NotFoundException,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
-  Put,
   Query,
-} from '@nestjs/common';
-import { CreateUserDto, UpdateUserDto, UsersService } from './users.service';
+} from "@nestjs/common";
+import { CreateUserDto, UpdateUserDto } from "./users.dto";
+import { UsersService } from "./users.service";
 
-@Controller('users')
+@Controller("users")
 export class UsersController {
   constructor(private readonly users: UsersService) {}
 
+  // ?name[iContains]=ali&sortBy=-created_at&page=2&limit=10
   @Get()
-  findAll(
-    @Query('page') page = '1',
-    @Query('limit') limit = '20',
-  ) {
-    return this.users.findAll({}, { page: +page, limit: +limit });
+  findAll(@Query() query: Record<string, unknown>) {
+    const q = this.users.parseQuery(query);
+    return this.users.findAll(q.filters, q.pagination, q.options);
   }
 
-  @Get(':id')
-  find(@Param('id', ParseIntPipe) id: number) {
-    return this.users.find(id);
+  @Get(":id")
+  async find(@Param("id", ParseIntPipe) id: number) {
+    const user = await this.users.find(id);
+    if (!user) throw new NotFoundException(`User ${id} not found`);
+    return user;
   }
 
   @Post()
@@ -170,52 +213,107 @@ export class UsersController {
     return this.users.create(dto);
   }
 
-  @Put(':id')
-  update(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateUserDto,
-  ) {
+  @Patch(":id")
+  update(@Param("id", ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
     return this.users.update(id, dto);
   }
 
-  @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.users.delete(id);
+  @Delete(":id")
+  remove(@Param("id", ParseIntPipe) id: number) {
+    return this.users.softDelete(id);
   }
 }
 ```
 
-`@Param('id', ParseIntPipe)` works because the `id` column is `serial`. If you switch to a `uuid` primary key, **remove `ParseIntPipe`**. See [Primary keys](/docs/primary-keys).
+Import the DTOs as values, not with `import type`: Nest reads the runtime class through decorator
+metadata. `find` returns `null` for a missing row, so the controller turns that into a 404 itself.
+`update` and `softDelete` throw a 404 on their own.
+
+`ParseIntPipe` fits because `id` is a `serial` column. For a `uuid` key use `ParseUUIDPipe`; see
+[Primary keys](/docs/primary-keys).
 
 </Step>
+
+<Step>
+
+### Try it
+
+```bash title="terminal"
+curl -X POST localhost:3000/users -H 'content-type: application/json' \
+  -d '{"name":"Alice","email":"alice@example.com"}'
+curl -g 'localhost:3000/users?name[iContains]=ali&sortBy=-created_at'
+curl -X PATCH localhost:3000/users/1 -H 'content-type: application/json' -d '{"name":"Alicia"}'
+curl -X DELETE localhost:3000/users/1
+```
+
+The list route answers with the `findAll` envelope:
+
+```json title="GET /users"
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Alice",
+      "email": "alice@example.com",
+      "created_at": "2026-01-01T09:00:00.000Z",
+      "updated_at": "2026-01-01T09:00:00.000Z",
+      "deleted_at": null
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "limit": 20
+}
+```
+
+A second `POST` with the same email is a 409, because the unique violation becomes a
+`DuplicateEntityException`. After the `DELETE`, the row is soft deleted: it disappears from the
+list and from `GET /users/1`, and `restore(1)` would bring it back.
+
+</Step>
+
 </Steps>
 
-## What you got
+## What did I get?
 
-After these five steps, `UsersService` exposes every CRUD method below, fully typed against `User`:
+`UsersService` inherits every method in [CRUD operations](/docs/crud-operations), typed against
+`User`. The ones this controller did not use yet:
 
-| Method | Returns | Notes |
-| --- | --- | --- |
-| `find(id, options?)` | `Promise<User \| null>` | By primary key. Skips soft-deleted rows. |
-| `findOne(where, options?)` | `Promise<User \| null>` | Equality match. A `where` with no usable condition is a 400. |
-| `findAll(filters?, pagination?, options?)` | `Promise<{ data, total, page, limit }>` | Supports `options.search`. See [Filtering](/docs/filtering) and [Pagination & sorting](/docs/pagination-sorting). |
-| `exists(id, options?)` | `Promise<boolean>` | |
-| `count(filters?, options?)` | `Promise<number>` | |
-| `create(dto, options?)` | `Promise<User>` | Runs `validateCreate` → `beforeCreate` → insert → `afterCreate`. |
-| `update(id, dto, options?)` | `Promise<User>` | Throws `EntityNotFoundException` if missing. |
-| `delete(id, options?)` | `Promise<boolean>` | Hard delete. |
-| `softDelete(id, options?)` | `Promise<boolean>` | Sets `deleted_at`. |
-| `restore(id, options?)` | `Promise<User>` | Clears `deleted_at`. |
-| `massCreate(dtos, options?)` | `Promise<User[]>` | Single transaction. |
-| `massUpdate(ids, dto, options?)` | `Promise<User[]>` | Single transaction. |
-| `massSoftDelete(ids, options?)` | `Promise<boolean>` | Single transaction. |
-| `massRestore(ids, options?)` | `Promise<User[]>` | Single transaction. |
-| `massDelete(ids, options?)` | `Promise<boolean>` | Single transaction. |
-| `fullTextSearch(term, columns, pagination?, options?)` | `Promise<{ data, total, page, limit }>` | PostgreSQL only. Same envelope as `findAll`. |
-| `executeSqlTransaction(async (tx) => …)` | `Promise<T>` | Run multiple operations in one transaction. |
+| Method | What it does |
+| --- | --- |
+| `findOne(where)` | First row matching an equality object, such as `{ email }` |
+| `count(filters)` / `exists(id)` | Count matching rows, or check one id |
+| `findByCursor(filters, pagination)` | Keyset pagination with an opaque `nextCursor` |
+| `restore(id)` / `forceDelete(id)` | Bring a soft deleted row back, or remove it for good |
+| `delete(id)` | Hard delete of a live row |
+| `upsert(dto, upsert)` | Insert, or update on a unique key conflict |
+| `massCreate`, `massUpdate`, `massSoftDelete`, `massRestore`, `massDelete` | One transaction for a list of rows or ids |
 
-## Next
+To skip the controller entirely, [the controller factory](/docs/controller-factory) generates
+these routes, bulk and trash routes included.
 
-- Need relations, soft delete, or full-text search? Read the [Guides](/docs/defining-services).
-- Want every config knob? See [Configuration](/docs/for-root).
-- Looking for a specific method signature? Jump to [API reference](/docs/api).
+## Common questions
+
+<Accordions>
+  <Accordion title="Why does my app fail at startup with softDelete.column is deleted_at?">
+    Soft delete is on by default and the table has no column under the key `deleted_at`. Name your key with `softDelete: { column: "deletedAt" }` in `forFeature`, or turn it off with `softDelete: { enabled: false }`.
+  </Accordion>
+  <Accordion title="Do I need @Injectable() on the service?">
+    No. `DrizzleCrudModule.forFeature` creates the service with a factory and passes its config to the constructor. Adding a constructor parameter or a `providers` entry for it breaks that.
+  </Accordion>
+  <Accordion title="Does DELETE remove the row?">
+    In this controller it calls `softDelete`, which sets `deleted_at` and hides the row from reads. Call `delete` for a hard delete of a live row, or `forceDelete` to remove a row whether it is soft deleted or not.
+  </Accordion>
+  <Accordion title="Which query parameters does the list route accept?">
+    Everything `parseQuery` reads: column filters such as `name[iContains]=ali`, `sortBy`, `page`, `limit`, `fields`, `with` and more. Unknown columns are a 400.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Database />} title="CRUD operations" href="/docs/crud-operations" description="Every method the service inherits, what it returns and which exception it throws." />
+  <Card icon={<Filter />} title="Filtering" href="/docs/filtering" description="Operators, groups and relation filters, from code or from the query string." />
+  <Card icon={<Shield />} title="Allowlists" href="/docs/allowlists" description="Limit which columns a caller may filter, sort, select and write before you go live." />
+  <Card icon={<Users />} title="Need a team?" href="/docs/commercial-support" description="Avytrix Technologies maintains this library and builds NestJS and Drizzle backends for clients. See what they can take on." />
+</Cards>

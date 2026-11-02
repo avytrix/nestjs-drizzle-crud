@@ -1,92 +1,184 @@
 ---
-title: Introduction
+title: NestJS Drizzle CRUD library
+description: nestjs-drizzle-crud is a NestJS Drizzle library. Extend one base class per table and get typed CRUD, filters, pagination and relations.
 icon: House
-description: "A complete, type-safe CRUD abstraction for Drizzle ORM in NestJS: configure the connection once, extend one base class per entity, and inherit full CRUD."
 ---
 
-## What it is
+`nestjs-drizzle-crud` is a NestJS Drizzle library: you extend one base class per table and get a
+typed CRUD service on top of Drizzle ORM. You configure the connection once, bind each service to
+its Drizzle table, and every service can find, list, filter, paginate, create, update, soft delete
+and bulk write rows on PostgreSQL or MySQL. It does not hide Drizzle: your schema stays yours.
 
-`nestjs-drizzle-crud` is a thin abstraction over [Drizzle ORM](https://orm.drizzle.team/) that gives every NestJS service a complete, type-safe CRUD surface by extending a single generic base class: `find`, `findOne`, `findAll`, `create`, `update`, `delete`, `softDelete`, `restore`, `massCreate`, `massUpdate`, `massDelete` and `fullTextSearch`, plus filtering, pagination, relations, hooks and transactions.
+<Callout title="Who this is for, and what you need">
+  NestJS developers who use Drizzle ORM, or want to, and are tired of writing the same `findAll`,
+  `create` and `update` code in every service. You need Node 20 or later, `@nestjs/common` and
+  `@nestjs/core` 10 or later, `drizzle-orm` from 0.28.0 up to (not including) 1.0.0, and
+  `reflect-metadata` 0.1.13 or 0.2. Add `postgres` 3 if you want the module to open the
+  PostgreSQL connection for you.
+</Callout>
 
-It works with both **PostgreSQL** and **MySQL** and handles the dialect differences (PostgreSQL's `RETURNING` vs MySQL's `insertId`) for you, so your service code is identical across databases.
+## What does it do?
 
-## The two-step mental model
+One empty service class gives you the whole read and write surface, and configuration turns on
+the rest:
 
-The whole library is built on two steps:
+- **Reads.** `find`, `findOne`, `findAll` with a `{ data, total, page, limit }` envelope,
+  `count` and `exists`. See [CRUD operations](/docs/crud-operations).
+- **Filtering.** Column operators (`gte`, `in`, `between`, `iContains` and more), `and`, `or`
+  and `not` groups, and filters on related tables. See [Filtering](/docs/filtering) and
+  [Relation filters](/docs/relation-filters).
+- **Pagination.** Offset pages with a capped limit, multi-column sorts, and keyset pagination
+  through `findByCursor`. See [Pagination and sorting](/docs/pagination-sorting) and
+  [Cursor pagination](/docs/cursor-pagination).
+- **Relations.** Belongs-to, has-many and many-to-many, eager loaded with one batched query per
+  relation instead of one per row. See [Relations](/docs/relations).
+- **Writes.** `create`, `update`, `upsert`, soft delete, restore, and mass writes that run in one
+  transaction. See [Upsert](/docs/upsert), [Bulk operations](/docs/bulk-operations) and
+  [Soft delete](/docs/soft-delete).
+- **Safety.** Column allowlists, tenant scopes, optimistic locking, and exceptions that map to
+  404, 409 and 400 without a custom filter. See [Allowlists](/docs/allowlists),
+  [Multi-tenancy](/docs/multi-tenancy) and [Errors](/docs/errors).
+- **Wiring.** A generated controller, OpenAPI decorators, test helpers and an MCP server for
+  coding agents. See [Controller factory](/docs/controller-factory) and
+  [AI agents](/docs/ai-agents).
+
+## What does the journey look like?
+
+The sidebar follows the order you will need things in. Each section is useful on its own, so stop
+when you have what you came for.
 
 <Steps>
 
 <Step>
 
-### Configure the database connection once
+### Start here
 
-In your `AppModule`, call `DrizzleCrudModule.forRoot(...)` with the dialect, connection (either a connection string or a pre-built Drizzle instance), and the schema. The module creates and owns the connection, exposes it globally, and closes it on shutdown.
+Install the package and its peers, wire one table end to end, then learn the methods every
+service inherits.
+
+[Installation](/docs/installation) · [Quick start](/docs/quick-start) · [CRUD operations](/docs/crud-operations)
 
 </Step>
 
 <Step>
 
-### Per entity: extend the base, bind the table
+### Core concepts
 
-For each entity, create an empty service class that extends `SqlBaseCrudService<Entity>`, then register it in a feature module with `DrizzleCrudModule.forFeature([{ service, table }])`. The service gets every CRUD method automatically, fully typed against your entity.
+How a service gets its config, how relations are declared, and what soft delete, timestamps and
+primary key types change.
+
+[Defining services](/docs/defining-services) · [Relations](/docs/relations) · [Soft delete](/docs/soft-delete)
 
 </Step>
+
+<Step>
+
+### Querying
+
+Filters, relation filters, turning a query string into filters, sorting, offset and cursor pages,
+column selection, full-text search and grouped counts.
+
+[Filtering](/docs/filtering) · [Query parsing](/docs/query-parsing) · [Aggregates](/docs/aggregates)
+
+</Step>
+
+<Step>
+
+### Writing data
+
+Upsert, bulk writes, nested creates and links, optimistic locking, transactions and row locks.
+
+[Bulk operations](/docs/bulk-operations) · [Transactions](/docs/transactions) · [Optimistic locking](/docs/optimistic-locking)
+
+</Step>
+
+<Step>
+
+### Securing it
+
+Limit what callers may filter, sort and write, scope every query to a tenant, validate input and
+react to writes.
+
+[Allowlists](/docs/allowlists) · [Multi-tenancy](/docs/multi-tenancy) · [Hooks and validation](/docs/hooks-validation)
+
+</Step>
+
+<Step>
+
+### Put it in your stack
+
+Generated controllers, OpenAPI, async config, per-entity config, tests and coding agents.
+
+[Controller factory](/docs/controller-factory) · [OpenAPI](/docs/openapi) · [Testing](/docs/testing)
+
+</Step>
+
+<Step>
+
+### Compare
+
+How it stacks up against `@nestjsx/crud`, `nestjs-paginate`, TypeORM and Prisma, and how to move
+over.
+
+[Compared with nestjsx/crud](/docs/vs-nestjsx-crud) · [Migrate from nestjsx/crud](/docs/migrate-from-nestjsx-crud) · [Drizzle, TypeORM or Prisma](/docs/drizzle-vs-typeorm-prisma)
+
+</Step>
+
+<Step>
+
+### Reference
+
+Every method signature, config type and export in one place.
+
+[API reference](/docs/api) · [Config types](/docs/config-types) · [Exports](/docs/exports)
+
+</Step>
+
+<Step>
+
+### Ship it
+
+What changed in each release, where to ask for help, and how to support the project.
+
+[Changelog](/docs/changelog) · [Getting help](/docs/getting-help) · [Sponsor](/docs/sponsor)
+
+</Step>
+
 </Steps>
 
-That is the entire library surface. Everything else, including soft delete, bulk ops, full-text search, hooks, transactions and relations, is enabled through configuration rather than new APIs to learn.
+## How do I install it?
 
-## When to use it
+<InstallTabs pkg="nestjs-drizzle-crud @nestjs/common @nestjs/core drizzle-orm reflect-metadata" />
 
-Use `nestjs-drizzle-crud` when you want:
+Then add a driver: `postgres` for PostgreSQL, or a Drizzle instance you build yourself for MySQL.
+[Install NestJS with Drizzle ORM](/docs/installation) covers which one you need and why.
 
-- A standard REST/JSON CRUD surface over a relational schema.
-- To stop writing the same `findAll` / `create` / `update` boilerplate in every service.
-- Type-safe query and result types inferred from your Drizzle schema.
-- Soft delete, audit timestamps, and filtering/sorting out of the box.
-- Bulk operations that roll back atomically when one row fails.
-- A library that doesn't hide Drizzle. You can drop down to raw `db.select()` whenever you need to.
+## What does a service look like?
 
-## When **not** to use it
+A service is an empty class that names its row, DTO and filter types. `forFeature` binds it to a
+table and builds it for you, so there is no constructor and no `@Injectable()`.
 
-- **Complex aggregate queries.** If most of your endpoints are joins, window functions, or domain-specific reads, hand-written Drizzle will be clearer.
-- **Has-many / many-to-many relations.** Only many-to-one / belongs-to relations are supported. Model those with custom service methods over `this.config.db`.
-- **Non-CRUD write patterns.** If your writes are mostly multi-step domain operations (workflows, sagas), use a hand-rolled service and only pull in `nestjs-drizzle-crud` for the simple entities.
-- **GraphQL.** The library returns plain objects shaped for REST. Use it with REST controllers; for GraphQL you'll write resolvers against the service methods directly.
+```ts title="users/users.service.ts"
+import { type CrudFilter, SqlBaseCrudService } from "nestjs-drizzle-crud";
+import type { users } from "../db/schema";
+import type { CreateUserDto, UpdateUserDto } from "./users.dto";
 
-## Quick taste
+export type User = typeof users.$inferSelect;
 
-```ts accent=nest tab="Configure once (app.module.ts)"
-import { Module } from '@nestjs/common';
-import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
-import { schema } from './db/schema';
-import { UsersModule } from './users/users.module';
-
-@Module({
-  imports: [
-    DrizzleCrudModule.forRoot({
-      dialect: 'postgresql',
-      connectionString: process.env.DATABASE_URL,
-      schema,
-    }),
-    UsersModule,
-  ],
-})
-export class AppModule {}
+export class UsersService extends SqlBaseCrudService<
+  User,
+  CreateUserDto,
+  UpdateUserDto,
+  CrudFilter
+> {}
 ```
 
-```ts tab="Empty service (users.service.ts)"
-import { SqlBaseCrudService } from 'nestjs-drizzle-crud';
-import type { User } from '../db/schema';
-
-export class UsersService extends SqlBaseCrudService<User> {}
-```
-
-```ts accent=nest tab="Bind to table (users.module.ts)"
-import { Module } from '@nestjs/common';
-import { DrizzleCrudModule } from 'nestjs-drizzle-crud';
-import { users } from '../db/schema';
-import { UsersController } from './users.controller';
-import { UsersService } from './users.service';
+```ts accent=nest title="users/users.module.ts"
+import { Module } from "@nestjs/common";
+import { DrizzleCrudModule } from "nestjs-drizzle-crud";
+import { users } from "../db/schema";
+import { UsersController } from "./users.controller";
+import { UsersService } from "./users.service";
 
 @Module({
   imports: [
@@ -97,12 +189,56 @@ import { UsersService } from './users.service';
 export class UsersModule {}
 ```
 
-That's it. Your `UsersService` already exposes `find`, `findOne`, `findAll`, `create`, `update`, `delete`, `softDelete`, `restore`, `massCreate`, `massUpdate`, `count`, `exists`, `executeSqlTransaction`, and `fullTextSearch` (Postgres), all typed against `User`.
+`UsersService` now has every method in [CRUD operations](/docs/crud-operations), typed against
+`User`. The [quick start](/docs/quick-start) builds the rest of the app around it.
 
-Ready to wire it up? Head to the [Quick start](/docs/quick-start) for a complete 5-minute walkthrough, or read [Installation](/docs/installation) for the full peer-dependency matrix.
+## Facts at a glance
 
-## Getting help and supporting the project
+| Fact | Value |
+| --- | --- |
+| Databases | PostgreSQL and MySQL (`dialect: "postgresql"` or `"mysql"`) |
+| Documented version | <Version /> |
+| License | MIT |
+| Runtime dependencies | None. Peer dependencies only, two of them optional (`postgres`, `@nestjs/swagger`) |
+| Node | 20 or later |
+| Source | <Ext to="github">GitHub</Ext>, published on <Ext to="npm">npm</Ext> |
 
-Questions go to [GitHub Discussions](https://github.com/avytrix/nestjs-drizzle-crud/discussions), and the [Getting help](/docs/getting-help) page covers how to report a bug and answers the questions that come up most.
+## When is it the wrong tool?
 
-The package is MIT licensed and free. If it saves you time, [sponsoring it](/docs/sponsor) is what keeps it maintained.
+- **Most of your endpoints are reports.** Window functions, CTEs and hand-tuned joins read better
+  as plain Drizzle. You can still add those as extra methods on the same service.
+- **Your writes are workflows.** Multi-step domain operations belong in your own service code.
+  Use the package for the plain entities around them.
+- **You need SQLite or another dialect.** The `dialect` setting accepts `"postgresql"` and
+  `"mysql"` only.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Does nestjs-drizzle-crud replace Drizzle ORM?">
+    No. It builds Drizzle queries from your own Drizzle tables. You keep your schema and migrations, and you can inject `DRIZZLE_DB` to run any Drizzle query yourself.
+  </Accordion>
+  <Accordion title="Which databases does it support?">
+    PostgreSQL and MySQL. Full-text search and building the connection from a `connectionString` are PostgreSQL only; on MySQL you pass a Drizzle instance you built yourself.
+  </Accordion>
+  <Accordion title="Do I have to write controllers?">
+    No. `createCrudController` generates the list, get, create, update, delete and bulk routes for a service. You can also write a normal NestJS controller and call the service methods yourself.
+  </Accordion>
+  <Accordion title="Does loading relations cause N+1 queries?">
+    No. A belongs-to relation is joined into the main query, and has-many and many-to-many relations load with one batched query per relation for the whole result, whatever the row count.
+  </Accordion>
+  <Accordion title="Is it free to use in a commercial project?">
+    Yes. The package is MIT licensed and has no runtime dependencies of its own.
+  </Accordion>
+</Accordions>
+
+The library is built and maintained by [Avytrix Technologies](/docs/built-by-avytrix).
+
+## Next steps
+
+<Cards>
+  <Card icon={<Rocket />} title="Quick start" href="/docs/quick-start" description="From an empty NestJS project to working CRUD endpoints for one table." />
+  <Card icon={<Package />} title="Installation" href="/docs/installation" description="The package, its peer dependencies and the driver for your database." />
+  <Card icon={<Database />} title="CRUD operations" href="/docs/crud-operations" description="Every read and write method a service inherits, what it returns and what it throws." />
+  <Card icon={<LifeBuoy />} title="Getting help" href="/docs/getting-help" description="Where to ask a question, report a bug or request a feature." />
+</Cards>

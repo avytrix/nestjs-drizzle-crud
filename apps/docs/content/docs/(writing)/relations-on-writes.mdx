@@ -1,15 +1,20 @@
 ---
-title: Relations on writes, nested create, attach and detach
-description: "Return created and updated rows with their relations loaded, create has-many and belongs-to children in one transaction, and attach, detach or sync many-to-many links."
+title: Nested create with Drizzle relations
+description: Drizzle nested create in NestJS. Write a row and its related rows in one transaction, return writes with relations, and attach or sync links.
+icon: Network
 ---
 
-`create`, `update`, `upsert`, `restore` and every mass write take `options.relations` and return the rows with those relations loaded, using the same batched loaders as a read. Nested create, behind `writableRelations`, writes children in the same transaction, and `attach`, `detach` and `sync` change many-to-many links with set-based statements.
+Drizzle nested create in NestJS works through `writableRelations`: list a relation there, put the related rows in the `create` body under the relation's name, and the package writes the parent and its children in one transaction. Every write method also takes `options.relations` and returns its rows with those relations loaded, and `attach`, `detach` and `sync` change many-to-many links with set-based statements.
+
+<Callout title="Define the relations first">
+  Every example here uses relations declared in `forFeature` config. If you have not set those up, start with [Relations](/docs/relations). Nested create needs `RETURNING`, so it runs on PostgreSQL only.
+</Callout>
 
 ## How do I get a created row back with its relations?
 
 Pass `relations` (and `counts`, see [Aggregates](/docs/aggregates)) as you would on `find`:
 
-```ts
+```ts title="posts.create.ts"
 const post = await posts.create(
   { title: 'Hello', author_id: 2, status: 'draft' },
   { relations: ['author', 'tags'] },
@@ -20,15 +25,33 @@ post.tags;        // []
 
 That is one `INSERT` plus one query per relation. A mass write loads the relations of every row it wrote in one query per relation too, so `massCreate` of 10 posts with `relations: ['author']` is an `INSERT` and one `SELECT`, not ten.
 
-```ts
+```ts title="posts.create.ts"
 const created = await posts.massCreate(dtos, { relations: ['author'], counts: ['tags'] });
 ```
 
-`update`, `upsert`, `massUpsert`, `massUpdate`, `restore` and `massRestore` work the same way. The relation paths are checked against [`loadableRelations`](/docs/allowlists) before anything is written, so a bad path is a 400 and leaves the table untouched.
+These methods load relations onto what they return:
+
+| Method | Loads `relations` and `counts` |
+| --- | --- |
+| `create`, `massCreate` | yes |
+| `update`, `massUpdate` | yes |
+| `upsert`, `massUpsert` | yes |
+| `restore`, `massRestore` | yes |
+| `attach`, `detach`, `sync` | yes, plus the relation they changed |
+
+The relation paths are checked against [`loadableRelations`](/docs/allowlists) before anything is written, so a bad path is a 400 and leaves the table untouched.
 
 ## How do I create a row with its children in one call?
 
-List the relation in `writableRelations`, then put it in the body under the relation's name:
+Allow the relation, then send the children in the body.
+
+<Steps>
+
+<Step>
+
+### Declare the relation and allow writing it
+
+List the relation in `writableRelations` next to its definition:
 
 ```ts accent=nest title="authors.module.ts"
 DrizzleCrudModule.forFeature([{
@@ -43,7 +66,13 @@ DrizzleCrudModule.forFeature([{
 }]);
 ```
 
-```ts
+</Step>
+
+<Step>
+
+### Put the children in the body under the relation's name
+
+```ts title="authors.create.ts"
 const author = await authors.create(
   {
     name: 'Dee',
@@ -57,46 +86,99 @@ const author = await authors.create(
 );
 ```
 
-The author and both posts are written in one transaction: an `INSERT` for the author and one multi-row `INSERT` for the posts, with `author_id` set for you. If a child fails, the parent is rolled back and the call answers with the child's error (a bad enum value is a 400, a duplicate key a 409).
+The author and both posts are written in one transaction: one `INSERT` for the author and one multi-row `INSERT` for the posts, with `author_id` set for you.
+
+</Step>
+
+<Step>
+
+### Handle a failing child
+
+If a child fails, the parent is rolled back too, and the call answers with the child's error: a bad enum value is a 400, a duplicate key a 409. If you passed your own `transaction`, the nested writes join it instead of opening a new one.
+
+</Step>
+
+</Steps>
 
 ## What shapes does a nested body take?
+
+The body value depends on the relation type:
 
 | Relation | Body value | What happens |
 | --- | --- | --- |
 | has-many | an array of objects | One multi-row `INSERT`, with the foreign key set to the new row's key. |
-| belongs-to | an object | The parent is inserted first and its key goes on the row (`localKey`). |
+| belongs-to | an object | The related row is inserted first and its key goes on the new row (`localKey`). |
 | many-to-many | an array of ids, objects, or both | Objects are inserted into the related table in one statement, then every id is linked through the join table. |
 
-Nested writes are one level deep. Only the related table's own columns are written, never its soft delete column, and its timestamps and the [tenant scope](/docs/multi-tenancy) are set when the related table has those columns. Nested create needs `RETURNING`, so it runs on PostgreSQL; on MySQL it is a 400.
+A few rules apply to every shape:
+
+- Nested writes run on `create` only, and go one level deep.
+- Only the related table's own columns are written, never its soft delete column. Other keys in a child object are dropped.
+- The timestamps and the [tenant scope](/docs/multi-tenancy) are set on a child row when the related table has those columns.
+- A relation key set to `null` is skipped.
+- A wrong shape (an object for has-many, an array for belongs-to) is a 400.
+- On MySQL, which has no `RETURNING`, a nested create is a 400.
 
 ## What if writableRelations is not set?
 
-Nested writes are off. A relation key in the body is left alone and Drizzle ignores it, which is how 3.4 behaved. With the list set, a relation key that is not in it is a 400, the same way [`writableColumns`](/docs/allowlists) treats a column.
+Then nested writes are off. A relation key in the body is left alone and Drizzle ignores it, which is how 3.4 behaved. With the list set, a relation key that is not in it is a 400, the same way [`writableColumns`](/docs/allowlists) treats a column. A trusted server-side call can pass `skipAllowlists: true` to write any declared relation.
 
 ## How do I attach or detach many-to-many rows?
 
-```ts
-await posts.attach(2, 'tags', [1, 2]);        // link tags 1 and 2
-await posts.detach(2, 'tags', [1]);           // unlink tag 1
-await posts.detach(2, 'tags');                // unlink every tag
+Call `attach`, `detach` or `sync` with the row's id, the relation name and the related ids:
+
+```ts title="posts.tags.ts"
+await posts.attach(2, 'tags', [1, 2]);         // link tags 1 and 2
+await posts.detach(2, 'tags', [1]);            // unlink tag 1
+await posts.detach(2, 'tags');                 // unlink every tag
 const post = await posts.sync(2, 'tags', [2]); // links are exactly [2] now
 post.tags; // [{ id: 2, name: 'tech' }]
 ```
 
-Each method returns the row with that relation loaded (plus anything in `options.relations`) and runs in one transaction. They are set based whatever the number of ids: one `SELECT` checks the targets exist, one finds the links already there, and one `INSERT` adds the rest. Ids already linked are skipped, and duplicates in the list are ignored. The related rows themselves are never changed or deleted.
+| Method | Signature | What it does |
+| --- | --- | --- |
+| `attach` | `attach(id, relation, relatedIds, options?)` | Adds links. Ids already linked are skipped. |
+| `detach` | `detach(id, relation, relatedIds?, options?)` | Removes the given links, or every link when `relatedIds` is left out. |
+| `sync` | `sync(id, relation, relatedIds, options?)` | Adds the missing links and removes the rest, so the links match `relatedIds` exactly. `[]` removes every link. |
 
-## What can go wrong?
+Each method returns `Promise<T>`: the row with that relation loaded, plus anything in `options.relations`. Each runs in one transaction and is set based whatever the number of ids: one `SELECT` checks the targets exist, one finds the links already there, and one `INSERT` adds the rest (`sync` adds one `DELETE`). Duplicates in the list are ignored. The related rows themselves are never changed or deleted.
 
-- The row itself does not exist, or is outside the caller's [scope](/docs/multi-tenancy): 404.
-- A target id that does not exist or is soft-deleted: a 400 `BulkOperationException` with one 404 entry per missing id.
-- When the related table has the scope column, a target of another tenant counts as missing.
-- The relation is not a many-to-many: 400.
-- `writableRelations` is set and does not list the relation: 400. Unset, attach, detach and sync work on any many-to-many relation.
+With global hooks on, they raise `attach`, `detach` and `sync` [events](/docs/events).
 
-They raise `attach`, `detach` and `sync` [events](/docs/events) when global hooks are on.
+## What errors can attach, detach and sync return?
 
-## Next
+| Cause | Result |
+| --- | --- |
+| The row does not exist, or is outside the caller's [scope](/docs/multi-tenancy) | 404 |
+| A target id that does not exist or is soft-deleted | 400 `BulkOperationException` with one 404 entry per missing id |
+| A target of another tenant, when the related table has the scope column | Counted as missing: a 404 entry |
+| The relation is not a many-to-many | 400 |
+| `writableRelations` is set and does not list the relation | 400 |
+| `relatedIds` is not an array of plain ids | 400 |
 
-- → [Relations: belongs-to, has-many and many-to-many loading](/docs/relations)
-- → [Aggregates: relation counts and countBy](/docs/aggregates)
-- → [Allowlists: writableRelations and the other lists](/docs/allowlists)
+When `writableRelations` is unset, `attach`, `detach` and `sync` work on any many-to-many relation.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Can I create a row and its children in one call?">
+    Yes. List the relation in `writableRelations` and send the children under the relation's name in the `create` body. The parent and children are written in one transaction.
+  </Accordion>
+  <Accordion title="Does nested create work on update?">
+    No. Nested writes run on `create` only. To change many-to-many links on an existing row, use `attach`, `detach` or `sync`.
+  </Accordion>
+  <Accordion title="Does nested create work on MySQL?">
+    No. It needs `RETURNING` to know the new keys, so on MySQL a nested create is a 400.
+  </Accordion>
+  <Accordion title="Does sync delete the related rows?">
+    No. `sync` only adds and removes rows in the join table. The related rows themselves are never changed or deleted.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Database />} title="Relations" href="/docs/relations" description="Declare belongs-to, has-many and many-to-many relations and load them on reads." />
+  <Card icon={<Hash />} title="Aggregates, relation counts and countBy" href="/docs/aggregates" description="Relation counts with counts and grouped totals with countBy." />
+  <Card icon={<Shield />} title="NestJS Drizzle filter and column allowlists" href="/docs/allowlists" description="writableRelations, writableColumns and the other per-entity lists." />
+</Cards>

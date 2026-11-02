@@ -1,27 +1,101 @@
 ---
-title: Aggregates, relation counts and countBy
-description: "Add _count to rows with options.counts, one GROUP BY per relation and no N+1, and get grouped counts per column value with countBy(column, filters). Soft delete, scope and allowlists apply."
+title: Count, group by and aggregates in Drizzle
+description: "Drizzle aggregates in NestJS: count() rows, group by a column with countBy, and relation counts per row with options.counts. SUM needs a custom method."
+icon: Sigma
 ---
 
-`options.counts` puts the number of related rows on each row under `_count`, with one grouped query per relation for the whole result. `countBy(column, filters)` returns how many rows have each value of a column. Both respect soft delete, the tenant scope and the allowlists.
+Drizzle aggregates in NestJS are three counting tools on your service. `count(filters)` returns how many rows match. `countBy(column, filters)` runs one `GROUP BY` and returns the count for each value of a column. `options.counts` puts the number of related rows on each row under `_count`, with one grouped query per relation and no N+1. `SUM`, `AVG`, `MIN` and `MAX` are not built in: write those as a custom service method.
 
-```ts
-const page = await authors.findAll({}, {}, { counts: ['posts'] });
+<Callout title="Counts only">
+  The package aggregates with `count(*)` and nothing else. For a sum or an average, see [how do I get a SUM or AVG?](#how-do-i-get-a-sum-or-avg) below. The examples use an `AuthorsService` (has-many `posts`, many-to-many `tags`) and a `PostsService` (belongs-to `author`).
+</Callout>
+
+## Which aggregates are there?
+
+Three methods and one option, all counting.
+
+| API | Returns | Query |
+| --- | --- | --- |
+| `count(filters?, options?)` | `number` | One `SELECT count(*)` |
+| `countBy(column, filters?, options?)` | `Array<{ value, count }>` | One `GROUP BY column` |
+| `options.counts` on a read | `_count: { relation: n }` on each row | One `GROUP BY` per relation, for the whole page |
+| `findAll` `total` | `number` (or `null` with `withCount: false`) | One `count(*)` beside the data query |
+
+To skip the `total` count of a list, see [how do I skip the count query?](/docs/pagination-sorting#how-do-i-skip-the-count-query)
+
+## How do I count rows?
+
+Call `count(filters?, options?)`. It takes the same filters as `findAll` and returns a number.
+
+```ts title="posts.controller.ts"
+await this.postsService.count({ status: 'published' });
+// 15
+```
+
+Filters, `options.search`, the [tenant scope](/docs/multi-tenancy) and soft delete apply, so soft-deleted rows are not counted unless you pass `withDeleted: true` (or `onlyDeleted: true` to count only the trash).
+
+## How do I count rows per column value?
+
+Call `countBy(column, filters?, options?)`. It returns one entry per value, largest group first, ties ordered by value.
+
+```ts title="posts.controller.ts"
+await this.postsService.countBy('status');
+// [{ value: 'published', count: 15 }, { value: 'draft', count: 14 }]
+
+await this.postsService.countBy('author.name', { status: 'published' });
+// [{ value: 'Ann', count: 5 }, { value: 'Bob', count: 5 }, { value: 'Cy', count: 5 }]
+```
+
+It is one query:
+
+```sql title="countBy('status')"
+SELECT status AS value, count(*) AS count FROM posts
+WHERE deleted_at IS NULL
+GROUP BY status
+ORDER BY count(*) DESC, status ASC
+```
+
+<PropsTable
+  props={{
+    column: { type: "string", required: true, description: "A column of the table, or of a top-level belongs-to written as relation.column. Anything else is a 400." },
+    filters: { type: "CrudFilter", description: "The same filter object findAll and count take." },
+    options: { type: "SqlOperationOptions", description: "search, withDeleted, onlyDeleted, transaction and the tenant context apply as they do in count." },
+  }}
+/>
+
+Two more rules:
+
+- The column must be in [`filterableColumns`](/docs/allowlists) when that list is set, since grouping exposes its values the way filtering does.
+- The type of `value` is a generic: `countBy<string>('status')` returns `CountByRow<string>[]`.
+
+## How do I add relation counts to each row?
+
+Pass `options.counts` with the relation names. Each row gets a `_count` object.
+
+```ts title="authors.controller.ts"
+const page = await this.authorsService.findAll({}, {}, { counts: ['posts'] });
 page.data[0]._count; // { posts: 10 }
 ```
 
-## How are relation counts loaded?
+`counts` works on `find`, `findOne`, `findAll`, `findByCursor`, and on the rows a [write returns](/docs/relations-on-writes). From a query string, `?counts=posts,tags` sets it. See [parse query strings into filters](/docs/query-parsing).
 
-With one `SELECT key, count(*) ... WHERE key IN (...) GROUP BY key` per relation, for every row of the page at once, and the relations run concurrently. A page of 50 authors with `counts: ['posts', 'tags']` is the data query, the count query and two grouped queries, never one per row. A has-many counts the related rows; a many-to-many counts the links whose target row is live.
+### How are relation counts loaded?
 
-`counts` works on `find`, `findOne`, `findAll`, `findByCursor`, and on the rows a [write returns](/docs/relations-on-writes). When `select` narrows the columns, the key the count groups on is added back.
+With one `SELECT key, count(*) ... WHERE key IN (...) GROUP BY key` per relation, for every row of the page at once, and the relations run concurrently. A page of 50 authors with `counts: ['posts', 'tags']` is the data query, the count query and two grouped queries, never one per row.
 
-## Can I count only some related rows?
+| Relation type | What is counted |
+| --- | --- |
+| Has-many | Related rows that are not soft-deleted. |
+| Many-to-many | Links in the join table whose target row is not soft-deleted. |
 
-Pass an object instead of a list. Each value is a filter on the related table, or `true` for all of them:
+When `select` narrows the columns, the key the count groups on is added back, so the counts still attach.
 
-```ts
-await authors.findAll({}, {}, {
+### Can I count only some related rows?
+
+Yes. Pass an object instead of a list. Each value is a filter on the related table, or `true` for all of them.
+
+```ts title="authors.controller.ts"
+await this.authorsService.findAll({}, {}, {
   counts: { posts: { status: 'published' }, tags: true },
 });
 // _count: { posts: 5, tags: 2 }
@@ -29,31 +103,60 @@ await authors.findAll({}, {}, {
 
 The filter accepts everything a [filter](/docs/filtering) does, groups included.
 
-## What can be counted?
+### What can be counted?
+
+These are the limits, and each one is a 400 when broken:
 
 - Only has-many and many-to-many relations. Counting a belongs-to, or a relation that is not configured, is a 400.
-- Soft-deleted related rows are not counted.
-- The relation must be allowed by [`loadableRelations`](/docs/allowlists) when that list is set.
+- The relation must be in [`loadableRelations`](/docs/allowlists) when that list is set.
 - Counts are top level: `posts`, not `posts.comments`.
 
-From a query string, `?counts=posts,tags` sets `options.counts`. See [Parse query strings](/docs/query-parsing).
+## How do I get a SUM or AVG?
 
-## How do I count rows per column value?
+Write a method on your service with Drizzle's own aggregate helpers. Your methods can use `this.config.db`, the Drizzle instance the service runs on.
 
-`countBy(column, filters?, options?)` returns one entry per value, largest group first, ties ordered by value:
+```ts accent=drizzle title="posts.service.ts"
+import { and, eq, isNull, sum } from 'drizzle-orm';
+import { SqlBaseCrudService, type CrudFilter } from 'nestjs-drizzle-crud';
+import { posts } from '../db/schema';
 
-```ts
-await posts.countBy('status');
-// [{ value: 'published', count: 15 }, { value: 'draft', count: 14 }]
-
-await posts.countBy('author.name', { status: 'published' });
-// [{ value: 'Ann', count: 5 }, { value: 'Bob', count: 5 }, { value: 'Cy', count: 5 }]
+export class PostsService extends SqlBaseCrudService<Post, CreatePostDto, UpdatePostDto, CrudFilter> {
+  async totalViews(authorId: number): Promise<number> {
+    const [row] = await this.config.db
+      .select({ total: sum(posts.views) })
+      .from(posts)
+      .where(and(eq(posts.author_id, authorId), isNull(posts.deleted_at)));
+    return Number(row?.total ?? 0);
+  }
+}
 ```
 
-It is one `GROUP BY` query. The column is a column of the table, or of a top-level belongs-to written as `relation.column`. Filters, `options.search`, the [tenant scope](/docs/multi-tenancy) and soft delete apply as they do in `count`, so soft-deleted rows are not counted unless you pass `withDeleted`. The column must be in [`filterableColumns`](/docs/allowlists) when that list is set, since grouping exposes its values the way filtering does. An unknown column is a 400. The type of `value` is a generic: `countBy<string>('status')`.
+A custom query does not get the package's soft delete, tenant scope or allowlists for free, so add the `deleted_at IS NULL` condition (and your tenant column) yourself, as above. Drizzle's `sum` returns a string, which is why the result goes through `Number`.
 
-## Next
+## Common questions
 
-- → [Relations](/docs/relations)
-- → [Relation filters: paths and some / none / every](/docs/relation-filters)
-- → [Pagination: skip the count with withCount: false](/docs/pagination-sorting#how-do-i-skip-the-count-query)
+<Accordions>
+  <Accordion title="Does countBy count soft-deleted rows?">
+    No. Soft-deleted rows are left out unless you pass `withDeleted: true`, the same as `count`.
+  </Accordion>
+  <Accordion title="Does options.counts run one query per row?">
+    No. It runs one grouped query per relation for every row of the result at once, so a page of 50 rows with two counted relations adds two queries.
+  </Accordion>
+  <Accordion title="Can I count a belongs-to relation?">
+    No. A belongs-to has at most one row, so `counts` on it is a 400. Only has-many and many-to-many relations have a count.
+  </Accordion>
+  <Accordion title="Does the package have sum, avg, min or max?">
+    No. It only counts. Write a custom service method with Drizzle's `sum`, `avg`, `min` or `max` over `this.config.db`.
+  </Accordion>
+  <Accordion title="Can countBy group by a related column?">
+    Yes, for a top-level belongs-to relation written as `relation.column`, such as `author.name`. A has-many or many-to-many column is a 400.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Layers />} title="Relations" href="/docs/relations" description="Configure the has-many and many-to-many relations that counts reads." />
+  <Card icon={<Filter />} title="Filtering with Drizzle in NestJS" href="/docs/filtering" description="The filter object count, countBy and counts all take." />
+  <Card icon={<ListOrdered />} title="Pagination and sorting with Drizzle" href="/docs/pagination-sorting" description="The total of a list, and how to skip it with withCount: false." />
+</Cards>
