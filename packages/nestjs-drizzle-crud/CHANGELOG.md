@@ -8,6 +8,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Scope note: the 3.0.x line is PostgreSQL-first. MySQL-specific paths (non-`RETURNING`
 restore, `ER_DUP_ENTRY` mapping, dialect locking) are tracked separately and unchanged here.
 
+## [3.5.0] - 2026-11-02
+
+The P2 features from the November 2026 audit (M10 to M18). Each one is covered by specs that run real
+SQL against PGlite (`test/pglite.integration.spec.ts`), and the controller factory, scoping,
+locking, OpenAPI document, counts and quantified filters also run over real HTTP in the example
+app.
+
+### Added
+
+- **Relations on writes.** `create`, `update`, `upsert`, `restore` and every mass write take
+  `options.relations` and `options.counts` and return the rows with them loaded, through the same
+  batched loaders as a read: one query per relation for the whole batch. Ten rows from `massCreate`
+  with `relations: ['author']` cost one `INSERT` and one `SELECT`.
+- **Nested create.** With a relation listed in the new `writableRelations` allowlist, a create body
+  can carry it: an array for a has-many (one multi-row `INSERT`), an object for a belongs-to
+  (inserted first, its key set on the row), and ids or objects for a many-to-many (new targets in
+  one `INSERT`, links in one more). Everything runs in one transaction and needs `RETURNING`.
+- **`attach`, `detach` and `sync`** for many-to-many relations: `attach(id, 'tags', [1, 2])`. Set
+  based (a fixed number of statements whatever the number of ids), already-linked ids are skipped,
+  and an unknown or soft-deleted target is a 400 with a 404 entry per id. Each returns the row with
+  the relation loaded.
+- **`createCrudController(Service, options)`**, a controller factory. It registers list (offset,
+  or keyset with `?cursor=`), trash, get, create, update, delete, soft delete, restore and four bulk
+  routes, all through `parseQuery`. The `:id` param is parsed from the primary key column
+  (ParseIntPipe for an integer, ParseUUIDPipe for a uuid) unless `idType` says otherwise. Routes can
+  be turned on or off one by one and take their own decorators, so guards and roles fit in. Bulk
+  routes are off by default. `service.parseId(raw)` and `service.idKind()` are public.
+- **OpenAPI for list queries.** `@ApiCrudQuery(source)` documents `page`, `limit`, `sortBy`,
+  `sortOrder`, `cursor`, `count`, `withCount`, `search`, `fields`, `with`, `counts`, the trash flags
+  and one parameter per filterable column with its type. `@ApiCrudList(source)` adds the page
+  envelope with a row schema built from the table. `@nestjs/swagger` is an optional peer, loaded
+  only when one of these decorators runs.
+- **Tenant and ownership scoping.** `scope: (ctx) => ({ tenant_id: ctx.tenantId })` (or a fixed
+  object) is ANDed into every read, count, cursor page, `countBy`, `fullTextSearch`, relation count,
+  write, bulk write, upsert, soft delete, restore, force delete and attach/detach/sync, and written
+  onto every row a create or upsert inserts (and onto nested child rows that have the column).
+  Another tenant's id is a 404 everywhere. The context comes from `options.context` or from
+  `CrudContext.run(...)` / `CrudContext.middleware(...)`, which keep it in `AsyncLocalStorage` for
+  the request. A missing context value fails closed with `MissingScopeException` (403); a resolver
+  that returns `null`, or `skipScope: true`, runs unscoped on purpose.
+- **Module-level events.** `hooks.enableGlobalHooks: true` now does what it says: every service
+  raises a before and an after event on the injectable `CrudEventBus` for each write, bulk and upsert
+  included. Subscribe with `hooks.subscribers` in `forRoot` or by injecting the bus. A bulk call
+  raises one event with `bulk: true` and every id, so audit trails and cache busting stay set based.
+  A before listener that throws stops the write; an after listener that throws inside a transaction
+  rolls it back. `skipEvents: true` opts a call out.
+- **Optimistic locking.** `versionColumn: 'version'` starts rows at 1 and adds one on every update,
+  soft delete, restore, upsert conflict and bulk write. An update, soft delete, restore or delete
+  that names a stale version (`options.expectedVersion`, or the version key in an update body) is a
+  409 `StaleVersionException`. Mass writes take `expectedVersions: { [id]: version }` and report a
+  409 entry per stale id.
+- **Relation counts and grouped counts.** `options.counts: ['posts']` (or `{ posts: { status:
+  'published' } }`) puts `_count: { posts: 3 }` on every row of `find`, `findOne`, `findAll`,
+  `findByCursor` and the writes above, with one `GROUP BY` query per relation for the whole result.
+  Soft-deleted related rows are not counted. `countBy(column, filters)` returns `[{ value, count }]`,
+  largest group first, for a column of the table or of a top-level belongs-to.
+- **`withCount: false`** on `findAll` (and `?withCount=false` in the parser) skips the `COUNT(*)`.
+  The envelope then has `total: null` and a `hasMore` flag, from fetching one row past the page.
+- **Deeper relation filters.** A relation filter can go on through the related table's own
+  relations at any depth: `{ state: { country: { code: 'IN' } } }`, or `?state[country][code]=IN`.
+  Below the first joined belongs-to, each level is an `EXISTS` subquery. Collections take `some`,
+  `none` and `every` (`{ posts: { none: { status: 'draft' } } }`), compiled to `IN` / `NOT EXISTS`
+  subqueries that never multiply rows, inside `or` / `and` / `not` groups and in `count`.
+- **New exports:** `createCrudController`, `CrudContext`, `CrudEventBus`, `ApiCrudQuery`,
+  `ApiCrudList`, `MissingScopeException`, `StaleVersionException`, and the types
+  `CrudControllerOptions`, `CrudControllerInstance`, `CrudRouteName`, `CrudRouteOptions`,
+  `CrudEvent`, `CrudEventPhase`, `CrudSubscriber`, `CrudWriteOperation`, `CrudScope`,
+  `CrudScopeValues`, `CrudContextValue`, `CollectionFilter`, `CollectionQuantifier`, `CountByRow`,
+  `CrudPage`, `UncountedCrudPage`, `RelationCounts`, `ApiCrudSource` and `ApiCrudQueryOptions`.
+  New config keys: `scope`, `versionColumn`, `events`, `writableRelations`. New options: `counts`,
+  `context`, `skipScope`, `skipEvents`, `expectedVersion`, `expectedVersions`, and
+  `PaginationOptions.withCount`.
+
+### Changed
+
+These change behaviour or types that existing code may rely on. Check each one before upgrading.
+
+- **`findAll` is overloaded on `withCount`.** With a literal `withCount: false` it returns
+  `UncountedCrudPage<T>` (`total: null`), without one `CrudPage<T>` (`total: number`), and with a
+  `withCount` typed as `boolean` (which `ParsedCrudQuery.pagination` is) `total` is
+  `number | null`. Code that passes `q.pagination` from `parseQuery` straight to `findAll` and then
+  does arithmetic on `total` needs a `total !== null` check. The runtime result is unchanged unless
+  `withCount: false` is passed.
+- **`withCount` and `counts` are reserved query parameters.** The parser no longer treats them as
+  filters. A column with one of those names can still be filtered from code.
+- **Writes read `options.relations` and `options.counts`.** They used to be ignored on `create`,
+  `update`, `upsert` and the mass writes. They are now checked against the allowlists (with
+  `select` and `search`) before anything is written, and loaded onto the result.
+- **A relation filter can name a relation of the related table**, and a collection filter whose
+  keys are all `some`, `none` or `every` is a quantifier. Both used to be a 400 ("Unknown filter
+  column"). A related table that really has a column called `some`, `none` or `every` keeps the old
+  meaning.
+- **`DRIZZLE_CRUD_CONFIG.hooks`** carries only `enableGlobalHooks` (a boolean); `subscribers` stay
+  on the raw config.
+
+### Fixed
+
+- **`hooks.enableGlobalHooks` did nothing** (BUG-21). It now wires the module's `CrudEventBus` into
+  every service.
+
+### Deprecated
+
+- Nothing new. `hooks.enableGlobalHooks`, deprecated as a no-op in 3.3.1, is no longer deprecated.
+
 ## [3.4.0] - 2026-11-02
 
 The P1 features from the November 2026 audit. Every one is covered by specs that run real SQL

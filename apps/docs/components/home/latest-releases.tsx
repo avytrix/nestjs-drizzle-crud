@@ -4,6 +4,12 @@ import { ArrowRight } from "lucide-react";
 // Newest first; the top banner announces RELEASES[0].
 export const RELEASES = [
 	{
+		version: "3.5.0",
+		date: "Nov 2, 2026",
+		title: "Controller factory, tenancy, events, locking",
+		body: "createCrudController wires every CRUD route with the right id pipe, and ApiCrudList documents list queries in Swagger. A scope keeps every read and write inside one tenant, global events cover bulk writes, a version column turns stale writes into 409s, and filters reach through relation paths with some, none and every. Writes return their relations, lists can count relations or skip COUNT(*).",
+	},
+	{
 		version: "3.4.0",
 		date: "Nov 2, 2026",
 		title: "Query parsing, allowlists, cursors, upsert",
