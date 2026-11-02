@@ -38,9 +38,9 @@ All exceptions extend `@nestjs/common`'s `HttpException`, so Nest's default exce
 | `ForeignKeyViolationException` | 400 | Thrown by `create` / `update` when a supplied foreign key references no existing row (`23503`). Names the offending column. |
 | `EntityInUseException` | 409 | Thrown by `delete` when other rows still reference this one (`23503`, `ON DELETE RESTRICT` or `NO ACTION`). |
 | `ValidationFailedException` | 400 | Throw this from your `validateCreate` / `validateUpdate` hooks to reject bad input. |
-| `BulkOperationException` | 400 | Thrown by any bulk method when the transaction rolls back. Carries per-row errors. |
-| `DatabaseConnectionException` | 500 | Thrown when the connection can't be established. |
-| `TransactionException` | 500 | Thrown by `executeSqlTransaction` on transaction-level errors. |
+| `BulkOperationException` | 400 | Thrown by any bulk method when the transaction rolls back. The response body lists each failed item as `{ index \| id, status, message }`; `errors` keeps the original errors. |
+| `DatabaseConnectionException` | 500 | **Deprecated.** Nothing in the package throws it. Removed in the next major version. |
+| `TransactionException` | 500 | **Deprecated.** Nothing in the package throws it; a failed transaction rejects with its own error. Removed in the next major version. |
 
 ## Types
 
@@ -48,16 +48,23 @@ All exceptions extend `@nestjs/common`'s `HttpException`, so Nest's default exce
 | --- | --- |
 | `ICrudService` | `interface`, the abstract shape `SqlBaseCrudService` implements. |
 | `CrudFeature` | `type`, the input to `forFeature`. |
+| `CrudFeatureConfig` | `type`, the per-entity `config` of `forFeature`. Since 3.3.1. |
 | `DrizzleCrudConfig` | `type`, input to `forRoot` / `forRootAsync`. |
 | `SqlCrudConfig` | `interface`, the per-entity merged config. |
 | `SqlOperationOptions` | `interface`, the third argument to most methods, including `search` for `findAll` and `count`. |
+| `OperationOptions` | `interface`, the options type used by `ICrudService`. Since 3.3.1. |
+| `PaginationOptions` | `interface`, the second argument of `findAll` and `fullTextSearch`: `{ page, limit, sortBy, sortOrder }`. Since 3.3.1. |
+| `SqlSearchOptions` | `interface`, `options.search`: `{ term, columns, mode }`. Since 3.3.1. |
+| `SqlSearchMode` | `'ilike' \| 'fullText'`. Since 3.3.1. |
+| `BulkOperationResult` | `interface`, `{ success, data?, errors? }`. Since 3.3.1. |
+| `BulkOperationItemError` | `interface`, one entry of a `BulkOperationException` body: `{ index?, id?, status, message }`. Since 3.3.1. |
 | `RelationConfig` | `interface`, describes one relation in `relations`. |
 | `RelationsConfig` | `type`, a record of `RelationConfig`. |
 | `RelationType` | `'belongsTo' \| 'hasMany' \| 'manyToMany'`. |
 | `RelationNode` | `interface`, one resolved node in an eager-loading plan. |
 | `SelectTree` | `interface`, the parsed `options.select`. |
 | `SqlDialect` | `'postgresql' \| 'mysql'`. |
-| `PrimaryKeyType` | `'serial' \| 'bigserial' \| 'int' \| 'bigint' \| 'uuid'`. |
+| `PrimaryKeyType` | `'serial' \| 'bigserial' \| 'int' \| 'bigint' \| 'uuid'`. The `primaryKeyType` setting that uses it is deprecated. |
 | `SortColumn` | `{ column, order }`. |
 | `SortOrder` | `'asc' \| 'desc'`. |
 

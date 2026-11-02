@@ -1,6 +1,6 @@
 ---
 title: Soft delete
-description: Enable per-project or per-entity soft delete with a deleted_at column, and restore soft-deleted rows.
+description: Enable per-project or per-entity soft delete with a deleted_at column, restore soft-deleted rows, and list or purge them with raw Drizzle.
 ---
 
 Soft delete sets a `deleted_at` timestamp on a row instead of removing it. Reads (`find`, `findOne`, `findAll`, `count`) automatically exclude soft-deleted rows; `restore(id)` clears the column and brings the row back.
@@ -18,7 +18,16 @@ DrizzleCrudModule.forRoot({
 });
 ```
 
-The package looks for a column named `deleted_at` by default.
+The package looks for a column under the key `deleted_at` by default. The setting names the **key in your Drizzle table object**, not the database column name. With a camelCase schema such as `deletedAt: timestamp('deleted_at')`, set `column: 'deletedAt'`.
+
+<Callout type="warn" title="A missing column fails at startup">
+  Since 3.3.1 the service checks the soft-delete column when it is built. If
+  the table has no key by that name, startup fails with a message that names
+  the key to use, for example: `softDelete.column is "deleted_at", but the
+  table has no column under that key. The column "deleted_at" is declared
+  under the key "deletedAt"; set softDelete.column to "deletedAt".`
+  Before 3.3.1 the same mistake made every read fail with a 500.
+</Callout>
 
 ### Per-entity (different column name or disable for one entity)
 
@@ -32,12 +41,12 @@ DrizzleCrudModule.forFeature([
   {
     service: UsersService,
     table: users,
-    config: { softDelete: { enabled: true, column: 'archived_at' } },
+    config: { softDelete: { enabled: true, column: 'archivedAt' } },
   },
 ])
 ```
 
-Per-entity config overrides the global default. The `column` is the column name in your Drizzle schema; the package uses it in `WHERE` clauses and in `SET` / `UPDATE` statements.
+Per-entity config overrides the global default, and merges with it: `{ softDelete: { column: 'archivedAt' } }` keeps `enabled` from the project setting. The `column` is the key in your Drizzle table object; the package uses it in `WHERE` clauses and in `SET` / `UPDATE` statements.
 
 ## The methods
 
@@ -64,8 +73,10 @@ Throws `EntityNotFoundException` if the row didn't exist (or didn't have a soft-
 <Callout type="info">
   `restore` is independent of soft-delete state. It will happily
   re-`restore` a row that wasn't soft-deleted (effectively a no-op on
-  the column). If you need to check the current state, use
-  `findOne({ id, deletedAt: { isNotNull: true } })` first.
+  the column). `find` and `findOne` cannot tell you whether a row is in the
+  trash, because they always add `deleted_at IS NULL`. To check, query the
+  column with Drizzle directly, as shown in
+  [How do I list or purge soft-deleted rows?](#how-do-i-list-or-purge-soft-deleted-rows)
 </Callout>
 
 ### `massSoftDelete(ids, options?)` → `Promise<boolean>`
@@ -74,7 +85,7 @@ Throws `EntityNotFoundException` if the row didn't exist (or didn't have a soft-
 await users.massSoftDelete([1, 2, 3]);
 ```
 
-Same as `softDelete` but in a single transaction. If any of the IDs don't exist, the entire operation is rolled back and `BulkOperationException` is thrown.
+Same as `softDelete` but in a single transaction. If any of the IDs don't exist, the entire operation is rolled back and `BulkOperationException` is thrown, listing only the IDs that failed.
 
 ### Reads automatically exclude soft-deleted rows
 
@@ -86,7 +97,41 @@ await users.findAll({});
 await users.count({});
 ```
 
-If you ever need to see soft-deleted rows (e.g. an admin view), use a custom method that filters with `deletedAt: { isNotNull: true }`.
+A belongs-to relation follows the same rule. When the related table has the soft-delete column, a soft-deleted parent comes back as `null` on an eager load, and a relation filter such as `{ author: { name: 'Bob' } }` does not match it.
+
+## How do I list or purge soft-deleted rows?
+
+Write a small method on your service that queries the table with Drizzle directly. The package's read methods always add `deleted_at IS NULL`, so a filter such as `findAll({ deletedAt: { isNotNull: true } })` can never return a deleted row: the two conditions cancel out and the result is always empty. A built-in trash view is planned.
+
+```ts title="users/users.service.ts"
+import { and, eq, isNotNull } from 'drizzle-orm';
+import { SqlBaseCrudService } from 'nestjs-drizzle-crud';
+import { users, type User } from '../db/schema';
+
+export class UsersService extends SqlBaseCrudService<User, CreateUserDto, UpdateUserDto, UserFilterDto> {
+  // The trash view: only soft-deleted rows.
+  findDeleted() {
+    return this.config.db.select().from(users).where(isNotNull(users.deletedAt));
+  }
+
+  // Is this row in the trash?
+  async isDeleted(id: number): Promise<boolean> {
+    const [row] = await this.config.db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.id, id), isNotNull(users.deletedAt)));
+    return !!row;
+  }
+
+  // Hard-delete a row that is already soft-deleted. delete(id) cannot do it:
+  // its existence check skips soft-deleted rows and answers 404.
+  purge(id: number) {
+    return this.config.db
+      .delete(users)
+      .where(and(eq(users.id, id), isNotNull(users.deletedAt)));
+  }
+}
+```
 
 ## The schema column
 
@@ -101,14 +146,13 @@ export const users = pgTable('users', {
 });
 ```
 
-The column type should accept `null` (and the package will set it to `null` on `restore` and to `new Date()` on `softDelete`).
+The column type should accept `null` (and the package will set it to `null` on `restore` and to `new Date()` on `softDelete`). This schema uses the camelCase key `deletedAt`, so its `forFeature` config needs `softDelete: { column: 'deletedAt' }`.
 
 <Callout type="warn" title="If the column doesn't exist">
-  If your table has no `deleted_at` column, set
+  If your table has no soft-delete column, set
   `defaults: { softDelete: false }` (or per-entity
-  `config: { softDelete: { enabled: false } }`). Otherwise
-  `softDelete` / `restore` will throw a database error referencing a
-  column that doesn't exist.
+  `config: { softDelete: { enabled: false } }`). Otherwise the service
+  refuses to start and names the missing key.
 </Callout>
 
 ## Soft delete + hard delete
@@ -117,7 +161,7 @@ The package exposes both `softDelete` and `delete`:
 
 | Method | Behavior |
 | --- | --- |
-| `delete(id, options?)` | Hard delete, removes the row. Skips soft-delete checks. |
+| `delete(id, options?)` | Hard delete, removes the row. Its existence check skips soft-deleted rows, so it answers 404 for a row that is already in the trash. |
 | `softDelete(id, options?)` | Sets `deleted_at = now()`. Reads afterwards exclude it. |
 | `massDelete(ids, options?)` | Hard delete, transactional. |
 | `massSoftDelete(ids, options?)` | Soft delete, transactional. |

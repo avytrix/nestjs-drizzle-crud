@@ -30,9 +30,10 @@ export type User = typeof users.$inferSelect;
 
 <Callout type="info">
   The `createdAt` / `updatedAt` / `deletedAt` columns are conventional. The
-  package detects them by name. See
-  [Timestamps](/docs/timestamps) and
-  [Soft delete](/docs/soft-delete) for alternatives.
+  package refers to them by their **key** in the table object, and its
+  defaults are the snake_case keys `created_at`, `updated_at` and
+  `deleted_at`. This schema uses camelCase keys, so step 4 names them. See
+  [Timestamps](/docs/timestamps) and [Soft delete](/docs/soft-delete).
 </Callout>
 
 ### Configure the module once
@@ -94,7 +95,18 @@ import { UsersService } from './users.service';
 
 @Module({
   imports: [
-    DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]),
+    DrizzleCrudModule.forFeature([
+      {
+        service: UsersService,
+        table: users,
+        // camelCase keys in the schema, so name them. A key the table does not
+        // have stops the app at startup with the key to use.
+        config: {
+          softDelete: { column: 'deletedAt' },
+          timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' },
+        },
+      },
+    ]),
   ],
   controllers: [UsersController],
   providers: [UsersService],
@@ -166,7 +178,7 @@ After these five steps, `UsersService` exposes every CRUD method below, fully ty
 | Method | Returns | Notes |
 | --- | --- | --- |
 | `find(id, options?)` | `Promise<User \| null>` | By primary key. Skips soft-deleted rows. |
-| `findOne(where, options?)` | `Promise<User \| null>` | Equality match. |
+| `findOne(where, options?)` | `Promise<User \| null>` | Equality match. A `where` with no usable condition is a 400. |
 | `findAll(filters?, pagination?, options?)` | `Promise<{ data, total, page, limit }>` | Supports `options.search`. See [Filtering](/docs/filtering) and [Pagination & sorting](/docs/pagination-sorting). |
 | `exists(id, options?)` | `Promise<boolean>` | |
 | `count(filters?, options?)` | `Promise<number>` | |

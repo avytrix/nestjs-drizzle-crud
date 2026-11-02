@@ -29,8 +29,8 @@ The four generics correspond to:
 | Method | Returns | Notes |
 | --- | --- | --- |
 | `find(id, options?)` | `Promise<T \| null>` | By primary key. Skips soft-deleted rows. |
-| `findOne(where, options?)` | `Promise<T \| null>` | `where` is a `Partial<T>` (equality only). |
-| `findAll(filters?, pagination?, options?)` | `Promise<{ data: T[]; total: number; page: number; limit: number }>` | Supports `options.search`. See [Filtering](/docs/filtering) and [Pagination](/docs/pagination-sorting). |
+| `findOne(where, options?)` | `Promise<T \| null>` | `where` is a `Partial<T>`: exact, case-sensitive equality, `null` for `IS NULL`, or an operator object. `undefined` values are skipped; if nothing is left, or a key is not a column, it throws a 400 rather than returning an arbitrary row. |
+| `findAll(filters?, pagination?, options?)` | `Promise<{ data: T[]; total: number; page: number; limit: number }>` | Supports `options.search`. An unknown filter key is a 400. Always ends `ORDER BY` with the primary key. See [Filtering](/docs/filtering) and [Pagination](/docs/pagination-sorting). |
 | `exists(id, options?)` | `Promise<boolean>` | Cheaper than `find` when you only need a yes/no. |
 | `count(filters?, options?)` | `Promise<number>` | Total rows matching the filter and `options.search`, ignoring pagination. |
 
@@ -94,7 +94,7 @@ const total = s.count(
 | Method | Returns | Notes |
 | --- | --- | --- |
 | `create(data, options?)` | `Promise<T>` | Runs `validateCreate` → `mapCreateDtoToEntity` → `beforeCreate` → insert → `afterCreate`. |
-| `update(id, data, options?)` | `Promise<T>` | Throws `EntityNotFoundException` if missing. |
+| `update(id, data, options?)` | `Promise<T>` | Throws `EntityNotFoundException` if missing, and `ValidationFailedException` (400) when `data` has no column to set. |
 | `delete(id, options?)` | `Promise<boolean>` | Hard delete. |
 | `softDelete(id, options?)` | `Promise<boolean>` | Sets `deleted_at` to `now()`. Requires soft delete enabled. |
 | `restore(id, options?)` | `Promise<T>` | Clears `deleted_at`. Throws `EntityNotFoundException` if missing. |
@@ -109,13 +109,13 @@ const total = s.count(
 | `massRestore(ids[], options?)` | `Promise<T[]>` |
 | `massDelete(ids[], options?)` | `Promise<boolean>` |
 
-Throws `BulkOperationException` on failure.
+Each item runs in its own savepoint, so only the items that are wrong are reported. Throws `BulkOperationException` on failure; its 400 body is `{ statusCode, error, message, errors: [{ index | id, status, message }] }`. See [Bulk operations](/docs/bulk-operations).
 
 ## Search
 
 | Method | Returns | Notes |
 | --- | --- | --- |
-| `fullTextSearch(term, columns, pagination?, options?)` | `Promise<{ data: T[]; total: number; page: number; limit: number }>` | PostgreSQL only. Same envelope as `findAll`. `to_tsvector(...) @@ plainto_tsquery(...)` with `ts_rank` ordering. Excludes soft-deleted rows when soft-delete is enabled. |
+| `fullTextSearch(term, columns, pagination?, options?)` | `Promise<{ data: T[]; total: number; page: number; limit: number }>` | PostgreSQL only. Same envelope as `findAll`. `to_tsvector(...) @@ plainto_tsquery(...)` with `ts_rank` ordering, then the primary key. Always applies page and limit. An unknown column is a 400. Excludes soft-deleted rows when soft-delete is enabled. |
 
 ## Transaction helper
 

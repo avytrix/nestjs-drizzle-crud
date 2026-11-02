@@ -32,7 +32,16 @@ Two fields on `SqlOperationOptions`. Both Postgres-only:
 
 ```ts accent=nest
 const account = await accounts.find(id, { lock: 'update' });
-// SELECT ... FOR UPDATE
+// SELECT ... FOR UPDATE OF "accounts"
+```
+
+### Can I lock a row and eager-load a belongs-to relation?
+
+Yes. The lock always names the base table (`FOR UPDATE OF <table>`), so only the service's own rows are locked and the LEFT JOINed relation is not. Before 3.3.1 the lock covered every table in the query, and Postgres refused it with `FOR UPDATE cannot be applied to the nullable side of an outer join`.
+
+```ts accent=nest
+const post = await posts.find(id, { lock: 'update', relations: ['author'], transaction: tx });
+// SELECT ... FROM posts LEFT JOIN users ... FOR UPDATE OF "posts"
 ```
 
 ```ts accent=nest
@@ -41,7 +50,7 @@ const activeRows = await accounts.findAll(
   { page: 1, limit: 50 },
   { lock: 'share' },
 );
-// SELECT ... FROM accounts WHERE ... ORDER BY ... LIMIT 50 OFFSET 0 FOR SHARE
+// SELECT ... FROM accounts WHERE ... ORDER BY ... LIMIT 50 OFFSET 0 FOR SHARE OF "accounts"
 ```
 
 ```ts accent=nest

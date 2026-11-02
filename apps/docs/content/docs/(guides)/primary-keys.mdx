@@ -3,12 +3,14 @@ title: Primary keys
 description: "serial, int, bigint, bigserial, and uuid: RETURNING vs insertId, and the ParseIntPipe warning."
 ---
 
-Each entity declares its primary key via two fields in the `forFeature` config:
+Each entity names its primary key in the `forFeature` config:
 
 | Field | Default | Notes |
 | --- | --- | --- |
-| `primaryKey` | `'id'` | The column name. |
-| `primaryKeyType` | `'serial'` | One of `'serial' \| 'bigserial' \| 'int' \| 'bigint' \| 'uuid'`. |
+| `primaryKey` | `'id'` | The key of the primary key column in your Drizzle table object. |
+| `primaryKeyType` | `'serial'` | **Deprecated, no effect.** Nothing reads it: the key type comes from the Drizzle column. Still accepted so existing configs compile; removed in the next major version. |
+
+The primary key is also the last `ORDER BY` column on every `findAll`, which keeps offset pagination stable. See [Pagination & sorting](/docs/pagination-sorting#why-does-every-query-end-with-the-primary-key).
 
 ## auto-increment (serial / int / bigint / bigserial)
 
@@ -18,12 +20,8 @@ The default. Use this for any numeric primary key, regardless of size:
 // serial: int4, default
 { service: UsersService, table: users }
 
-// bigserial: int8
-{
-  service: EventsService,
-  table: events,
-  config: { primaryKey: 'id', primaryKeyType: 'bigserial' },
-}
+// bigserial: int8, same config
+{ service: EventsService, table: events }
 ```
 
 On PostgreSQL the created row is returned via `RETURNING`; on MySQL the driver fills in `insertId` and the service re-reads the row. Both code paths produce the same `Promise<T>` result.
@@ -43,7 +41,7 @@ export const tags = pgTable('tags', {
 {
   service: TagsService,
   table: tags,
-  config: { primaryKey: 'id', primaryKeyType: 'uuid' },
+  config: { primaryKey: 'id' },
 }
 ```
 
@@ -78,15 +76,17 @@ Not supported out of the box. The package assumes a single-column primary key on
 
 ## Mixed primary-key strategies
 
-Different entities can have different `primaryKeyType` values. The setting is per-entity in the `forFeature` config:
+Different entities can use different key types with no extra config. The type comes from each table's Drizzle column:
 
 ```ts accent=nest
 DrizzleCrudModule.forFeature([
-  { service: UsersService, table: users },                        // serial
-  { service: TagsService, table: tags, config: { primaryKeyType: 'uuid' } },
-  { service: EventsService, table: events, config: { primaryKeyType: 'bigserial' } },
+  { service: UsersService, table: users },   // serial
+  { service: TagsService, table: tags },     // uuid
+  { service: EventsService, table: events }, // bigserial
 ])
 ```
+
+A key that is not named `id` still needs `config: { primaryKey: '<key>' }`.
 
 The CRUD methods on each service are typed against the right column shape automatically.
 

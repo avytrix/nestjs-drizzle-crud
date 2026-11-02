@@ -1,24 +1,36 @@
 ---
 title: Filtering
-description: "Build filter objects for findAll() and count(): bare strings, arrays, operators, and the exact-vs-pattern gotcha."
+description: "Build filter objects for findAll() and count(): bare values, arrays, operators like eq, gte and isNull, date strings, and the exact-vs-pattern gotcha."
 ---
 
-`findAll(filters)` and `count(filters)` accept a plain object keyed by column name. Unknown keys and `null` / `undefined` values are silently ignored, so it's safe to pass a `Partial<Entity>` straight from a query string.
+`findAll(filters)` and `count(filters)` accept a plain object keyed by column name. `null` and `undefined` values are skipped, so a query DTO with empty fields can go straight in. A key that is not a column or a configured relation is a 400 (`BadRequestException`), the same as an unknown `sortBy`.
 
 ## Bare values
 
 ```ts
 await service.findAll({
-  status: 'active',           // string: exact match (case-insensitive when sql.caseSensitive === false)
+  status: 'active',           // string: exact match (case-insensitive on text columns)
   isVerified: true,            // boolean: equality
   organizationId: 42,          // number: equality
   role: ['admin', 'editor'],   // array: IN (...)
+  createdAt: new Date('2025-01-01T00:00:00Z'), // Date: equality
 });
 ```
 
+### Can I pass query string values as strings?
+
+Yes. HTTP query values always arrive as strings, and the package handles that per column type:
+
+- **Text columns** (`text`, `varchar`, `char`) compare case-insensitively with `lower(column) = lower(value)` when `sql.caseSensitive` is `false`, the default.
+- **Integer, uuid, enum and other non-text columns** compare with a plain `=`, and Postgres casts the string to the column type. `{ author_id: '1' }` matches `author_id = 1`.
+- **Date and timestamp columns** turn the string into a `Date` first, so `{ createdAt: { gte: '2025-01-01' } }` works. A string that is not a date is a 400.
+
+A value the column cannot hold, such as `'abc'` for an integer or an enum label that does not exist, is a 400 too, never a raw 500.
+
 <Callout type="warn" title="Strings are exact, not partial">
-  A bare string is an **exact** match. When `sql.caseSensitive` is `false`
-  (the default) the package compiles it to `lower(column) = lower(value)`,
+  A bare string is an **exact** match. On a text column with
+  `sql.caseSensitive` set to `false` (the default) the package compiles it to
+  `lower(column) = lower(value)`,
   so the match is case-insensitive and `%` / `_` / `\` in the value are
   treated as literal data, never wildcards. For partial / pattern
   matching, use the explicit `ilike` operator with your own `%`
@@ -39,24 +51,26 @@ await service.findAll({
   age: { gte: 18, lt: 65 },       // 18 <= age < 65
   email: { neq: 'system@example.com' },    // not the system account
   name: { ilike: 'jo%' },         // pattern match: you supply the wildcards
-  deletedAt: { isNull: true },     // only non-deleted rows
+  archivedAt: { isNull: true },    // archivedAt IS NULL
+  publishedAt: { isNull: false },  // publishedAt IS NOT NULL
   state: { name: 'Karnataka' },    // filter by related column: see Relations
 });
 ```
 
-Multiple operators in the same object are AND-ed together.
+Multiple operators in the same object are AND-ed together. An operator the package does not know, such as `{ between: [1, 2] }`, is a 400 rather than being dropped.
 
 ### Operator reference
 
 | Operator | SQL | Notes |
 | --- | --- | --- |
-| `gt` / `gte` / `lt` / `lte` | `>` `>=` `<` `<=` | Numeric and date columns. |
+| `eq` | `=` | Exact and case-sensitive, even on text columns. |
+| `gt` / `gte` / `lt` / `lte` | `>` `>=` `<` `<=` | Numeric and date columns. Date strings are parsed. |
 | `neq` | `<>` | Not equal. |
 | `like` | `LIKE` | Caller supplies `%` wildcards. |
-| `ilike` | `ILIKE` (PostgreSQL) / `LIKE` with lower-cased values (MySQL) | Case-insensitive. Caller supplies `%`. |
-| `in` | `IN (...)` | The value is an array. |
-| `isNull` | `IS NULL` | Value must be `true`. |
-| `isNotNull` | `IS NOT NULL` | Value must be `true`. |
+| `ilike` | `ILIKE` (PostgreSQL) / `LIKE` (MySQL) | Case-insensitive. Caller supplies `%`. MySQL has no `ILIKE`; its default collations already ignore case. |
+| `in` | `IN (...)` | The value must be an array, otherwise 400. |
+| `isNull` | `IS NULL` / `IS NOT NULL` | `true` or `"true"` gives `IS NULL`, `false` or `"false"` gives `IS NOT NULL`. Anything else is a 400. |
+| `isNotNull` | `IS NOT NULL` / `IS NULL` | The mirror of `isNull`. |
 
 ## Combining filters
 
@@ -99,7 +113,7 @@ const total = await service.count(
 ```
 
 By default, search compiles to cross-column `ILIKE '%term%'` checks joined by
-`OR`. Empty terms and unknown column names are ignored.
+`OR` (`LIKE` on MySQL). Empty terms and unknown column names are ignored.
 
 ```ts
 await service.findAll(
@@ -130,14 +144,17 @@ Use `fullTextSearch()` directly when ranked full-text results are the primary
 operation. Use `findAll(..., ..., { search })` when search needs to compose with
 the list endpoint's filters and count query.
 
-## Ignoring unknown keys
+## What happens with an unknown filter key?
 
-If a filter object contains keys that aren't columns on the table, they're silently dropped. This makes it safe to accept filter objects from request queries:
+It is rejected with a 400 (`BadRequestException`, message `Unknown filter column: <key>`). Before 3.3.1 the key was dropped, so a typo such as `{ titel: 'x' }` returned every row. The same rule covers a column inside a relation filter (`{ author: { nmae: 'Bob' } }`) and an unknown operator.
+
+Pull pagination and other non-filter fields out of the query DTO before passing it on, and let `ValidationPipe({ whitelist: true })` strip keys the DTO does not declare:
 
 ```ts accent=nest
 @Get()
-findAll(@Query() filters: UserFilterDto) {
-  return this.users.findAll(filters);   // unknown keys are dropped
+findAll(@Query() query: UserQueryDto) {
+  const { page, limit, sortBy, sortOrder, ...filters } = query;
+  return this.users.findAll(filters, { page, limit, sortBy, sortOrder });
 }
 ```
 
@@ -154,7 +171,7 @@ await service.findAll(
 
 ## Filtering by related columns
 
-When you've [declared a many-to-one relation](/docs/relations), use the relation name as a filter key. The package will join the related table for you.
+When you've [declared a many-to-one relation](/docs/relations), use the relation name as a filter key. The package will join the related table for you. With soft delete on, a soft-deleted parent never matches.
 
 ```ts
 await service.findAll({

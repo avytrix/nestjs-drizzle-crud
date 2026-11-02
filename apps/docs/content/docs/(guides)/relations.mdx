@@ -88,7 +88,7 @@ DrizzleCrudModule.forFeature([
 | Field | Type | Notes |
 | --- | --- | --- |
 | `foreignKey` | `string` | The column on the *target* table pointing back here. Required for has-many. |
-| `parentKey` | `string?` | The column on the *current* table that `foreignKey` matches. Defaults to the configured `primaryKey`. |
+| `parentKey` | `string?` | The column on the *current* table that `foreignKey` matches. Defaults to that table's primary key: the configured `primaryKey` at the top level, the related table's own primary key column at a nested level. |
 | `orderBy` | `SortColumn[]?` | How to order the collection, applied in SQL. |
 
 A relation missing its key column throws when the service is constructed, so a typo shows up at startup instead of as an empty array at runtime.
@@ -121,7 +121,15 @@ config: {
 | `throughLocalKey` | `string` | The join-table column matching this table's `parentKey`. |
 | `throughForeignKey` | `string` | The join-table column matching `references` on the target table. |
 | `references` | `string?` | The target column. Defaults to `'id'`. |
-| `parentKey` | `string?` | The column on the current table. Defaults to the configured `primaryKey`. |
+| `parentKey` | `string?` | The column on the current table. Defaults to that table's primary key, as for has-many. |
+
+<Callout type="info" title="Nested collections key on their own table">
+  Before 3.3.1 a nested collection borrowed the root service's `primaryKey`.
+  With a root keyed on `uid`, `comment.author.posts` looked for
+  `author.uid` and came back empty. A nested level now uses the primary key
+  column of the table it hangs off (`authors.id` here), so no `parentKey` is
+  needed unless the join column is something else.
+</Callout>
 
 ```ts
 await countries.find(1, { relations: ['tags'] });
