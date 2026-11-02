@@ -13,8 +13,8 @@ import { rehypeCodeDefaultOptions } from "fumadocs-core/mdx-plugins";
 const accentTransformer = {
 	name: "accent-meta",
 	pre(node: { properties?: Record<string, unknown> }) {
-		const raw = (this as { options?: { meta?: { __raw?: string } } })
-			.options?.meta?.__raw;
+		const raw = (this as { options?: { meta?: { __raw?: string } } }).options
+			?.meta?.__raw;
 		if (!raw) return;
 		const m = raw.match(/\baccent=(drizzle|nest)\b/);
 		if (m) {
@@ -25,6 +25,10 @@ const accentTransformer = {
 
 export const docs = defineDocs({
 	dir: "content/docs",
+	docs: {
+		// The Markdown behind /llms-full.txt, "Copy Markdown" and the per-page content.md routes.
+		postprocess: { includeProcessedMarkdown: true },
+	},
 });
 
 export default defineConfig({

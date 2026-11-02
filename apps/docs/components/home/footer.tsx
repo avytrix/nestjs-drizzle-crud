@@ -1,4 +1,5 @@
-import { Github, Heart, Package } from "lucide-react";
+import { Heart, Package } from "lucide-react";
+import { GithubMark } from "@/components/github-mark";
 import Link from "next/link";
 import { siteConfig } from "@/lib/seo";
 
@@ -18,13 +19,13 @@ export function Footer() {
 					<div className="flex flex-wrap items-center gap-1 text-sm">
 						<Link
 							href="/docs"
-							className="inline-flex items-center -mx-2 rounded-[2px] px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
+							className="inline-flex items-center -mx-2 rounded-lg px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
 						>
 							Documentation
 						</Link>
 						<Link
 							href="/docs/changelog"
-							className="inline-flex items-center -mx-2 rounded-[2px] px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
+							className="inline-flex items-center -mx-2 rounded-lg px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
 						>
 							Changelog
 						</Link>
@@ -32,16 +33,16 @@ export function Footer() {
 							href="https://github.com/avytrix/nestjs-drizzle-crud"
 							target="_blank"
 							rel="noreferrer noopener"
-							className="inline-flex items-center gap-1.5 -mx-2 rounded-[2px] px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
+							className="inline-flex items-center gap-1.5 -mx-2 rounded-lg px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
 						>
-							<Github className="size-4" />
+							<GithubMark className="size-4" />
 							GitHub
 						</a>
 						<a
 							href="https://github.com/sponsors/avytrix"
 							target="_blank"
 							rel="noreferrer noopener"
-							className="inline-flex items-center gap-1.5 -mx-2 rounded-[2px] px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
+							className="inline-flex items-center gap-1.5 -mx-2 rounded-lg px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
 						>
 							<Heart className="size-4" />
 							Sponsor
@@ -50,7 +51,7 @@ export function Footer() {
 							href="https://avytrix.dev"
 							target="_blank"
 							rel="noreferrer noopener"
-							className="inline-flex items-center -mx-2 rounded-[2px] px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
+							className="inline-flex items-center -mx-2 rounded-lg px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
 						>
 							Avytrix Technologies
 						</a>
@@ -58,7 +59,7 @@ export function Footer() {
 							href="https://www.npmjs.com/package/nestjs-drizzle-crud"
 							target="_blank"
 							rel="noreferrer noopener"
-							className="inline-flex items-center gap-1.5 -mx-2 rounded-[2px] px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
+							className="inline-flex items-center gap-1.5 -mx-2 rounded-lg px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
 						>
 							<Package className="size-4" />
 							npm

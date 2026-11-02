@@ -8,13 +8,27 @@ export const siteConfig = {
 	tagline: "Type-safe CRUD for Drizzle ORM in NestJS",
 	description:
 		"Type-safe CRUD for Drizzle ORM in NestJS. Configure the connection once, and every entity gets full CRUD: find, create, update, soft-delete, bulk ops, pagination, filtering, relations and full-text search.",
-	url: process.env.NEXT_PUBLIC_SITE_URL ?? "https://crud.avytrix.dev",
+	url: (process.env.NEXT_PUBLIC_SITE_URL ?? "https://crud.avytrix.dev").replace(
+		/\/+$/,
+		"",
+	),
 	github: "https://github.com/avytrix/nestjs-drizzle-crud",
 	npm: "https://www.npmjs.com/package/nestjs-drizzle-crud",
 	sponsor: "https://github.com/sponsors/avytrix",
 	author: "Suman Bonakurthi",
 	license: "MIT",
-	repoPath: "blob/main/content/docs",
+	/** The company behind the package, credited in the footer. */
+	organization: {
+		name: "Avytrix Technologies",
+		url: "https://avytrix.dev",
+		github: "https://github.com/avytrix",
+	},
+	/** Where the docs sources live, for "edit on GitHub" and page history links. */
+	git: {
+		repo: "avytrix/nestjs-drizzle-crud",
+		branch: "main",
+		contentDir: "apps/docs/content/docs",
+	},
 	// Target search terms, merged into every page's keywords.
 	keywords: [
 		"nestjs",
@@ -45,9 +59,9 @@ export type SiteConfig = typeof siteConfig;
 const ogTitle = `${siteConfig.displayName}: ${siteConfig.tagline}`;
 
 /**
- * Per-page metadata factory. Returns Next.js `Metadata` with a canonical URL,
- * merged keywords, and OpenGraph/Twitter cards. The site-wide OG image
- * (app/opengraph-image.tsx) is attached automatically by Next.
+ * Per-page metadata. Returns Next.js `Metadata` with a self canonical, merged keywords, and
+ * OpenGraph/Twitter cards. Docs pages pass their own card (`image`); everything else falls back
+ * to the site-wide one in app/opengraph-image.tsx, which Next attaches by itself.
  */
 export function createMetadata(params?: {
 	title?: string;
@@ -56,11 +70,16 @@ export function createMetadata(params?: {
 	path?: string;
 	keywords?: string[];
 	ogType?: "website" | "article";
+	/** Path of a per-page sharing card. */
+	image?: string;
 }): Metadata {
 	const description = params?.description ?? siteConfig.description;
 	const path = params?.path ?? "/";
 	const url = new URL(path, siteConfig.url).toString();
-	const heading = params?.title ? `${params.title} · ${siteConfig.displayName}` : ogTitle;
+	const heading = params?.title
+		? `${params.title} · ${siteConfig.displayName}`
+		: ogTitle;
+	const images = params?.image ? [params.image] : undefined;
 
 	return {
 		title: params?.title,
@@ -74,52 +93,13 @@ export function createMetadata(params?: {
 			title: heading,
 			description,
 			locale: "en_US",
+			...(images ? { images } : {}),
 		},
 		twitter: {
 			card: "summary_large_image",
 			title: heading,
 			description,
+			...(images ? { images } : {}),
 		},
-	};
-}
-
-// --- JSON-LD structured data (schema.org) for rich results ---
-
-export const websiteJsonLd = {
-	"@context": "https://schema.org",
-	"@type": "WebSite",
-	name: siteConfig.name,
-	url: siteConfig.url,
-	description: siteConfig.description,
-};
-
-export const softwareJsonLd = {
-	"@context": "https://schema.org",
-	"@type": "SoftwareSourceCode",
-	name: siteConfig.name,
-	description: siteConfig.description,
-	codeRepository: siteConfig.github,
-	programmingLanguage: "TypeScript",
-	runtimePlatform: "Node.js",
-	license: "https://opensource.org/licenses/MIT",
-	author: { "@type": "Person", name: siteConfig.author },
-	keywords: siteConfig.keywords.join(", "),
-	url: siteConfig.url,
-	softwareVersion: siteConfig.version,
-};
-
-export function articleJsonLd(params: {
-	title: string;
-	description?: string;
-	path: string;
-}) {
-	return {
-		"@context": "https://schema.org",
-		"@type": "TechArticle",
-		headline: params.title,
-		description: params.description ?? siteConfig.description,
-		url: new URL(params.path, siteConfig.url).toString(),
-		author: { "@type": "Person", name: siteConfig.author },
-		isPartOf: { "@type": "WebSite", name: siteConfig.name, url: siteConfig.url },
 	};
 }

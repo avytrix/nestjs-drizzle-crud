@@ -1,13 +1,11 @@
 import type { MetadataRoute } from "next";
+import { siteConfig } from "@/lib/seo";
 
 export const dynamic = "force-static";
 
 export default function robots(): MetadataRoute.Robots {
-	const baseUrl =
-		process.env.NEXT_PUBLIC_SITE_URL ?? "https://nestjs-drizzle-crud.vercel.app";
-
 	return {
 		rules: { userAgent: "*", allow: "/" },
-		sitemap: `${baseUrl}/sitemap.xml`,
+		sitemap: `${siteConfig.url}/sitemap.xml`,
 	};
 }

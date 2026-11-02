@@ -6,32 +6,35 @@
 	"scripts": {
 		"postinstall": "fumadocs-mdx",
 		"dev": "next dev -p 3000",
-		"build": "next build",
+		"build": "node scripts/verify-search-index.mjs && next build --webpack",
 		"start": "next start -p 3000",
 		"pretypecheck": "fumadocs-mdx",
-		"typecheck": "tsc --noEmit"
+		"typecheck": "tsc --noEmit",
+		"search:index": "node scripts/build-search-index.mjs",
+		"search:verify": "node scripts/verify-search-index.mjs",
+		"search:eval": "node --experimental-strip-types scripts/eval-search.mjs"
 	},
 	"dependencies": {
-		"fumadocs-core": "^16.0.0",
-		"fumadocs-mdx": "^15.0.0",
+		"fumadocs-core": "16.17.5",
+		"fumadocs-mdx": "15.4.7",
 		"fumadocs-twoslash": "^3.0.0",
-		"fumadocs-ui": "^16.0.0",
-		"lucide-react": "^0.460.0",
+		"fumadocs-ui": "npm:@fumadocs/base-ui@16.17.5",
+		"lucide-react": "^1.50.0",
 		"next": "^16.4.3",
-		"react": "^19.0.0",
-		"react-dom": "^19.0.0",
+		"react": "^19.3.0",
+		"react-dom": "^19.3.0",
 		"twoslash": "^0.3.0"
 	},
 	"devDependencies": {
-		"@tailwindcss/postcss": "^4.0.0",
-		"@types/mdx": "^2.0.0",
+		"@tailwindcss/postcss": "^4.3.3",
+		"@types/mdx": "^2.0.14",
 		"@types/node": "^22.10.0",
-		"@types/react": "^19.0.0",
-		"@types/react-dom": "^19.0.0",
+		"@types/react": "^19.3.0",
+		"@types/react-dom": "^19.3.0",
 		"drizzle-orm": "^0.45.2",
 		"nestjs-drizzle-crud": "workspace:*",
 		"postcss": "^8.5.10",
-		"tailwindcss": "^4.0.0",
+		"tailwindcss": "^4.3.3",
 		"typescript": "^5.9.3"
 	}
 }

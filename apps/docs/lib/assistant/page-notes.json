@@ -1,0 +1,740 @@
+{
+	"/docs": {
+		"title": "Introduction",
+		"summary": "A complete, type-safe CRUD abstraction for Drizzle ORM in NestJS: configure the connection once, extend one base class per entity, and inherit full CRUD.",
+		"topics": [
+			{
+				"heading": "What it is",
+				"anchor": "what-it-is"
+			},
+			{
+				"heading": "The two-step mental model",
+				"anchor": "the-two-step-mental-model"
+			},
+			{
+				"heading": "Configure the database connection once",
+				"anchor": "configure-the-database-connection-once"
+			}
+		]
+	},
+	"/docs/aggregates": {
+		"title": "Aggregates, relation counts and countBy",
+		"summary": "Add _count to rows with options.counts, one GROUP BY per relation and no N+1, and get grouped counts per column value with countBy(column, filters). Soft delete, scope and allowlists apply.",
+		"topics": [
+			{
+				"heading": "How are relation counts loaded?",
+				"anchor": "how-are-relation-counts-loaded"
+			},
+			{
+				"heading": "Can I count only some related rows?",
+				"anchor": "can-i-count-only-some-related-rows"
+			},
+			{
+				"heading": "What can be counted?",
+				"anchor": "what-can-be-counted"
+			}
+		]
+	},
+	"/docs/ai-agents": {
+		"title": "AI agents and MCP",
+		"summary": "Set up nestjs-drizzle-crud rules for Claude Code, Codex, Cursor, Copilot, Gemini CLI and other agents, and run the package MCP server.",
+		"topics": [
+			{
+				"heading": "Which file does my agent read?",
+				"anchor": "which-file-does-my-agent-read"
+			},
+			{
+				"heading": "What is in the rules file?",
+				"anchor": "what-is-in-the-rules-file"
+			},
+			{
+				"heading": "Running the MCP server",
+				"anchor": "running-the-mcp-server"
+			}
+		]
+	},
+	"/docs/allowlists": {
+		"title": "Allowlists and secure defaults",
+		"summary": "Limit which columns a client may filter, sort, select and search, which relations it may load, and which columns create and update may write. Anything else is a 400.",
+		"topics": [
+			{
+				"heading": "Why should I set them?",
+				"anchor": "why-should-i-set-them"
+			},
+			{
+				"heading": "What does each list cover?",
+				"anchor": "what-does-each-list-cover"
+			},
+			{
+				"heading": "What does each list cover?",
+				"anchor": "what-does-each-list-cover"
+			}
+		]
+	},
+	"/docs/api": {
+		"title": "API reference",
+		"summary": "Every method on SqlBaseCrudService, with full signatures and return types.",
+		"topics": [
+			{
+				"heading": "Read",
+				"anchor": "read"
+			},
+			{
+				"heading": "Read",
+				"anchor": "read"
+			},
+			{
+				"heading": "Write",
+				"anchor": "write"
+			}
+		]
+	},
+	"/docs/bulk-operations": {
+		"title": "Bulk operations",
+		"summary": "massCreate, massUpdate, massSoftDelete, massRestore, massDelete and massForceDelete: one statement for the whole set, in a transaction, with a 400 body that lists every failed item.",
+		"topics": [
+			{
+				"heading": "The methods",
+				"anchor": "the-methods"
+			},
+			{
+				"heading": "How many queries does a bulk call cost?",
+				"anchor": "how-many-queries-does-a-bulk-call-cost"
+			},
+			{
+				"heading": "Transactional semantics",
+				"anchor": "transactional-semantics"
+			}
+		]
+	},
+	"/docs/changelog": {
+		"title": "Changelog",
+		"summary": "Release-by-release behavior changes for nestjs-drizzle-crud. Mirrors CHANGELOG.md shipped in the npm tarball.",
+		"topics": [
+			{
+				"heading": "[3.5.0] - 2026-11-02",
+				"anchor": "350---2026-11-02"
+			},
+			{
+				"heading": "Added",
+				"anchor": "added"
+			},
+			{
+				"heading": "Changed",
+				"anchor": "changed"
+			}
+		]
+	},
+	"/docs/column-selection": {
+		"title": "Column selection",
+		"summary": "Return only the columns you need with options.select, including dotted paths that narrow eager-loaded and nested relations.",
+		"topics": [
+			{
+				"heading": "Which columns can I ask for?",
+				"anchor": "which-columns-can-i-ask-for"
+			},
+			{
+				"heading": "Narrowing a relation",
+				"anchor": "narrowing-a-relation"
+			},
+			{
+				"heading": "Listing only relation columns keeps the parent whole",
+				"anchor": "listing-only-relation-columns-keeps-the-parent-whole"
+			}
+		]
+	},
+	"/docs/config-types": {
+		"title": "Config types",
+		"summary": "SqlCrudConfig and DrizzleCrudConfig: the two interfaces that drive the module.",
+		"topics": [
+			{
+				"heading": "`DrizzleCrudConfig`",
+				"anchor": "drizzlecrudconfig"
+			},
+			{
+				"heading": "Defaults",
+				"anchor": "defaults"
+			},
+			{
+				"heading": "`SqlCrudConfig`",
+				"anchor": "sqlcrudconfig"
+			}
+		]
+	},
+	"/docs/controller-factory": {
+		"title": "CRUD controller factory",
+		"summary": "createCrudController builds a NestJS controller with list, cursor, get, create, update, delete, soft delete, restore, trash and bulk routes from a service, with the right id pipe.",
+		"topics": [
+			{
+				"heading": "Which routes does it register?",
+				"anchor": "which-routes-does-it-register"
+			},
+			{
+				"heading": "How is the id parsed?",
+				"anchor": "how-is-the-id-parsed"
+			},
+			{
+				"heading": "How do I validate request bodies?",
+				"anchor": "how-do-i-validate-request-bodies"
+			}
+		]
+	},
+	"/docs/cursor-pagination": {
+		"title": "Cursor (keyset) pagination",
+		"summary": "findByCursor pages with WHERE (sort columns) > (last row) instead of OFFSET: constant cost on deep pages, stable under inserts, with an opaque nextCursor.",
+		"topics": [
+			{
+				"heading": "What does a page look like?",
+				"anchor": "what-does-a-page-look-like"
+			},
+			{
+				"heading": "Options",
+				"anchor": "options"
+			},
+			{
+				"heading": "How does the cursor work?",
+				"anchor": "how-does-the-cursor-work"
+			}
+		]
+	},
+	"/docs/defining-services": {
+		"title": "Defining services",
+		"summary": "The empty-subclass pattern, generics, and how to add custom methods without breaking the framework wiring.",
+		"topics": [
+			{
+				"heading": "The minimum",
+				"anchor": "the-minimum"
+			},
+			{
+				"heading": "With explicit DTOs",
+				"anchor": "with-explicit-dtos"
+			},
+			{
+				"heading": "Adding custom methods",
+				"anchor": "adding-custom-methods"
+			}
+		]
+	},
+	"/docs/errors": {
+		"title": "Errors",
+		"summary": "HTTP status code mapping for every exception thrown by SqlBaseCrudService, with the per-method reference.",
+		"topics": [
+			{
+				"heading": "Status code table",
+				"anchor": "status-code-table"
+			},
+			{
+				"heading": "Status code table",
+				"anchor": "status-code-table"
+			},
+			{
+				"heading": "Per-method reference",
+				"anchor": "per-method-reference"
+			}
+		]
+	},
+	"/docs/events": {
+		"title": "Global hooks and write events",
+		"summary": "Turn on hooks.enableGlobalHooks and subscribe to CrudEventBus for before and after events on every write, bulk and upsert included. For audit trails and cache busting.",
+		"topics": [
+			{
+				"heading": "How do I subscribe from a provider?",
+				"anchor": "how-do-i-subscribe-from-a-provider"
+			},
+			{
+				"heading": "What does a subscriber look like?",
+				"anchor": "what-does-a-subscriber-look-like"
+			},
+			{
+				"heading": "How do bulk writes raise events?",
+				"anchor": "how-do-bulk-writes-raise-events"
+			}
+		]
+	},
+	"/docs/exports": {
+		"title": "Exports",
+		"summary": "The full public API surface of nestjs-drizzle-crud, grouped by category.",
+		"topics": [
+			{
+				"heading": "Core",
+				"anchor": "core"
+			},
+			{
+				"heading": "OpenAPI",
+				"anchor": "openapi"
+			},
+			{
+				"heading": "Module & DI tokens",
+				"anchor": "module--di-tokens"
+			}
+		]
+	},
+	"/docs/filtering": {
+		"title": "Filtering",
+		"summary": "Build filter objects for findAll() and count(): bare values, arrays, operators such as gte, between, notIn and contains, or / and / not groups, and relation filters.",
+		"topics": [
+			{
+				"heading": "Bare values",
+				"anchor": "bare-values"
+			},
+			{
+				"heading": "Bare values",
+				"anchor": "bare-values"
+			},
+			{
+				"heading": "Can I pass query string values as strings?",
+				"anchor": "can-i-pass-query-string-values-as-strings"
+			}
+		]
+	},
+	"/docs/for-feature": {
+		"title": "forFeature",
+		"summary": "Bind a service to its table, and override per-entity configuration.",
+		"topics": [
+			{
+				"heading": "Basic usage",
+				"anchor": "basic-usage"
+			},
+			{
+				"heading": "Per-entity overrides",
+				"anchor": "per-entity-overrides"
+			},
+			{
+				"heading": "What you can override",
+				"anchor": "what-you-can-override"
+			}
+		]
+	},
+	"/docs/for-root": {
+		"title": "forRoot",
+		"summary": "Configure the database connection once in AppModule via DrizzleCrudModule.forRoot.",
+		"topics": [
+			{
+				"heading": "Options",
+				"anchor": "options"
+			},
+			{
+				"heading": "Options",
+				"anchor": "options"
+			},
+			{
+				"heading": "PostgreSQL: let the module build the connection",
+				"anchor": "postgresql-let-the-module-build-the-connection"
+			}
+		]
+	},
+	"/docs/for-root-async": {
+		"title": "forRootAsync",
+		"summary": "Configure the database connection asynchronously, e.g. from ConfigService.",
+		"topics": [
+			{
+				"heading": "Example: with `@nestjs/config`",
+				"anchor": "example-with-nestjsconfig"
+			},
+			{
+				"heading": "`useClass` / `useExisting`",
+				"anchor": "useclass--useexisting"
+			},
+			{
+				"heading": "When to use `forRoot` vs `forRootAsync`",
+				"anchor": "when-to-use-forroot-vs-forrootasync"
+			}
+		]
+	},
+	"/docs/full-text-search": {
+		"title": "Full-text search",
+		"summary": "PostgreSQL tsvector / tsquery via fullTextSearch(): ranked, paginated, with a clean result envelope.",
+		"topics": [
+			{
+				"heading": "Do I need to enable it?",
+				"anchor": "do-i-need-to-enable-it"
+			},
+			{
+				"heading": "Usage",
+				"anchor": "usage"
+			},
+			{
+				"heading": "Full-text search inside list endpoints",
+				"anchor": "full-text-search-inside-list-endpoints"
+			}
+		]
+	},
+	"/docs/getting-help": {
+		"title": "Getting help",
+		"summary": "Where to ask questions about nestjs-drizzle-crud, how to report a bug, how to report a security issue, and answers to the questions that come up most.",
+		"topics": [
+			{
+				"heading": "Where to ask",
+				"anchor": "where-to-ask"
+			},
+			{
+				"heading": "Reporting a bug well",
+				"anchor": "reporting-a-bug-well"
+			},
+			{
+				"heading": "Frequently asked questions",
+				"anchor": "frequently-asked-questions"
+			}
+		]
+	},
+	"/docs/hooks-validation": {
+		"title": "Lifecycle hooks & validation",
+		"summary": "before/after hooks, validateCreate/validateUpdate, and DTO-to-entity mappers: all optional overrides.",
+		"topics": [
+			{
+				"heading": "Validation",
+				"anchor": "validation"
+			},
+			{
+				"heading": "DTO → entity mapping",
+				"anchor": "dto--entity-mapping"
+			},
+			{
+				"heading": "before / after hooks",
+				"anchor": "before--after-hooks"
+			}
+		]
+	},
+	"/docs/installation": {
+		"title": "Installation",
+		"summary": "Install nestjs-drizzle-crud and the required peer dependencies for your database.",
+		"topics": [
+			{
+				"heading": "Package",
+				"anchor": "package"
+			},
+			{
+				"heading": "Peer dependencies",
+				"anchor": "peer-dependencies"
+			},
+			{
+				"heading": "PostgreSQL: required **only** if you use `connectionString`",
+				"anchor": "postgresql-required-only-if-you-use-connectionstring"
+			}
+		]
+	},
+	"/docs/llm-notes": {
+		"title": "For AI agents",
+		"summary": "Condensed, accurate package facts for code generation. Prefer these over guessing.",
+		"topics": [
+			{
+				"heading": "Package",
+				"anchor": "package"
+			},
+			{
+				"heading": "Setup is two steps and no per-service connection wiring",
+				"anchor": "setup-is-two-steps-and-no-per-service-connection-wiring"
+			},
+			{
+				"heading": "Rules / gotchas",
+				"anchor": "rules--gotchas"
+			}
+		]
+	},
+	"/docs/multi-tenancy": {
+		"title": "Multi-tenancy and ownership scoping",
+		"summary": "Scope every read, count and write to a tenant or owner with one config key: scope: (ctx) => ({ tenant_id: ctx.tenantId }). Another tenant's id is a 404, and a missing tenant is a 403.",
+		"topics": [
+			{
+				"heading": "What does a scope look like?",
+				"anchor": "what-does-a-scope-look-like"
+			},
+			{
+				"heading": "Where does the context come from?",
+				"anchor": "where-does-the-context-come-from"
+			},
+			{
+				"heading": "What happens without a tenant?",
+				"anchor": "what-happens-without-a-tenant"
+			}
+		]
+	},
+	"/docs/openapi": {
+		"title": "OpenAPI (Swagger) docs for list queries",
+		"summary": "ApiCrudQuery and ApiCrudList document page, limit, sortBy, cursor, withCount, search, fields, with, counts and every filterable column in Swagger, from the entity's allowlists.",
+		"topics": [
+			{
+				"heading": "Do I need @nestjs/swagger?",
+				"anchor": "do-i-need-nestjsswagger"
+			},
+			{
+				"heading": "What do I pass as the source?",
+				"anchor": "what-do-i-pass-as-the-source"
+			},
+			{
+				"heading": "What gets documented?",
+				"anchor": "what-gets-documented"
+			}
+		]
+	},
+	"/docs/optimistic-locking": {
+		"title": "Optimistic locking with a version column",
+		"summary": "Set versionColumn and a write that names a stale version is a 409 StaleVersionException. The version starts at 1 and goes up on every update, soft delete, restore, upsert and bulk write.",
+		"topics": [
+			{
+				"heading": "How does the version change?",
+				"anchor": "how-does-the-version-change"
+			},
+			{
+				"heading": "How do I send the version I read?",
+				"anchor": "how-do-i-send-the-version-i-read"
+			},
+			{
+				"heading": "What does a stale write return?",
+				"anchor": "what-does-a-stale-write-return"
+			}
+		]
+	},
+	"/docs/pagination-sorting": {
+		"title": "Pagination & sorting",
+		"summary": "The findAll() return shape, withCount: false to skip COUNT(*), default sort, and sortBy: one column, several columns, or a belongs-to relation column such as region.name.",
+		"topics": [
+			{
+				"heading": "Return shape",
+				"anchor": "return-shape"
+			},
+			{
+				"heading": "Pagination options",
+				"anchor": "pagination-options"
+			},
+			{
+				"heading": "How do I skip the count query?",
+				"anchor": "how-do-i-skip-the-count-query"
+			}
+		]
+	},
+	"/docs/primary-keys": {
+		"title": "Primary keys",
+		"summary": "serial, int, bigint, bigserial, and uuid: RETURNING vs insertId, and the ParseIntPipe warning.",
+		"topics": [
+			{
+				"heading": "auto-increment (serial / int / bigint / bigserial)",
+				"anchor": "auto-increment-serial--int--bigint--bigserial"
+			},
+			{
+				"heading": "uuid",
+				"anchor": "uuid"
+			},
+			{
+				"heading": "PostgreSQL",
+				"anchor": "postgresql"
+			}
+		]
+	},
+	"/docs/query-parsing": {
+		"title": "Parse query strings into filters",
+		"summary": "parseCrudQuery and service.parseQuery turn ?age[gte]=18&status=active&sortBy=-name&page=2 into typed filters, pagination and options, coerced by Drizzle column type.",
+		"topics": [
+			{
+				"heading": "What does the query string look like?",
+				"anchor": "what-does-the-query-string-look-like"
+			},
+			{
+				"heading": "Which parameters are not filters?",
+				"anchor": "which-parameters-are-not-filters"
+			},
+			{
+				"heading": "Which parameters are not filters?",
+				"anchor": "which-parameters-are-not-filters"
+			}
+		]
+	},
+	"/docs/quick-start": {
+		"title": "Quick start",
+		"summary": "A five-step walkthrough that takes a fresh Drizzle schema to a working CRUD controller in under five minutes.",
+		"topics": [
+			{
+				"heading": "Define your Drizzle schema",
+				"anchor": "define-your-drizzle-schema"
+			},
+			{
+				"heading": "Configure the module once",
+				"anchor": "configure-the-module-once"
+			},
+			{
+				"heading": "Create an empty service",
+				"anchor": "create-an-empty-service"
+			}
+		]
+	},
+	"/docs/relation-filters": {
+		"title": "Relation filters, paths and some, none, every",
+		"summary": "Filter through relations at any depth (state.country.code) and quantify collections with some, none and every. Compiled to EXISTS and NOT EXISTS subqueries, so rows are never multiplied.",
+		"topics": [
+			{
+				"heading": "How do I filter through more than one relation?",
+				"anchor": "how-do-i-filter-through-more-than-one-relation"
+			},
+			{
+				"heading": "How do I use some, none and every?",
+				"anchor": "how-do-i-use-some-none-and-every"
+			},
+			{
+				"heading": "What does every mean for a parent with no rows?",
+				"anchor": "what-does-every-mean-for-a-parent-with-no-rows"
+			}
+		]
+	},
+	"/docs/relations": {
+		"title": "Relations",
+		"summary": "Eager-load belongs-to, has-many, many-to-many and nested relations in Drizzle CRUD without N+1 queries, and filter by related columns.",
+		"topics": [
+			{
+				"heading": "How do I avoid N+1 queries?",
+				"anchor": "how-do-i-avoid-n1-queries"
+			},
+			{
+				"heading": "Declaring a belongs-to relation",
+				"anchor": "declaring-a-belongs-to-relation"
+			},
+			{
+				"heading": "Declaring a has-many relation",
+				"anchor": "declaring-a-has-many-relation"
+			}
+		]
+	},
+	"/docs/relations-on-writes": {
+		"title": "Relations on writes, nested create, attach and detach",
+		"summary": "Return created and updated rows with their relations loaded, create has-many and belongs-to children in one transaction, and attach, detach or sync many-to-many links.",
+		"topics": [
+			{
+				"heading": "How do I get a created row back with its relations?",
+				"anchor": "how-do-i-get-a-created-row-back-with-its-relations"
+			},
+			{
+				"heading": "How do I create a row with its children in one call?",
+				"anchor": "how-do-i-create-a-row-with-its-children-in-one-call"
+			},
+			{
+				"heading": "What shapes does a nested body take?",
+				"anchor": "what-shapes-does-a-nested-body-take"
+			}
+		]
+	},
+	"/docs/row-locks": {
+		"title": "Row-level locks",
+		"summary": "PostgreSQL SELECT ... FOR UPDATE / SHARE / NO KEY UPDATE on find, findOne, and findAll via SqlOperationOptions.",
+		"topics": [
+			{
+				"heading": "When to use",
+				"anchor": "when-to-use"
+			},
+			{
+				"heading": "Options",
+				"anchor": "options"
+			},
+			{
+				"heading": "Examples",
+				"anchor": "examples"
+			}
+		]
+	},
+	"/docs/soft-delete": {
+		"title": "Soft delete",
+		"summary": "Enable soft delete with a deleted_at column, restore rows, list the trash with onlyDeleted or withDeleted, and purge rows for good with forceDelete.",
+		"topics": [
+			{
+				"heading": "Enabling",
+				"anchor": "enabling"
+			},
+			{
+				"heading": "Globally (default for all entities)",
+				"anchor": "globally-default-for-all-entities"
+			},
+			{
+				"heading": "Per-entity (different column name or disable for one entity)",
+				"anchor": "per-entity-different-column-name-or-disable-for-one-entity"
+			}
+		]
+	},
+	"/docs/sponsor": {
+		"title": "Sponsor",
+		"summary": "nestjs-drizzle-crud is free and MIT licensed. Sponsoring on GitHub funds the fixes, the docs, and the next release.",
+		"topics": [
+			{
+				"heading": "Why sponsor",
+				"anchor": "why-sponsor"
+			},
+			{
+				"heading": "How to sponsor",
+				"anchor": "how-to-sponsor"
+			},
+			{
+				"heading": "Open the GitHub Sponsors page",
+				"anchor": "open-the-github-sponsors-page"
+			}
+		]
+	},
+	"/docs/testing": {
+		"title": "Testing",
+		"summary": "TestCrudFactory builds mock db, table, and entity instances for fast unit tests: no real database required.",
+		"topics": [
+			{
+				"heading": "The four helpers",
+				"anchor": "the-four-helpers"
+			},
+			{
+				"heading": "When you need real Nest DI",
+				"anchor": "when-you-need-real-nest-di"
+			},
+			{
+				"heading": "Testing hooks",
+				"anchor": "testing-hooks"
+			}
+		]
+	},
+	"/docs/timestamps": {
+		"title": "Timestamps",
+		"summary": "Package-managed vs schema and DB-managed created_at and updated_at, and why DB-managed is recommended.",
+		"topics": [
+			{
+				"heading": "Package-managed (convenient)",
+				"anchor": "package-managed-convenient"
+			},
+			{
+				"heading": "Why does my service fail at startup with a timestamps error?",
+				"anchor": "why-does-my-service-fail-at-startup-with-a-timestamps-error"
+			},
+			{
+				"heading": "Schema/DB-managed (recommended)",
+				"anchor": "schemadb-managed-recommended"
+			}
+		]
+	},
+	"/docs/transactions": {
+		"title": "Transactions",
+		"summary": "Use executeSqlTransaction() to span multiple service calls in one atomic unit.",
+		"topics": [
+			{
+				"heading": "The helper",
+				"anchor": "the-helper"
+			},
+			{
+				"heading": "Passing `{ transaction: tx }` to methods",
+				"anchor": "passing--transaction-tx--to-methods"
+			},
+			{
+				"heading": "Mixing package methods with raw Drizzle",
+				"anchor": "mixing-package-methods-with-raw-drizzle"
+			}
+		]
+	},
+	"/docs/upsert": {
+		"title": "Upsert",
+		"summary": "upsert and massUpsert insert a row or update the one that already holds its unique key, in one statement: ON CONFLICT DO UPDATE on Postgres, ON DUPLICATE KEY UPDATE on MySQL.",
+		"topics": [
+			{
+				"heading": "Options",
+				"anchor": "options"
+			},
+			{
+				"heading": "Which hooks run?",
+				"anchor": "which-hooks-run"
+			},
+			{
+				"heading": "Does upsert work with scope, versions and relations?",
+				"anchor": "does-upsert-work-with-scope-versions-and-relations"
+			}
+		]
+	}
+}

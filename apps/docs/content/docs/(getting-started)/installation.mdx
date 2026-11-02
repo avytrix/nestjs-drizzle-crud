@@ -5,12 +5,10 @@ description: Install nestjs-drizzle-crud and the required peer dependencies for 
 
 ## Package
 
-```npm
-npm i nestjs-drizzle-crud
-```
+<InstallTabs />
 
 <Callout type="info">
-  **Latest version: 3.2.2.** The package is published under
+  **Latest version: <Version />.** The package is published under
   [`nestjs-drizzle-crud`](https://www.npmjs.com/package/nestjs-drizzle-crud) on npm.
   A [`CHANGELOG.md`](https://www.npmjs.com/package/nestjs-drizzle-crud?activeTab=code) is shipped in the npm tarball
   and mirrored at [Changelog](/docs/changelog).
@@ -22,17 +20,13 @@ The package is unopinionated about which database driver you use. Install only w
 
 ### Always required
 
-```npm
-npm i @nestjs/common @nestjs/core drizzle-orm reflect-metadata
-```
+<InstallTabs pkg="@nestjs/common @nestjs/core drizzle-orm reflect-metadata" />
 
 ### PostgreSQL: required **only** if you use `connectionString`
 
 When you pass `connectionString` to `forRoot({ dialect: 'postgresql' })`, the module builds the Drizzle connection itself using the [`postgres`](https://www.npmjs.com/package/postgres) driver.
 
-```npm
-npm i postgres
-```
+<InstallTabs pkg="postgres" />
 
 <Callout type="warn">
   pnpm enforces peer dependencies strictly. If you let the module build the
@@ -44,9 +38,7 @@ npm i postgres
 
 MySQL has no `RETURNING` support, so the package can't build a connection for you from a connection string. You must install `mysql2` and pass a pre-built `db` to `forRoot`. See [the forRoot guide](/docs/for-root) for the full pattern.
 
-```npm
-npm i mysql2
-```
+<InstallTabs pkg="mysql2" />
 
 ### If you pre-build the Drizzle instance (any dialect)
 

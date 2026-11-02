@@ -10,26 +10,25 @@ Built and maintained by **[Avytrix Technologies](https://avytrix.dev)**.
 
 ## ❤️ Sponsoring is what keeps this free
 
-`nestjs-drizzle-crud` absorbs the work of owning a CRUD layer in production:
-dialect differences, driver result shapes, error codes that have to become the
-right HTTP status, counts that stay correct once filters and joins are in play.
-It is given away under MIT, and keeping it current with NestJS, Drizzle and
-TypeScript releases is ongoing work.
+`nestjs-drizzle-crud` handles the parts of a production CRUD layer nobody wants
+to own: dialect differences, driver result shapes, database errors that need to
+become the right HTTP status, and counts that stay correct once filters and
+joins are involved. It is free under MIT, and keeping up with NestJS, Drizzle
+and TypeScript releases takes steady work.
 
-**Even $1 a month helps.** It funds bug fixes, new guides, and the next release.
+**Even $1 a month helps.** It pays for bug fixes, new guides and the next release.
 
-> Sponsors get a spot on the [sponsor page](https://crud.avytrix.dev/docs/sponsor)
-> and our genuine thanks.
+> Sponsors are listed on the [sponsor page](https://crud.avytrix.dev/docs/sponsor).
 
-### 👉 [Sponsor on GitHub →](https://github.com/sponsors/avytrix) &nbsp;·&nbsp; thank you 🙏
+### [Sponsor on GitHub →](https://github.com/sponsors/avytrix) &nbsp;·&nbsp; thank you
 
 ---
 
-Monorepo for [**nestjs-drizzle-crud**](./packages/nestjs-drizzle-crud), a
-complete, type-safe CRUD abstraction for [Drizzle ORM](https://orm.drizzle.team/)
-in [NestJS](https://nestjs.com/).
+This is the monorepo for [**nestjs-drizzle-crud**](./packages/nestjs-drizzle-crud),
+type-safe CRUD for [Drizzle ORM](https://orm.drizzle.team/) in
+[NestJS](https://nestjs.com/).
 
-Turborepo + pnpm, TypeScript 7. Lint and format via [Biome](https://biomejs.dev/).
+It uses Turborepo, pnpm and TypeScript 7, with [Biome](https://biomejs.dev/) for lint and format.
 
 **Docs:** [crud.avytrix.dev](https://crud.avytrix.dev) ·
 **npm:** [nestjs-drizzle-crud](https://www.npmjs.com/package/nestjs-drizzle-crud) ·
@@ -43,7 +42,7 @@ pnpm add @nestjs/common @nestjs/core drizzle-orm reflect-metadata   # peers
 pnpm add postgres          # PostgreSQL, only when the module builds the connection
 ```
 
-Configure the connection once, then every entity gets the full CRUD surface:
+Configure the connection once, and every entity gets the full set of CRUD methods:
 
 ```typescript
 // app.module.ts
@@ -60,7 +59,7 @@ export class UsersService extends SqlBaseCrudService<User> {}
 DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
 ```
 
-Full guides, API reference and an FAQ are at [crud.avytrix.dev](https://crud.avytrix.dev).
+Guides, the API reference and an FAQ are at [crud.avytrix.dev](https://crud.avytrix.dev).
 
 ## Layout
 
@@ -96,8 +95,8 @@ pnpm dev:all                                 # docs and api together
 
 `pnpm dev` runs the docs site, the same way it does in the other Avytrix Technologies repos.
 
-Publishing (maintainers), after the verify set is green. A `v*` tag is the normal
-path; `pnpm release` is the manual fallback:
+Publishing is for maintainers, once the verify set is green. Push a `v*` tag;
+`pnpm release` is the manual fallback:
 
 ```bash
 git tag v3.2.2 && git push origin v3.2.2   # release.yml publishes with provenance
@@ -126,9 +125,9 @@ works: `npx nestjs-drizzle-crud-mcp`. Setup per client is in
 
 ## TypeScript 7 toolchain notes
 
-TS 7 ships the native compiler, and a few ecosystem tools do not consume its API
-yet. Where that bit, the workspace routes around it rather than downgrading the
-package:
+TS 7 ships the native compiler, and a few tools cannot use its API yet. Where
+that caused trouble, the workspace works around the tool instead of downgrading
+TypeScript:
 
 - **Tests** use `@swc/jest`, not `ts-jest`, which is incompatible with TS 7.
   Types are still enforced by `tsc --noEmit` in `typecheck`.
@@ -139,7 +138,7 @@ package:
 
 ## The example api (apps/api)
 
-A real NestJS app exercising the library. It maps the geo tables (regions →
+A real NestJS app that uses the library. It maps the geo tables (regions →
 countries → states → cities) plus a uuid-keyed `tags` table and a `country_tags`
 join table, so it covers belongs-to, has-many, many-to-many and nested relations,
 and exposes `/countries` and `/tags`.
@@ -165,7 +164,8 @@ real connection string is for `pnpm dev:api` only.
 - **CI** (`.github/workflows/ci.yml`): lint, typecheck, build and test on push and PR.
 - **Docs** (`deploy-docs.yml`): static export to GitHub Pages on push to `main`,
   served at [crud.avytrix.dev](https://crud.avytrix.dev). One-time setup is
-  Settings → Pages → Source = GitHub Actions.
+  Settings → Pages → Source = GitHub Actions. The site has Cmd+K search and an
+  "Ask the docs" assistant that runs entirely in the browser.
 - **Release** (`release.yml`): on a `v*` tag, re-runs the verify set and publishes
   [`nestjs-drizzle-crud`](https://www.npmjs.com/package/nestjs-drizzle-crud) to npm
   with provenance through npm trusted publishing (no token: npm trusts this

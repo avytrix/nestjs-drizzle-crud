@@ -2,80 +2,89 @@
 
 <img src="./public/avytrix-icon.png" width="80" alt="Avytrix Technologies" />
 
-Documentation site for the [nestjs-drizzle-crud](https://www.npmjs.com/package/nestjs-drizzle-crud) npm package — currently documenting **v3.1.0**.
+The documentation site for the [nestjs-drizzle-crud](https://www.npmjs.com/package/nestjs-drizzle-crud) npm package, live at [crud.avytrix.dev](https://crud.avytrix.dev). The version it documents is `siteConfig.version` in `lib/seo.ts`.
 
-Built with [Next.js 16](https://nextjs.org/) (App Router) and [Fumadocs](https://fumadocs.dev/), deployed on Vercel.
+It is a Next.js 16 app built with [Fumadocs](https://fumadocs.dev/), exported as static HTML and served from GitHub Pages.
 
 ## Stack
 
-- **Framework** — Next.js 16, React 19, TypeScript 5.7
-- **Docs engine** — Fumadocs (`fumadocs-ui`, `fumadocs-core`, `fumadocs-mdx`)
-- **Content** — MDX files in `content/docs/`
-- **Styling** — Tailwind CSS v4 + Fumadocs UI preset
-- **Code highlighting** — Shiki with Twoslash type hovers (opt-out per block)
-- **Search** — Fumadocs built-in static search (Orama)
-- **Package manager** — pnpm
+- Next.js 16 (App Router, `output: "export"`), React 19, TypeScript 5.9
+- Fumadocs: `fumadocs-core`, `fumadocs-mdx`, and `fumadocs-ui` from `@fumadocs/base-ui`
+- MDX pages in `content/docs/`
+- Tailwind CSS 4 with the Fumadocs preset, Geist and Geist Mono
+- Shiki highlighting with Twoslash type hovers
+- Search: Cmd+K keyword search over a prebuilt Orama index, plus "Ask the docs", which ranks sections by meaning with an embedding model that runs in the browser
+- pnpm and Turborepo, from the monorepo root
 
 ## Local development
 
-Requires Node 18+ and pnpm 9+.
+You need Node 20 or later and pnpm 10.
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-The dev server runs on <http://localhost:3000>. The docs are at <http://localhost:3000/docs>.
+The site runs at <http://localhost:3000>, with the docs under <http://localhost:3000/docs>.
 
 ## Scripts
 
-| Command | Description |
+Run them from the repo root with `pnpm --filter nestjs-drizzle-crud-docs <script>`, or from this folder with `pnpm <script>`.
+
+| Command | What it does |
 | --- | --- |
-| `pnpm dev` | Start the dev server with HMR. |
-| `pnpm build` | Production build (runs `next build`, generates `.source/`, builds MDX). |
-| `pnpm start` | Serve the production build. |
-| `pnpm typecheck` | Run `tsc --noEmit` to verify TypeScript. |
+| `dev` | Dev server with hot reload. |
+| `build` | Checks the search index, then runs `next build --webpack` and writes the static site to `out/`. |
+| `typecheck` | Generates `.source/`, then runs `tsc --noEmit`. |
+| `search:verify` | Checks `public/search-index.json` against the content. `build` runs it first. |
+| `search:index` | Rebuilds the search index after a content change. See below. |
+| `search:eval` | Asks the assistant every page title and heading and reports how many come back. |
 
 ## Project layout
 
 ```
-content/docs/          All MDX content lives here. Folders are route groups.
-                       Add a new page by creating an .mdx file + updating meta.json.
-
-app/                   Next.js App Router routes.
-  layout.tsx           Root layout — wraps with RootProvider.
-  (home)/              Home page (hero + feature grid + footer).
-  docs/                /docs/[[...slug]] dynamic route.
-  api/search/          Orama search server route.
-  sitemap.ts           Dynamic sitemap from the content source.
-  robots.ts            robots.txt.
-
-lib/                   Pure helpers — source loader, layout options, SEO config.
-
-components/            Reusable React components — MDX wrapper, install tabs, home pieces.
-
-source.config.ts       Fumadocs MDX configuration (Twoslash transformer, Shiki themes).
-next.config.mjs        Next.js config (createMDX, serverExternalPackages).
+content/docs/          MDX pages. Folders in parentheses are sections and add no URL segment.
+app/
+  layout.tsx           Root layout: fonts, the Fumadocs provider, the search dialog.
+  (home)/              The home page.
+  docs/                /docs/[[...slug]] in the notebook layout.
+  api/search/          The static Orama index behind Cmd+K.
+  llms.txt/            The answer-engine map of the site.
+  llms-full.txt/       Every page as Markdown in one file.
+  llms.mdx/docs/       One page as Markdown: /llms.mdx/docs/<page>/content.md
+  og/docs/             One sharing card per page: /og/docs/<page>/image.png
+components/            Docs shell and sidebar, search, MDX components, the assistant panel.
+lib/                   Site config, page tree helpers, structured data, git history, the assistant.
+scripts/               Search index build, verify and eval.
+public/                The Avytrix mark and search-index.json.
 ```
 
 ## Adding a page
 
-1. Create `content/docs/<section>/<page>.mdx` with frontmatter (`title`, `description`).
-2. Add the page slug to the section's `meta.json` in the order you want it to appear.
-3. (Optional) Link to it from other pages using a relative path: `[link](./other-page.mdx)`.
+1. Create `content/docs/(<section>)/<page>.mdx` with a `title` and a `description` in the frontmatter.
+2. Add the slug to that section's `meta.json`, in the order it should appear.
+3. Rebuild the search index so "Ask the docs" can answer from the new page.
 
-The `.source/` folder is auto-generated by Fumadocs on `dev` / `build`. Don't edit it.
+`.source/` is generated by Fumadocs on `dev`, `build` and `typecheck`. Don't edit it.
+
+## The search index
+
+`public/search-index.json` holds one vector per section of every page, and it is committed. The browser downloads a small embedding model on the first question, embeds the question, and compares it with these vectors, so the heavy part runs once per content change instead of once per visitor.
+
+The build only checks the index. If a page changed after the index was built, it prints a warning and still builds, because Cmd+K search covers every page either way. To rebuild it, install `@huggingface/transformers@4.3.1` outside the repo and point the script at it:
+
+```bash
+npm install --prefix /tmp/tf @huggingface/transformers@4.3.1
+TRANSFORMERS_MODULE=/tmp/tf/node_modules/@huggingface/transformers/dist/transformers.node.mjs \
+  pnpm --filter nestjs-drizzle-crud-docs search:index
+```
+
+It is not a workspace dependency because adding it makes pnpm re-check `semver@6.3.1`, which is already in the lockfile, and the workspace `trustPolicy: no-downgrade` refuses that version. The browser loads the same version from jsDelivr instead.
 
 ## Deployment
 
-Vercel zero-config:
-
-```bash
-vercel --prod
-```
-
-Set `NEXT_PUBLIC_SITE_URL` to your production URL in the Vercel dashboard so `sitemap.xml` and `robots.txt` use the correct origin.
+Pushing to `main` runs `.github/workflows/deploy-docs.yml`. It builds the library (Twoslash needs its types), exports this site with `NEXT_PUBLIC_SITE_URL` taken from the root `CNAME`, and publishes `out/` to GitHub Pages. It checks out the full git history so each page can show when it last changed.
 
 ## License
 
-MIT — the content is released under the same license as the package it documents.
+MIT, the same license as the package it documents.

@@ -1,7 +1,10 @@
 import { Box, Cpu, Database, Hexagon, Server } from "lucide-react";
 import type { ComponentType } from "react";
 
-const COMPATIBLE: { icon: ComponentType<{ className?: string }>; label: string }[] = [
+const COMPATIBLE: {
+	icon: ComponentType<{ className?: string }>;
+	label: string;
+}[] = [
 	{ icon: Database, label: "PostgreSQL" },
 	{ icon: Server, label: "MySQL" },
 	{ icon: Hexagon, label: "Node.js" },
@@ -15,7 +18,7 @@ export function CompatibleWith() {
 			{COMPATIBLE.map((item) => (
 				<div
 					key={item.label}
-					className="flex h-14 items-center justify-center gap-2 rounded-[2px] border border-[var(--fd-border-muted)] bg-[var(--fd-surface-muted)] text-sm font-medium text-fd-foreground"
+					className="flex h-14 items-center justify-center gap-2 rounded-lg border border-[var(--fd-border-muted)] bg-[var(--fd-surface-muted)] text-sm font-medium text-fd-foreground"
 				>
 					<item.icon className="size-4 text-fd-muted-foreground" />
 					{item.label}

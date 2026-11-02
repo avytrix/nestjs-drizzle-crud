@@ -1,15 +1,24 @@
 import "./global.css";
-import { RootProvider } from "fumadocs-ui/provider/next";
-import { Inter } from "next/font/google";
 import type { Metadata } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
 import type { ReactNode } from "react";
-import { JsonLd } from "@/components/json-ld";
-import { siteConfig, softwareJsonLd, websiteJsonLd } from "@/lib/seo";
+import { Provider } from "@/components/provider";
+import { siteConfig } from "@/lib/seo";
 
-const inter = Inter({
-	subsets: ["latin"],
+/*
+ * Geist for text and Geist Mono for code. Both are exposed as CSS
+ * variables so global.css can point the Fumadocs font tokens at them.
+ */
+const geist = Geist({
+	subsets: ["latin", "latin-ext"],
+	variable: "--font-geist",
 	display: "swap",
-	variable: "--font-inter",
+});
+
+const geistMono = Geist_Mono({
+	subsets: ["latin", "latin-ext"],
+	variable: "--font-geist-mono",
+	display: "swap",
 });
 
 const ogTitle = `${siteConfig.displayName}: ${siteConfig.tagline}`;
@@ -25,7 +34,7 @@ export const metadata: Metadata = {
 	applicationName: siteConfig.displayName,
 	authors: [{ name: siteConfig.author }],
 	creator: siteConfig.author,
-	publisher: siteConfig.author,
+	publisher: siteConfig.organization.name,
 	category: "technology",
 	alternates: { canonical: "/" },
 	robots: {
@@ -56,12 +65,13 @@ export const metadata: Metadata = {
 
 export default function Layout({ children }: { children: ReactNode }) {
 	return (
-		<html lang="en" suppressHydrationWarning className={inter.variable}>
-			<body className="flex flex-col min-h-screen font-sans">
-				<JsonLd data={[websiteJsonLd, softwareJsonLd]} />
-				<RootProvider search={{ options: { type: "static" } }}>
-					{children}
-				</RootProvider>
+		<html
+			lang="en"
+			suppressHydrationWarning
+			className={`${geist.variable} ${geistMono.variable}`}
+		>
+			<body className="flex min-h-screen flex-col">
+				<Provider>{children}</Provider>
 			</body>
 		</html>
 	);

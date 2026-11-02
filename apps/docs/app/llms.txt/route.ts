@@ -12,11 +12,10 @@ export function GET() {
 	const pages = source.getPages();
 
 	const links = pages
-		.map(
-			(page) =>
-				`- [${page.data.title}](${new URL(page.url, siteConfig.url)}): ${
-					page.data.description ?? ""
-				}`.trimEnd(),
+		.map((page) =>
+			`- [${page.data.title}](${new URL(page.url, siteConfig.url)}): ${
+				page.data.description ?? ""
+			}`.trimEnd(),
 		)
 		.sort();
 
@@ -36,7 +35,8 @@ export function GET() {
 		`- The condensed, fact-only summary for code generation is ${siteConfig.url}/docs/llm-notes.`,
 		"- A service is an empty subclass of `SqlBaseCrudService`; the table is bound in `DrizzleCrudModule.forFeature`, not in the service.",
 		"- `findAll` returns `{ data, total, page, limit }`, not an array.",
-		"- Relations are many-to-one only. Full-text search is PostgreSQL only.",
+		"- Relations can be belongs-to, has-many or many-to-many, and nest. Eager loading never runs a query per row. Full-text search is PostgreSQL only.",
+		`- Every page is also available as Markdown at ${siteConfig.url}/llms.mdx/docs/<page>/content.md, and all of them in one file at ${siteConfig.url}/llms-full.txt.`,
 		"",
 	].join("\n");
 

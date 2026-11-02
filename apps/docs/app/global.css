@@ -1,188 +1,426 @@
 @import "tailwindcss";
 @import "fumadocs-ui/css/neutral.css";
 @import "fumadocs-ui/css/preset.css";
+
 @import "fumadocs-twoslash/twoslash.css";
 
-/* Drizzle-sharp corners, applied once at the scale instead of per component.
-   Fumadocs styles itself with `rounded-md/lg/xl`, which resolve to these
-   Tailwind v4 theme variables, so remapping them here makes the whole docs
-   surface (cards, code blocks, callouts, search dialog, sidebar rows) match the
-   2 px radius the home page already uses. `rounded-full` is unaffected, and the
-   two deliberate 8 px exceptions ask for it literally (`rounded-[8px]`). */
-@theme {
-	--radius-xs: 2px;
-	--radius-sm: 2px;
-	--radius-md: 2px;
-	--radius-lg: 2px;
-	--radius-xl: 2px;
-	--radius-2xl: 4px;
-	--radius-3xl: 4px;
-}
-
+/*
+ * The theme: a blue primary (#2552FF, lifted for dark mode), cool black #0B0D12 for dark
+ * surfaces, Geist for text and Geist Mono for code, and a reading rhythm (leading, measure,
+ * heading spacing) tuned for long technical pages.
+ *
+ * Fumadocs expects oklch. These are converted from the hex values rather than eyeballed.
+ */
 :root {
-	/* Primary: NestJS brand red #E0234E */
-	--color-fd-primary: oklch(0.588 0.218 16.1);
-	--fd-primary-rgb: 224 35 78;
-	/* Secondary: Drizzle green #C5F74F, used sparingly (homepage pill, footer rule, OG accent) */
-	--color-fd-drizzle: oklch(0.911 0.197 124.6);
-	--fd-drizzle-rgb: 197 247 79;
+	--color-fd-primary: oklch(0.534 0.258 265.7); /* #2552FF */
+	--color-fd-ring: oklch(0.534 0.258 265.7);
+	--color-fd-accent-foreground: oklch(0.534 0.258 265.7);
+	/*
+   * Muted text, darkened from Fumadocs' 45% grey. That grey passed on white but not on the tinted
+   * surfaces it sits on most (sidebar, tabs, search, callouts): 4.05 to 4.35:1 against WCAG AA's
+   * 4.5, measured 2026-10-26. At 36% it clears AA on all of them.
+   */
+	--color-fd-muted-foreground: hsl(0, 0%, 36%);
 
-	/* Drizzle-style surface tokens (light defaults, overridden in .dark) */
-	--fd-surface-muted: #fafafa;
-	--fd-border-muted: #efefef;
-	--fd-border-hover: #d1d5db;
-	--fd-heading-color: #0f172a;
-	--fd-heading-tracking: -0.48px;
-	--fd-pill-bg: #f1f2f345;
+	/* Geist for everything, Geist Mono for data and code only. */
+	--font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+	--font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+	/*
+   * Vertical rhythm.
+   *
+   * Fumadocs ships a tight default measure and leading, which reads as cramped once the prose
+   * is long enough to have paragraphs. These are the marketing site's own type scale, so the
+   * two sites set text the same way: body at 1.7, headings at 1.2 to 1.35, and the slight
+   * negative tracking the guideline specifies for Geist at text sizes.
+   */
+	--fd-leading-prose: 1.7;
+	--fd-leading-heading: 1.25;
+	--fd-measure: 72ch;
 }
 
 .dark {
-	--fd-surface-muted: #1a1a1a;
-	--fd-border-muted: #292929;
-	--fd-border-hover: #303030;
-	--fd-heading-color: #c8c9ca;
-	--fd-pill-bg: #111111;
+	/* Lifted for contrast on dark surfaces; the same hue, not a different blue. */
+	--color-fd-primary: oklch(0.678 0.168 256.7);
+	--color-fd-ring: oklch(0.678 0.168 256.7);
+	--color-fd-accent-foreground: oklch(0.678 0.168 256.7);
+	/* Cool black #0B0D12. */
+	--color-fd-background: oklch(0.159 0.011 268);
+	/* Fumadocs' own dark value, restated: the light override above comes later and would win here. */
+	--color-fd-muted-foreground: hsla(0, 0%, 70%, 0.8);
 }
 
-/* Code-fence accent borders read from `accent=nest|drizzle` meta in MDX fences.
-   The `data-accent` lands on the Fumadocs-rendered `<figure>` wrapper that holds
-   the Shiki code block (rounded, overflow-hidden). The inset box-shadow
-   follows the rounded corners. */
-figure[data-accent="drizzle"] {
-	box-shadow: inset 3px 0 0 var(--color-fd-drizzle);
-}
-figure[data-accent="nest"] {
-	box-shadow: inset 3px 0 0 var(--color-fd-primary);
+/*
+ * Typography, applied to the rendered page only.
+ *
+ * Scoped to `.prose` so it reaches MDX body copy and leaves the sidebar, search dialog and
+ * table of contents on Fumadocs' own UI scale, which is deliberately denser than prose and
+ * should stay that way.
+ */
+.prose {
+	line-height: var(--fd-leading-prose);
+	letter-spacing: -0.011em;
 }
 
-/* Drizzle-style soft overrides for the auto-injected Fumadocs nav on the home page:
-   chips use 2 px corners (Drizzle sharp) instead of rounded-full pills, and the
-   nav uses the same hairline border as the rest of the page. */
-#nd-nav nav [data-search-full] {
-	border-radius: 2px;
+.prose :is(h1, h2, h3, h4) {
+	line-height: var(--fd-leading-heading);
+	letter-spacing: -0.02em;
+	text-wrap: balance;
 }
-#nd-nav nav button[aria-label="Toggle Theme"] {
-	border-radius: 2px;
+
+/* Space above a heading, so a new section is visibly a new section. */
+.prose :is(h2, h3) {
+	margin-top: 2.5rem;
+}
+
+.prose h2 {
+	margin-top: 3.25rem;
+}
+
+/* Paragraphs and lists breathe; a wall of text is the thing being fixed here. */
+.prose :is(p, ul, ol, blockquote) {
+	margin-block: 1.1em;
+}
+
+.prose li {
+	margin-block: 0.4em;
+}
+
+.prose li > p {
+	margin-block: 0.5em;
+}
+
+/*
+ * A comfortable measure. Long lines are the other half of "it reads tight": leading alone does
+ * not fix a 110-character line. Tables, code and callouts opt out, since they carry their own
+ * width and clipping them would be worse than a long line.
+ */
+.prose > :is(p, ul, ol, blockquote, h1, h2, h3, h4) {
+	max-width: var(--fd-measure);
+}
+
+/*
+ * The page lede, matched to body copy.
+ *
+ * Fumadocs styles its description `text-lg text-fd-muted-foreground`: larger than the prose and
+ * in the muted colour. On a documentation page that makes the opening paragraph the odd one out,
+ * bigger and fainter than everything it introduces, and the eye reads the contrast as emphasis
+ * where none is meant.
+ *
+ * Size, weight and colour all come from the same tokens as body copy, and `!important` is needed
+ * only because Fumadocs' utilities are on the element itself.
+ */
+.doc-lede {
+	/* biome-ignore lint/complexity/noImportantStyles: Fumadocs sets these with utilities on the element itself */
+	font-size: 1rem !important;
+	/* biome-ignore lint/complexity/noImportantStyles: Fumadocs sets these with utilities on the element itself */
+	font-weight: 400 !important;
+	/* Fumadocs sets prose at `text-fd-foreground/90`, so the lede takes the same 90% rather than
+     the solid token: at full strength it reads a shade heavier than the paragraph beneath it. */
+	--doc-lede-color: color-mix(
+		in oklab,
+		var(--color-fd-foreground) 90%,
+		transparent
+	);
+	/* biome-ignore lint/complexity/noImportantStyles: Fumadocs sets the colour with a utility on the element itself */
+	color: var(--doc-lede-color) !important;
+	line-height: var(--fd-leading-prose);
+	letter-spacing: -0.011em;
+	max-width: var(--fd-measure);
+}
+
+/* Table text is data, so it takes the mono face and tabular figures. */
+.prose table {
+	font-variant-numeric: tabular-nums;
+}
+
+html {
+	scrollbar-gutter: stable;
+}
+
+html > body[data-scroll-locked] {
+	/* biome-ignore lint/complexity/noImportantStyles: beats the inline margin the scroll lock writes */
+	margin-right: 0px !important;
+	/* biome-ignore lint/complexity/noImportantStyles: beats the inline variable the scroll lock writes */
+	--removed-body-scroll-bar-size: 0px !important;
+}
+
+/*
+ * Pointer cursor on anything clickable.
+ *
+ * Tailwind v4 dropped the v3 Preflight rule that gave `button` and `[role="button"]` a pointer
+ * cursor, so every copy button, theme toggle and collapsible section in Fumadocs inherits the
+ * browser default arrow. Links already get it; the rest have to be asked. Unlayered on purpose:
+ * `@layer base` would lose to Fumadocs' own layered rules.
+ */
+button:not(:disabled):not([aria-disabled="true"]),
+[role="button"]:not([aria-disabled="true"]),
+[role="tab"],
+[role="option"],
+summary,
+select,
+label[for] {
+	cursor: pointer;
+}
+
+/*
+ * Code blocks are dark in both themes.
+ *
+ * Shiki emits both palettes on every token as --shiki-light and --shiki-dark; Fumadocs picks one
+ * with `.dark`. Pointing light mode at the dark palette is enough for the tokens, and the rest of
+ * the figure (title bar, copy button, border) is Fumadocs' own colour tokens, redefined here so
+ * the chrome around the code follows it. Scoped to `figure.shiki`, which is the block: inline
+ * `code` inside a paragraph stays with the page theme, where it belongs.
+ */
+figure.shiki:not(.not-fumadocs-codeblock *) {
+	--color-fd-card: hsl(215, 14%, 16%);
+	--color-fd-foreground: hsl(210, 17%, 90%);
+	--color-fd-muted-foreground: hsl(213, 12%, 68%);
+	--color-fd-border: hsla(0, 0%, 100%, 12%);
+	--color-fd-accent: hsla(0, 0%, 100%, 8%);
+	--color-fd-accent-foreground: hsl(210, 17%, 96%);
+	--color-fd-ring: hsla(0, 0%, 100%, 40%);
+	--color-fd-secondary: hsla(0, 0%, 100%, 8%);
+	--color-fd-secondary-foreground: hsl(210, 17%, 90%);
+	--color-fd-muted: hsla(0, 0%, 100%, 6%);
+
+	/*
+   * The block's own background, whatever Fumadocs put on it. Inside a Tabs panel (every install
+   * and run command) the figure gets `bg-fd-secondary`, which the line above makes 8% white: on the
+   * page's light card that read as light grey, under tokens meant for a dark surface, so the
+   * command was barely legible (2026-10-26, reported on /opensource).
+   */
+	background-color: var(--color-fd-card);
+
+	code span {
+		color: var(--shiki-dark);
+		font-style: var(--shiki-dark-font-style);
+	}
+
+	/*
+   * Leading inside the block.
+   *
+   * The figure carries `not-prose`, so the `.prose` rules above deliberately do not reach it and
+   * the lines were left at the Shiki default, which is tighter than the surrounding text. Code is
+   * read line by line and scanned for a changed character, so it wants more room between lines
+   * than prose does, not less. Set on `.line` because `pre` lays `code` out as a flex column and
+   * each line is a flex item, where a line-height on the ancestor does not inherit usefully.
+   */
+	code .line {
+		line-height: 1.9;
+	}
+
+	/*
+   * GitHub-dark's comment grey is 3.1:1 on this surface; its lighter grey clears AA. Matched on the
+   * value alone: after hydration React rewrites the inline style with spaces (`--shiki-dark: #6A737D`).
+   */
+	code span[style*="6A737D" i] {
+		color: #959da5;
+	}
+
+	/* Air at the top and bottom, so the first and last line are not against the edge. */
+	pre {
+		padding-block: 0.5rem;
+	}
+}
+
+/*
+ * Room for the icon rail when the sidebar is collapsed.
+ *
+ * `--fd-sidebar-col` is written inline by Fumadocs' container (0px when collapsed), so an
+ * inline style is the only thing there is to beat. Desktop only: below md the sidebar is a
+ * drawer and there is no rail to make room for.
+ */
+@media (min-width: 48rem) {
+	#nd-notebook-layout[data-sidebar-collapsed="true"] {
+		/* biome-ignore lint/complexity/noImportantStyles: Fumadocs writes --fd-sidebar-col inline */
+		--fd-sidebar-col: 3.5rem !important;
+	}
+}
+
+/*
+ * Sidebar section headings ("Start here", "Understand it") sit closer to the item above.
+ *
+ * Fumadocs gives each separator `mt-6`, 24px on top of the item's own padding, which read as a
+ * blank row between sections . Half of it still separates the groups.
+ * Matched on the class, not on `p`, so nothing else in the sidebar moves.
+ */
+#nd-sidebar p[class*="mt-6"]:not(:first-child),
+#nd-sidebar-mobile p[class*="mt-6"]:not(:first-child) {
+	margin-top: 0.75rem;
 }
 
 /* ---------------------------------------------------------------------------
-   Docs surface: the same design language as the home page, applied to the
-   Fumadocs-rendered pages. Everything below is keyed off stable ids
-   (#nd-sidebar, #nd-toc, #nd-page) or prose element selectors, so a Fumadocs
-   minor upgrade cannot silently drop the styling.
+   Assistant
    --------------------------------------------------------------------------- */
 
-/* Headings: same tracking and color as the home page sections. */
-#nd-page h1,
-#nd-page h2,
-#nd-page h3,
-#nd-page h4 {
-	letter-spacing: var(--fd-heading-tracking);
-	color: var(--fd-heading-color);
+/*
+ * The three animations that make a reply feel like it is arriving.
+ *
+  * A message rises into place rather than appearing, dots stand in for the reply
+ * in the reply's own position so it replaces them where it already is, and a caret blinks at the
+ * end of streaming text.
+ *
+ * Every one of them stands still under `prefers-reduced-motion`. The reveal is the honest part to
+ * be careful about: the text is retrieved, not generated, so the caret is there to say "still
+ * arriving" and not to imply a model is thinking.
+ */
+@keyframes assistant-message-in {
+	from {
+		transform: translateY(24px);
+		opacity: 0;
+	}
+	to {
+		transform: none;
+		opacity: 1;
+	}
 }
 
-/* Section rule above every h2, so a long guide reads as bands, not one column. */
-#nd-page .prose h2 {
-	margin-top: 3rem;
-	padding-top: 1.5rem;
-	border-top: 1px solid var(--fd-border-muted);
-}
-#nd-page .prose h2:first-child {
-	margin-top: 0;
-	padding-top: 0;
-	border-top: 0;
+.assistant-message-in {
+	animation: assistant-message-in 420ms cubic-bezier(0.32, 0.72, 0, 1) both;
+	animation-delay: var(--delay, 0ms);
 }
 
-/* Prose links carry the primary red with a hairline underline. */
-#nd-page .prose a:not([data-card]):not(.not-prose a) {
-	color: var(--color-fd-primary);
-	text-decoration-color: color-mix(
-		in oklch,
-		var(--color-fd-primary) 35%,
-		transparent
-	);
-	text-underline-offset: 3px;
-	transition: text-decoration-color 150ms ease;
-}
-#nd-page .prose a:not([data-card]):hover {
-	text-decoration-color: var(--color-fd-primary);
+@keyframes assistant-typing {
+	0%,
+	60%,
+	100% {
+		transform: translateY(0);
+		opacity: 0.35;
+	}
+	30% {
+		transform: translateY(-3px);
+		opacity: 1;
+	}
 }
 
-/* Inline code matches the hero's inline code chip. */
-#nd-page .prose :not(pre) > code {
-	background-color: var(--fd-surface-muted);
-	border: 1px solid var(--fd-border-muted);
-	border-radius: 2px;
-	padding: 0.1rem 0.3rem;
-	font-weight: 400;
+.assistant-typing {
+	animation: assistant-typing 1s ease-in-out infinite;
+	animation-delay: var(--d, 0ms);
 }
 
-/* Tables: hairlines, muted header, no rounded corners. */
-#nd-page .prose table {
-	border: 1px solid var(--fd-border-muted);
-	border-radius: 2px;
-	overflow: hidden;
-}
-#nd-page .prose th {
-	background-color: var(--fd-surface-muted);
-	font-weight: 600;
-	letter-spacing: -0.198px;
-}
-#nd-page .prose th,
-#nd-page .prose td {
-	border-color: var(--fd-border-muted);
+@keyframes assistant-caret {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0;
+	}
 }
 
-/* Code blocks and callouts share the hairline border. */
-#nd-page figure[data-rehype-pretty-code-figure],
-#nd-page pre {
-	border-color: var(--fd-border-muted);
+.assistant-caret {
+	animation: assistant-caret 1s steps(1) infinite;
 }
 
-/* Cards (the index page grid) hover the same way as the home feature grid. */
-#nd-page a[data-card] {
-	border-color: var(--fd-border-muted);
-	transition:
-		border-color 200ms ease,
-		background-color 200ms ease;
-}
-#nd-page a[data-card]:hover {
-	border-color: var(--fd-border-hover);
+@keyframes assistant-panel-in {
+	from {
+		transform: translateY(12px) scale(0.98);
+		opacity: 0;
+	}
+	to {
+		transform: none;
+		opacity: 1;
+	}
 }
 
-/* Sidebar: hairline separators, red active row, sharp corners. */
-#nd-sidebar {
-	border-color: var(--fd-border-muted);
+.assistant-panel-in {
+	animation: assistant-panel-in 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
+
+@media (prefers-reduced-motion: reduce) {
+	.assistant-message-in,
+	.assistant-typing,
+	.assistant-caret,
+	.assistant-panel-in {
+		animation: none;
+	}
+}
+
+/*
+ * Theme switch.
+ *
+ * Fumadocs' toggle already wraps the swap in `document.startViewTransition`, so a cross-fade
+ * does run. It just runs on the browser's defaults: 250ms, linear, and both snapshots blended
+ * with `mix-blend-mode: plus-lighter`. Plus-lighter is additive, so halfway through a light to
+ * dark swap the two layers sum towards white and the page flashes. That flash is what reads as
+ * "no animation".
+ *
+ * Fading the new snapshot in over a static old one avoids it: the old layer stays fully opaque
+ * underneath for the whole duration, so there is no additive blend and no dip to transparent
+ * in the middle. `::view-transition-new` already paints above `::view-transition-old`, so
+ * nothing needs reordering.
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+	mix-blend-mode: normal;
+}
+
+::view-transition-old(root) {
+	animation: none;
+}
+
+::view-transition-new(root) {
+	animation: fd-theme-in 420ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes fd-theme-in {
+	from {
+		opacity: 0;
+	}
+}
+
+/* Both layers held still leaves the new one opaque on top, which is an instant swap. */
+@media (prefers-reduced-motion: reduce) {
+	::view-transition-new(root) {
+		animation: none;
+	}
+}
+
+/*
+ * The active sidebar link: the primary blue on a 10% blue tint measured 4.45:1, a hair under AA (2026-10-26).
+ * An 8% tint clears it and still reads as the current page. The id outranks Fumadocs' utility.
+ */
 #nd-sidebar a[data-active="true"] {
-	color: var(--color-fd-primary);
 	background-color: color-mix(
-		in oklch,
+		in oklab,
 		var(--color-fd-primary) 8%,
 		transparent
 	);
-	box-shadow: inset 2px 0 0 var(--color-fd-primary);
 }
 
-/* Table of contents: the active heading picks up the primary red. */
-#nd-toc a[data-active="true"] {
-	color: var(--color-fd-primary);
+/* ---------------------------------------------------------------------------
+   Home page tokens
+
+   The home page components predate the port and read these names. They now point at the
+   Fumadocs tokens above, so the home page follows the same palette in both themes.
+   --------------------------------------------------------------------------- */
+:root {
+	--fd-surface-muted: var(--color-fd-card);
+	--fd-border-muted: var(--color-fd-border);
+	--fd-border-hover: color-mix(
+		in oklab,
+		var(--color-fd-foreground) 25%,
+		transparent
+	);
+	--fd-heading-color: var(--color-fd-foreground);
+	--fd-pill-bg: var(--color-fd-card);
 }
 
-@layer base {
-	html {
-		color-scheme: dark light;
-	}
+/*
+ * Code-fence accents, read from `accent=nest|drizzle` in the fence meta (see source.config.ts).
+ * The tag lands on the `<figure>` Fumadocs wraps around the Shiki block, and the inset shadow
+ * follows its rounded corners. NestJS red and Drizzle green are the two projects' own colours.
+ */
+figure[data-accent="nest"] {
+	box-shadow: inset 3px 0 0 #e0234e;
+}
 
-	body {
-		-webkit-font-smoothing: antialiased;
-		text-rendering: optimizeLegibility;
-		padding-inline: max(0px, env(safe-area-inset-left))
-			max(0px, env(safe-area-inset-right));
-	}
+figure[data-accent="drizzle"] {
+	box-shadow: inset 3px 0 0 #c5f74f;
+}
 
-	::selection {
-		background-color: color-mix(in oklch, var(--color-fd-primary) 35%, transparent);
-		color: var(--color-fd-foreground);
-	}
+body {
+	padding-inline: max(0px, env(safe-area-inset-left))
+		max(0px, env(safe-area-inset-right));
 }
