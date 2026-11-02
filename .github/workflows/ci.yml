@@ -43,3 +43,35 @@ jobs:
       # no database service: Playwright boots the app against PGlite (Postgres
       # compiled to WASM) with a seeded fixture, and drives it over HTTP.
       - run: pnpm test
+
+  # The core CRUD paths against a real MySQL 8. The spec skips itself without
+  # MYSQL_URL, so the verify job above stays service free; this job is the
+  # only place it runs. Root with an empty password on a throwaway container,
+  # so there is no secret to store.
+  mysql:
+    name: MySQL integration
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_DATABASE: crud_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+    env:
+      MYSQL_URL: mysql://root@127.0.0.1:3306/crud_test
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @avytrix/nestjs-drizzle-crud test -- test/mysql.integration.spec.ts
