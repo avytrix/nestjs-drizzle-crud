@@ -1,0 +1,77 @@
+---
+title: Optimistic locking with a version column
+description: "Set versionColumn and a write that names a stale version is a 409 StaleVersionException. The version starts at 1 and goes up on every update, soft delete, restore, upsert and bulk write."
+---
+
+Optimistic locking stops a client from overwriting a change it never saw: set `versionColumn`, send back the version you read, and a write against a row that has moved on since is a 409. It needs no row lock, so it suits the read, edit, save flow of a form.
+
+```ts accent=drizzle title="schema.ts"
+export const projects = pgTable('projects', {
+  id: serial('id').primaryKey(),
+  name: varchar('name').notNull(),
+  version: integer('version').notNull().default(1),
+});
+```
+
+```ts accent=nest
+DrizzleCrudModule.forFeature([
+  { service: ProjectsService, table: projects, config: { versionColumn: 'version' } },
+]);
+```
+
+## How does the version change?
+
+It starts at 1 on `create` (whatever the body says) and goes up by one on every write: `update`, `softDelete`, `restore`, an `upsert` that hits an existing row, and every row of `massUpdate`, `massSoftDelete`, `massRestore` and `massUpsert`. It is computed in SQL (`SET version = version + 1`), never taken from a body.
+
+## How do I send the version I read?
+
+Either in the body under the version column's key, which is what a REST client does with the object it fetched:
+
+```ts
+const project = await projects.find(1);              // version: 3
+await projects.update(1, { name: 'New', version: 3 }); // ok, version 4
+await projects.update(1, { name: 'Late', version: 3 }); // 409
+```
+
+or as `options.expectedVersion`, which also works for the methods without a body:
+
+```ts
+await projects.softDelete(1, { expectedVersion: 4 });
+await projects.restore(1, { expectedVersion: 5 });
+await projects.delete(1, { expectedVersion: 6 });
+```
+
+`options.expectedVersion` wins when both are given. A version that is not an integer is a 400. The version key is removed from the body before the update, so it is never written directly, even when `writableColumns` is set.
+
+## What does a stale write return?
+
+`StaleVersionException`, which extends Nest's `ConflictException`, so the HTTP answer is a 409 with a message telling the client to read the row again. The check runs twice: the existence check compares the version before anything is written, and the `UPDATE` or `DELETE` carries `AND version = <expected>`, so a write that lands between the two is also caught.
+
+## What if the client sends no version?
+
+Then there is no check, and the write still bumps the version. That keeps internal writes simple; require the field in your update DTO when every client must send it.
+
+## How does it work with bulk writes?
+
+Pass `expectedVersions`, keyed by the id as a string:
+
+```ts
+await projects.massUpdate([1, 2, 3], { status: 'archived' }, {
+  expectedVersions: { '1': 4, '2': 7 },  // id 3 is not checked
+});
+```
+
+Any id at another version makes the whole call a 400 `BulkOperationException` with a 409 entry for that id, and nothing is written:
+
+```json
+{ "statusCode": 400, "message": "Mass update errors. 1 error(s) occurred.",
+  "errors": [{ "id": 2, "status": 409, "message": "projects with id 2 was changed by someone else; read it again and retry" }] }
+```
+
+`massSoftDelete`, `massRestore` and `massDelete` take `expectedVersions` the same way.
+
+## Next
+
+- → [Row-level locks, for the cases a version is not enough](/docs/row-locks)
+- → [Bulk operations](/docs/bulk-operations)
+- → [Errors](/docs/errors)

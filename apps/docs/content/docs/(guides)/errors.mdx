@@ -11,6 +11,8 @@ Every exception in `nestjs-drizzle-crud` extends `@nestjs/common`'s `HttpExcepti
 | --- | --- | --- |
 | **404 Not Found** | `EntityNotFoundException` | `update`, `restore`, `massUpdate`, `massRestore` when the row doesn't exist (or is soft-deleted, when soft-delete is enabled). |
 | **409 Conflict** | `DuplicateEntityException` | `create`, `update` when a unique constraint is violated (Postgres SQLSTATE `23505`). |
+| **409 Conflict** | `StaleVersionException` | [Optimistic locking](/docs/optimistic-locking): `update`, `softDelete`, `restore` or `delete` named a version the row is no longer at. In a bulk call it is a 409 entry of the 400. |
+| **403 Forbidden** | `MissingScopeException` | A [scoped entity](/docs/multi-tenancy) was used without the context value its scope needs, such as no tenant on the request. |
 | **409 Conflict** | `EntityInUseException` | `delete` blocked because other rows still reference this one (`23503`, with `ON DELETE RESTRICT` or `NO ACTION`). |
 | **400 Bad Request** | `ForeignKeyViolationException` | `create`, `update` referencing a parent row that does not exist (`23503`). The message names the offending column. |
 | **400 Bad Request** | `ValidationFailedException` | A value the column cannot take: too long (`22001`), a failed check (`23514`), out of range (`22003`), the wrong type such as `"abc"` for an integer or an unknown enum label (`22P02`), or a bad date (`22007`, `22008`), or the same key twice in one `massUpsert` (`21000`). Also an `update` with no column to set, a column outside `writableColumns`, and whatever your `validateCreate` / `validateUpdate` hooks throw. |
@@ -39,11 +41,14 @@ A "missing" row includes soft-deleted rows when soft-delete is enabled.
 | --- | --- | --- | --- |
 | `create(dto)` |  | unique violation | hook rejection (`ValidationFailedException`), missing FK target |
 | `upsert(dto, upsert)` |  | unique violation on another key | hook rejection, missing FK target, unknown conflict target |
-| `update(id, dto)` | row missing or soft-deleted | unique violation | hook rejection, missing FK target, nothing to update |
+| `update(id, dto)` | row missing, soft-deleted or outside the scope | unique violation, stale version | hook rejection, missing FK target, nothing to update |
 | `delete(id)` | row missing or soft-deleted | still referenced by other rows |  |
 | `forceDelete(id)` | row missing | still referenced by other rows |  |
 | `softDelete(id)` | row missing or soft-deleted |  |  |
 | `restore(id)` | row missing |  |  |
+| `attach` / `detach` / `sync` | row missing | | unknown target ids (404 entries), not a many-to-many |
+
+On a scoped entity, a row of another tenant counts as missing everywhere: a 404 on a write, `null` on a read.
 
 `restore` returns the restored row (Postgres `RETURNING`); `update` returns the updated row.
 

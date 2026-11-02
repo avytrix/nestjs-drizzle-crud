@@ -226,8 +226,20 @@ await service.findAll({
 });
 ```
 
+## How do I filter through several relations or quantify a collection?
+
+Nest the relations, at any depth, and use `some`, `none` or `every` on a has-many or many-to-many relation:
+
+```ts
+await cities.findAll({ state: { country: { code: 'IN' } } });
+await authors.findAll({ posts: { none: { status: 'draft' } } });
+```
+
+Both compile to subqueries, never joins that multiply rows. See [Relation filters: paths and some, none, every](/docs/relation-filters).
+
 ## Next
 
 - → [Parse query strings into filters](/docs/query-parsing)
 - → [Pagination & sorting, `findAll` shape and default sort](/docs/pagination-sorting)
 - → [Relations: eager loading and related-column filters](/docs/relations)
+- → [Relation filters: paths and some, none, every](/docs/relation-filters)

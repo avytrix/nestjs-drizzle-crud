@@ -125,3 +125,47 @@ test.describe("keyset pagination", () => {
 		expect((await request.get("/countries?cursor=garbage")).status()).toBe(400);
 	});
 });
+
+// 3.5.0: relation counts, quantified collection filters and uncounted pages
+// over HTTP. India has 3 states, Nepal 1, every other country none.
+test.describe("counts, quantifiers and withCount", () => {
+	test("puts _count on each row", async ({ request }) => {
+		const { body } = await get(
+			request,
+			"/countries?code[in]=IN,NP,TD&counts=states,tags",
+		);
+		expect(
+			body.data.map((c: any) => [c.code, c._count.states, c._count.tags]),
+		).toEqual([
+			["TD", 0, 0],
+			["IN", 3, 2],
+			["NP", 1, 1],
+		]);
+	});
+
+	test("filters a collection with some / none / every", async ({ request }) => {
+		const some = await get(request, "/countries?states[some]=");
+		expect(some.body.data.map((c: any) => c.code)).toEqual(["IN", "NP"]);
+		const none = await get(
+			request,
+			"/countries?code[in]=IN,NP&states[none][name]=Kerala",
+		);
+		expect(none.body.data.map((c: any) => c.code)).toEqual(["NP"]);
+		const every = await get(
+			request,
+			"/countries?code[in]=IN,NP&states[every][name][startsWith]=Ba",
+		);
+		expect(every.body.data.map((c: any) => c.code)).toEqual(["NP"]);
+	});
+
+	test("withCount=false skips the count", async ({ request }) => {
+		const { body } = await get(request, "/countries?withCount=false&limit=10");
+		expect(body.total).toBeNull();
+		expect(body.hasMore).toBe(true);
+		expect(body.data).toHaveLength(10);
+	});
+
+	test("rejects a count on a belongs-to", async ({ request }) => {
+		expect((await request.get("/countries?counts=region")).status()).toBe(400);
+	});
+});

@@ -28,13 +28,20 @@ GET /countries?region_id[in]=1,3             list operand, comma separated
 GET /countries?code=IN&code=NP               repeated key: IN (...)
 GET /countries?region[name]=Asia             belongs-to column (region.name=Asia works too)
 GET /countries?states[name]=Kerala           has-many or many-to-many column
+GET /cities?state[country][code]=IN          a path through relations (state.country.code=IN too)
+GET /countries?states[none][name]=Kerala     some / none / every on a collection
+GET /countries?states[some]=                 has at least one state
 GET /countries?or[0][code]=IN&or[1][code]=NP OR group
 GET /countries?not[region][name]=Asia        NOT group
 GET /countries?sortBy=region.name,-name&page=2&limit=20
 GET /countries?fields=id,name,region.name&with=region
 GET /countries?search=nep
 GET /countries?cursor=                       first keyset page
+GET /countries?withCount=false               skip the COUNT(*)
+GET /countries?counts=states,tags            _count on each row
 ```
+
+A relation filter can go on through the related table's own relations, and a collection takes `some`, `none` or `every` as the next key; `filterableColumns` is checked against the full dotted path (`state.country.code`). See [Relation filters](/docs/relation-filters).
 
 Every [filter operator](/docs/filtering#operator-reference) works in brackets. `in`, `notIn`, `between`, `arrayContains` and `arrayOverlaps` take a comma separated list; use a repeated key (`name[in]=a&name[in]=b`) when a value contains a comma. `jsonContains` takes JSON: `meta[jsonContains]={"size":"L"}`.
 
@@ -52,6 +59,8 @@ The parser reads both Express 5's default flat keys (`age[gte]`) and the nested 
 | `search` | `options.search` | Searches `searchColumns`, or the entity's `searchableColumns`. Without either it is a 400. |
 | `cursor` / `after` | `pagination.cursor` | Sets `isCursor`. Empty means the first page. See [Cursor pagination](/docs/cursor-pagination). |
 | `count` | `pagination.count` | `true` asks `findByCursor` for a total. |
+| `withCount` | `pagination.withCount` | `false` makes `findAll` skip the count: `total` is `null` and `hasMore` is set. See [Pagination](/docs/pagination-sorting#how-do-i-skip-the-count-query). |
+| `counts` | `options.counts` | Comma list of has-many or many-to-many relations to count under `_count`. Checked against `loadableRelations`; a belongs-to is a 400. See [Aggregates](/docs/aggregates). |
 | `withDeleted`, `onlyDeleted` | `options.withDeleted`, `options.onlyDeleted` | Only with `allowTrash: true`; otherwise they are unknown filter columns, so a 400. See [Soft delete](/docs/soft-delete). |
 
 Every other key is a filter. To read a parameter of your own, list it in `ignore` and take it from the query yourself.
@@ -91,12 +100,13 @@ const q = this.tags.parseQuery(query, {
 ```ts
 interface ParsedCrudQuery {
   filters: CrudFilter;
-  pagination: { page?; limit?; sortBy?: SortColumn[]; cursor?: string | null; count? };
+  pagination: { page?; limit?; sortBy?: SortColumn[]; cursor?: string | null; count?; withCount? };
   sort: SortColumn[];
   select?: string[];
   relations?: string[];
+  counts?: string[];
   search?: SqlSearchOptions;
-  options: SqlOperationOptions;   // select, relations, search, withDeleted, onlyDeleted
+  options: SqlOperationOptions;   // select, relations, counts, search, withDeleted, onlyDeleted
   isCursor: boolean;
 }
 ```
@@ -114,3 +124,4 @@ export class CountriesService extends SqlBaseCrudService<
 - → [Allowlists: limit what a client may filter, sort, select and write](/docs/allowlists)
 - → [Filtering: every operator, and or / not groups](/docs/filtering)
 - → [Cursor pagination with findByCursor](/docs/cursor-pagination)
+- → [CRUD controller factory: every route wired for you](/docs/controller-factory)

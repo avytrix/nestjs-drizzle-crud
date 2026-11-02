@@ -10,8 +10,11 @@ import {
 	Post,
 	Query,
 } from "@nestjs/common";
+import { ApiCrudList } from "nestjs-drizzle-crud";
+import { countries } from "../db/schema";
 // Value imports (not `import type`): NestJS DI and ValidationPipe read the
 // runtime class from emitDecoratorMetadata; type-only imports would erase them.
+import { countriesCrud } from "./countries.crud";
 import { CountriesService } from "./countries.service";
 import { CreateCountryDto } from "./dto/create-country.dto";
 import { UpdateCountryDto } from "./dto/update-country.dto";
@@ -25,8 +28,11 @@ export class CountriesController {
 	//   ?region[name]=Asia&name[startsWith]=In&sortBy=-name&page=2&limit=10
 	//   ?or[0][code]=IN&or[1][code]=NP&with=region,states&fields=id,name
 	//   ?states[name]=Kerala&search=nep
+	//   ?states[none][name]=Kerala&counts=states,tags&withCount=false
 	// `?cursor=` (empty for the first page) switches to keyset pagination.
+	// ApiCrudList documents every one of those parameters in /docs.
 	@Get()
+	@ApiCrudList({ table: countries, ...countriesCrud })
 	findAll(@Query() query: Record<string, unknown>) {
 		const q = this.countries.parseQuery(query);
 		return q.isCursor

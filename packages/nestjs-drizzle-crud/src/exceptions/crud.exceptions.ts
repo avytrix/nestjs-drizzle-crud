@@ -1,6 +1,7 @@
 import {
 	BadRequestException,
 	ConflictException,
+	ForbiddenException,
 	HttpException,
 	InternalServerErrorException,
 	NotFoundException,
@@ -51,6 +52,28 @@ export class EntityInUseException extends ConflictException {
 			`${entityName} is still referenced by other records and cannot be deleted`,
 		);
 		this.name = "EntityInUseException";
+	}
+}
+
+// Optimistic locking: the row is no longer at the version the caller read,
+// because someone else wrote it in between. Read it again and retry. 409.
+export class StaleVersionException extends ConflictException {
+	constructor(entityName: string, id: any) {
+		super(
+			`${entityName} with id ${id} was changed by someone else; read it again and retry`,
+		);
+		this.name = "StaleVersionException";
+	}
+}
+
+// A scoped entity was used without the context its scope needs (no tenant on
+// the request, say). The call fails closed instead of running unscoped. 403.
+export class MissingScopeException extends ForbiddenException {
+	constructor(entityName: string, key: string) {
+		super(
+			`${entityName} is scoped by "${key}", but the context has no value for it`,
+		);
+		this.name = "MissingScopeException";
 	}
 }
 

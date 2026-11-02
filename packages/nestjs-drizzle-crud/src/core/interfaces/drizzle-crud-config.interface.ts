@@ -1,4 +1,5 @@
 import type { SortOrder, SqlDialect } from "../types/sql.types";
+import type { CrudSubscriber } from "./events.interface";
 import type { SqlCrudConfig } from "./sql-crud-config.interface";
 
 export interface DrizzleCrudConfig {
@@ -40,10 +41,14 @@ export interface DrizzleCrudConfig {
 		enableFullTextSearch?: boolean;
 	};
 
-	/** @deprecated Has no effect: there are no global hooks. Override the hooks on each service instead. It will be removed in the next major version. */
+	// Module-level events. With `enableGlobalHooks: true` every service raises
+	// a before and an after event for each write (bulk and upsert included) on
+	// the CrudEventBus, which you can inject and subscribe to. `subscribers`
+	// are subscribed when the bus is created. The per-service hooks run either
+	// way.
 	hooks?: {
-		/** @deprecated Has no effect. */
 		enableGlobalHooks?: boolean;
+		subscribers?: CrudSubscriber[];
 	};
 }
 

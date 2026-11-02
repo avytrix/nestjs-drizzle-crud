@@ -26,10 +26,18 @@ import {
 	varchar,
 } from "drizzle-orm/pg-core";
 import { drizzle } from "drizzle-orm/pglite";
+import { Test } from "@nestjs/testing";
 import { SqlBaseCrudService } from "../src/core/abstract/sql-base-crud.service";
+import { CrudContext } from "../src/core/context/crud-context";
+import { CrudEventBus } from "../src/core/events/crud-event-bus";
+import type { CrudEvent } from "../src/core/interfaces/events.interface";
 import { parseCrudQuery } from "../src/core/utils/query-parser";
 import type { SqlCrudConfig } from "../src/core/interfaces/sql-crud-config.interface";
-import { BulkOperationException } from "../src/exceptions/crud.exceptions";
+import {
+	BulkOperationException,
+	MissingScopeException,
+	StaleVersionException,
+} from "../src/exceptions/crud.exceptions";
 import { DrizzleCrudModule } from "../src/modules/drizzle-crud.module";
 
 const authorRole = pgEnum("author_role", ["admin", "writer"]);
@@ -91,6 +99,46 @@ const items = pgTable("items", {
 	sku: varchar("sku").notNull().unique(),
 });
 
+// 3.5.0 fixtures: a geo chain for relation paths, tags linked to posts
+// through a join table, and a tenant-scoped, versioned docs table.
+const geoCountries = pgTable("geo_countries", {
+	id: serial("id").primaryKey(),
+	code: text("code").notNull(),
+});
+const geoStates = pgTable("geo_states", {
+	id: serial("id").primaryKey(),
+	name: text("name").notNull(),
+	country_id: integer("country_id").notNull(),
+});
+const geoCities = pgTable("geo_cities", {
+	id: serial("id").primaryKey(),
+	name: text("name").notNull(),
+	state_id: integer("state_id").notNull(),
+});
+const tags = pgTable("tags", {
+	id: serial("id").primaryKey(),
+	name: text("name").notNull().unique(),
+	deleted_at: timestamp("deleted_at", { withTimezone: true }),
+});
+const postTags = pgTable("post_tags", {
+	post_id: integer("post_id").notNull(),
+	tag_id: integer("tag_id").notNull(),
+});
+const docs = pgTable("docs", {
+	id: serial("id").primaryKey(),
+	tenant_id: integer("tenant_id").notNull(),
+	title: text("title").notNull(),
+	slug: text("slug").notNull().unique(),
+	version: integer("version").notNull().default(1),
+	...stamps,
+});
+const docNotes = pgTable("doc_notes", {
+	id: serial("id").primaryKey(),
+	doc_id: integer("doc_id").notNull(),
+	tenant_id: integer("tenant_id"),
+	body: text("body").notNull(),
+});
+
 const DDL = `
 CREATE TYPE author_role AS ENUM ('admin', 'writer');
 CREATE TYPE post_status AS ENUM ('draft', 'published');
@@ -141,6 +189,43 @@ CREATE TABLE items (
   rank integer,
   sku varchar NOT NULL UNIQUE
 );
+CREATE TABLE geo_countries (id serial PRIMARY KEY, code text NOT NULL);
+CREATE TABLE geo_states (
+  id serial PRIMARY KEY,
+  name text NOT NULL,
+  country_id integer NOT NULL REFERENCES geo_countries(id)
+);
+CREATE TABLE geo_cities (
+  id serial PRIMARY KEY,
+  name text NOT NULL,
+  state_id integer NOT NULL REFERENCES geo_states(id)
+);
+CREATE TABLE tags (
+  id serial PRIMARY KEY,
+  name text NOT NULL UNIQUE,
+  deleted_at timestamptz
+);
+CREATE TABLE post_tags (
+  post_id integer NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  tag_id integer NOT NULL REFERENCES tags(id),
+  PRIMARY KEY (post_id, tag_id)
+);
+CREATE TABLE docs (
+  id serial PRIMARY KEY,
+  tenant_id integer NOT NULL,
+  title text NOT NULL,
+  slug text NOT NULL UNIQUE,
+  version integer NOT NULL DEFAULT 1,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  deleted_at timestamptz
+);
+CREATE TABLE doc_notes (
+  id serial PRIMARY KEY,
+  doc_id integer NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
+  tenant_id integer,
+  body text NOT NULL
+);
 `;
 
 // 3 authors, 30 posts (10 each, round robin). Posts 1-15 are published on
@@ -165,6 +250,20 @@ INSERT INTO items (name, labels, meta, active, big, price, rank, sku) VALUES
   ('Back\\slash', '{blue}', '{"size": "M"}', false, 1, 3.25, NULL, 'A2'),
   ('plain', '{green}', '{"size": "L"}', true, 2, 100, 1, 'A3'),
   ('Plain upper', '{}', '{}', false, 3, 0, NULL, 'A4');
+INSERT INTO geo_countries (code) VALUES ('IN'), ('NP');
+INSERT INTO geo_states (name, country_id) VALUES
+  ('Karnataka', 1), ('Kerala', 1), ('Bagmati', 2);
+INSERT INTO geo_cities (name, state_id) VALUES
+  ('Bengaluru', 1), ('Mysuru', 1), ('Kochi', 2), ('Kathmandu', 3);
+INSERT INTO tags (name) VALUES ('news'), ('tech'), ('old');
+UPDATE tags SET deleted_at = now() WHERE name = 'old';
+-- Post 1: news + tech, post 2: news, post 3: the deleted tag only.
+INSERT INTO post_tags (post_id, tag_id) VALUES (1, 1), (1, 2), (2, 1), (3, 3);
+-- Docs 1-3 belong to tenant 1, docs 4-5 to tenant 2.
+INSERT INTO docs (tenant_id, title, slug) VALUES
+  (1, 'One', 'one'), (1, 'Two', 'two'), (1, 'Three', 'three'),
+  (2, 'Four', 'four'), (2, 'Five', 'five');
+INSERT INTO doc_notes (doc_id, tenant_id, body) VALUES (1, 1, 'n1'), (4, 2, 'n4');
 `;
 
 // Every database is closed after the run, so Jest exits without open handles.
@@ -1523,5 +1622,907 @@ describe("M09: multi-column and relation sort", () => {
 		await expect400(
 			svc.findAll({}, { sortBy: [{ column: "views", order: "up" } as any] }),
 		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 3.5.0 features (P2). Same rules: real SQL, one fresh database per test that
+// writes, and statement counts taken from Drizzle's logger.
+// ---------------------------------------------------------------------------
+
+const verbs = (log: string[]) => log.map((q) => q.split(" ")[0]);
+
+// The many-to-many from posts to tags, through post_tags.
+const postTagsRelation = {
+	table: tags,
+	type: "manyToMany" as const,
+	through: postTags,
+	throughLocalKey: "post_id",
+	throughForeignKey: "tag_id",
+	orderBy: [{ column: "name", order: "asc" as const }],
+};
+
+function postsWithTags(db: any, overrides: Partial<SqlCrudConfig> = {}) {
+	return postsService(db, {
+		relations: {
+			author: { table: authors, localKey: "author_id" },
+			tags: postTagsRelation,
+		},
+		...overrides,
+	});
+}
+
+// Docs are scoped by tenant_id from the call context, and versioned.
+function docsService(db: any, overrides: Partial<SqlCrudConfig> = {}) {
+	return new Svc({
+		...base(db, docs),
+		scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+		versionColumn: "version",
+		relations: {
+			notes: { table: docNotes, type: "hasMany", foreignKey: "doc_id" },
+		},
+		...overrides,
+	});
+}
+
+const asTenant = (tenantId: number) => ({ context: { tenantId } });
+
+describe("M10: relations on writes", () => {
+	it("create, update and upsert return the row with relations loaded, one query per relation", async () => {
+		const { db, reset, statements } = await countingDb();
+		const svc = postsWithTags(db);
+		reset();
+		const post = await svc.create(
+			{ title: "New", author_id: 2, status: "draft", views: 0 },
+			{ relations: ["author", "tags"] },
+		);
+		expect(post.author.name).toBe("Bob");
+		expect(post.tags).toEqual([]);
+		expect(verbs(statements())).toEqual(["insert", "select", "select"]);
+
+		reset();
+		const updated = await svc.update(
+			post.id,
+			{ author_id: 3 },
+			{ relations: ["author"] },
+		);
+		expect(updated.author.name).toBe("Cy");
+		expect(verbs(statements())).toEqual(["select", "update", "select"]);
+
+		const upserted = await svc.upsert(
+			{ id: post.id, title: "Up", author_id: 1, status: "draft", views: 1 },
+			{},
+			{ relations: ["author"] },
+		);
+		expect(upserted.title).toBe("Up");
+		expect(upserted.author.name).toBe("Ann");
+	});
+
+	it("massCreate loads the relations of every row in one query, not one per row", async () => {
+		const { db, reset, statements } = await countingDb();
+		const svc = postsWithTags(db);
+		reset();
+		const created = await svc.massCreate(
+			Array.from({ length: 10 }, (_, i) => ({
+				title: `M${i}`,
+				author_id: (i % 3) + 1,
+				status: "draft",
+				views: 0,
+			})),
+			{ relations: ["author"], counts: ["tags"] },
+		);
+		expect(created).toHaveLength(10);
+		expect(created.every((p: any) => p.author?.id === p.author_id)).toBe(true);
+		expect(created.every((p: any) => p._count.tags === 0)).toBe(true);
+		expect(verbs(statements())).toEqual(["insert", "select", "select"]);
+	});
+
+	it("checks the relations against the allowlist before writing anything", async () => {
+		const db = await freshDb();
+		const svc = postsWithTags(db, { loadableRelations: ["author"] });
+		await expect400(
+			svc.create(
+				{ title: "X", author_id: 1, status: "draft", views: 0 },
+				{ relations: ["tags"] },
+			),
+		);
+		expect(await svc.count({ title: "X" })).toBe(0);
+	});
+
+	it("creates has-many children in one INSERT, inside one transaction", async () => {
+		const { db, reset, statements } = await countingDb();
+		const svc = new Svc({
+			...base(db, authors),
+			relations: {
+				posts: { table: posts, type: "hasMany", foreignKey: "author_id" },
+			},
+			writableRelations: ["posts"],
+		});
+		reset();
+		const author = await svc.create(
+			{
+				name: "Dee",
+				email: "dee@x.io",
+				role: "writer",
+				posts: [
+					{ title: "D1", status: "draft", views: 0 },
+					{ title: "D2", status: "draft", views: 0 },
+				],
+			},
+			{ relations: ["posts"] },
+		);
+		expect(author.posts.map((p: any) => p.title).sort()).toEqual(["D1", "D2"]);
+		expect(author.posts.every((p: any) => p.author_id === author.id)).toBe(
+			true,
+		);
+		expect(verbs(statements())).toEqual(["insert", "insert", "select"]);
+	});
+
+	it("creates a belongs-to parent first and links it", async () => {
+		const db = await freshDb();
+		const svc = postsService(db, { writableRelations: ["author"] });
+		const post = await svc.create(
+			{
+				title: "With author",
+				status: "draft",
+				views: 0,
+				author: { name: "Eve", email: "eve@x.io", role: "writer" },
+			},
+			{ relations: ["author"] },
+		);
+		expect(post.author.name).toBe("Eve");
+		expect(post.author_id).toBe(post.author.id);
+	});
+
+	it("links existing many-to-many rows by id and creates new ones", async () => {
+		const db = await freshDb();
+		const svc = postsWithTags(db, { writableRelations: ["tags"] });
+		const post = await svc.create(
+			{
+				title: "Tagged",
+				author_id: 1,
+				status: "draft",
+				views: 0,
+				tags: [2, { name: "fresh" }],
+			},
+			{ relations: ["tags"] },
+		);
+		expect(post.tags.map((t: any) => t.name)).toEqual(["fresh", "tech"]);
+	});
+
+	it("rolls the parent back when a child fails, and answers with the child's error", async () => {
+		const db = await freshDb();
+		const svc = new Svc({
+			...base(db, authors),
+			relations: {
+				posts: { table: posts, type: "hasMany", foreignKey: "author_id" },
+			},
+			writableRelations: ["posts"],
+		});
+		const error = await expect400(
+			svc.create({
+				name: "Bad",
+				email: "bad@x.io",
+				role: "writer",
+				posts: [{ title: "P", status: "nope", views: 0 }],
+			}),
+		);
+		expect(error.message).toContain("does not match its column type");
+		expect(await svc.findOne({ email: "bad@x.io" })).toBeNull();
+	});
+
+	it("leaves relation keys alone unless writableRelations lists them", async () => {
+		const db = await freshDb();
+		const svc = authorsWithPosts(db);
+		const author = await svc.create({
+			name: "Fay",
+			email: "fay@x.io",
+			role: "writer",
+			posts: [{ title: "ignored", status: "draft", views: 0 }],
+		});
+		expect(await postsService(db).count({ author_id: author.id })).toBe(0);
+		const strict = new Svc({
+			...base(db, authors),
+			relations: {
+				posts: { table: posts, type: "hasMany", foreignKey: "author_id" },
+			},
+			writableRelations: [],
+		});
+		await expect400(
+			strict.create({
+				name: "Gus",
+				email: "gus@x.io",
+				role: "writer",
+				posts: [],
+			}),
+		);
+	});
+
+	it("attach, detach and sync are set based and return the row with the relation", async () => {
+		const { db, reset, statements } = await countingDb();
+		const svc = postsWithTags(db);
+		reset();
+		const attached = await svc.attach(2, "tags", [1, 2, "2"]);
+		expect(attached.tags.map((t: any) => t.name)).toEqual(["news", "tech"]);
+		// Guard, targets, existing links, one INSERT for the rest, read back.
+		expect(verbs(statements())).toEqual([
+			"select",
+			"select",
+			"select",
+			"insert",
+			"select",
+			"select",
+		]);
+
+		const synced = await svc.sync(2, "tags", [2]);
+		expect(synced.tags.map((t: any) => t.name)).toEqual(["tech"]);
+		const detached = await svc.detach(1, "tags");
+		expect(detached.tags).toEqual([]);
+		const again = await svc.attach(2, "tags", [2]);
+		expect(again.tags).toHaveLength(1);
+	});
+
+	it("rejects unknown and soft-deleted targets, a missing parent and a non many-to-many", async () => {
+		const db = await freshDb();
+		const svc = postsWithTags(db);
+		const error = await expect400(svc.attach(1, "tags", [3, 99]));
+		expect(error.getResponse().errors.map((e: any) => e.id)).toEqual([3, 99]);
+		expect((await caught(svc.attach(999, "tags", [1]))).getStatus()).toBe(404);
+		await expect400(svc.attach(1, "author", [1]));
+		await expect400(
+			postsWithTags(db, { writableRelations: [] }).attach(1, "tags", [1]),
+		);
+	});
+});
+
+describe("M13: tenant and ownership scoping", () => {
+	const cross = 4; // a doc of tenant 2
+	const t1 = asTenant(1);
+
+	it("reads only the caller's rows, in every read path", async () => {
+		const svc = docsService(await sharedDb());
+		expect(await svc.find(cross, t1)).toBeNull();
+		expect(await svc.findOne({ slug: "four" }, t1)).toBeNull();
+		expect(await svc.exists(cross, t1)).toBe(false);
+		expect((await svc.findAll({}, {}, t1)).total).toBe(3);
+		expect(await svc.count({}, t1)).toBe(3);
+		const page = await svc.findByCursor({}, { limit: 10, count: true }, t1);
+		expect(page.data.map((d: any) => d.tenant_id)).toEqual([1, 1, 1]);
+		expect(page.total).toBe(3);
+		expect(await svc.countBy("tenant_id", {}, t1)).toEqual([
+			{ value: 1, count: 3 },
+		]);
+		const fts = await svc.fullTextSearch("Four", ["title"], {}, t1);
+		expect(fts.total).toBe(0);
+		expect((await svc.find(cross, asTenant(2)))?.title).toBe("Four");
+	});
+
+	it("answers a cross-tenant id with a 404 on every write", async () => {
+		const db = await freshDb();
+		const svc = docsService(db);
+		const status = async (promise: Promise<unknown>) =>
+			(await caught(promise)).getStatus();
+		const bulkStatuses = async (promise: Promise<unknown>) =>
+			(await expect400(promise)).getResponse().errors.map((e: any) => e.status);
+
+		expect(await status(svc.update(cross, { title: "x" }, t1))).toBe(404);
+		expect(await status(svc.softDelete(cross, t1))).toBe(404);
+		expect(await status(svc.restore(cross, t1))).toBe(404);
+		expect(await status(svc.delete(cross, t1))).toBe(404);
+		expect(await status(svc.forceDelete(cross, t1))).toBe(404);
+		expect(
+			await status(
+				svc.upsert(
+					{ id: cross, title: "x", slug: "four", tenant_id: 1 },
+					{},
+					t1,
+				),
+			),
+		).toBe(404);
+		expect(
+			await bulkStatuses(svc.massUpdate([1, cross], { title: "x" }, t1)),
+		).toEqual([404]);
+		expect(await bulkStatuses(svc.massSoftDelete([1, cross], t1))).toEqual([
+			404,
+		]);
+		expect(await bulkStatuses(svc.massRestore([1, cross], t1))).toEqual([404]);
+		expect(await bulkStatuses(svc.massDelete([1, cross], t1))).toEqual([404]);
+		expect(await bulkStatuses(svc.massForceDelete([1, cross], t1))).toEqual([
+			404,
+		]);
+		expect(
+			await bulkStatuses(
+				svc.massUpsert(
+					[
+						{ id: 1, title: "ok", slug: "one" },
+						{ id: cross, title: "x", slug: "four" },
+					],
+					{},
+					t1,
+				),
+			),
+		).toEqual([404]);
+
+		// Nothing of tenant 2 moved, and tenant 1's rows were rolled back.
+		const four = await svc.find(cross, asTenant(2));
+		expect(four).toMatchObject({ title: "Four", deleted_at: null, version: 1 });
+		expect((await svc.find(1, t1))?.title).toBe("One");
+	});
+
+	it("sets the scope on create and keeps it out of an update", async () => {
+		const db = await freshDb();
+		const svc = docsService(db, { writableRelations: ["notes"] });
+		const doc = await svc.create(
+			{
+				title: "Mine",
+				slug: "mine",
+				tenant_id: 2,
+				notes: [{ body: "child" }],
+			},
+			{ ...t1, relations: ["notes"] },
+		);
+		expect(doc.tenant_id).toBe(1);
+		expect(doc.notes[0].tenant_id).toBe(1);
+		const moved = await svc.update(
+			doc.id,
+			{ tenant_id: 2, title: "Still" },
+			t1,
+		);
+		expect(moved).toMatchObject({ tenant_id: 1, title: "Still" });
+		await expect400(svc.update(doc.id, { tenant_id: 2 }, t1));
+	});
+
+	it("reads the context from CrudContext.run, fails closed without one, and can be skipped", async () => {
+		const svc = docsService(await sharedDb());
+		expect(await CrudContext.run({ tenantId: 2 }, () => svc.count({}))).toBe(2);
+		const error = await caught(svc.count({}));
+		expect(error).toBeInstanceOf(MissingScopeException);
+		expect(error.getStatus()).toBe(403);
+		expect(await svc.count({}, { skipScope: true })).toBe(5);
+		const admin = docsService(await sharedDb(), {
+			scope: (ctx) => (ctx.admin ? null : { tenant_id: ctx.tenantId }),
+		});
+		expect(await admin.count({}, { context: { admin: true } })).toBe(5);
+	});
+
+	it("puts relation counts on a scoped list", async () => {
+		const svc = docsService(await sharedDb());
+		const res = await svc.findAll({}, {}, { ...t1, counts: ["notes"] });
+		expect(res.data.map((d: any) => d._count.notes)).toEqual([1, 0, 0]);
+	});
+
+	it("answers attach, detach and sync on another owner's row with a 404", async () => {
+		const db = await freshDb();
+		// Posts owned by the author in the context: post 2 belongs to Bob.
+		const svc = postsWithTags(db, {
+			scope: (ctx) => ({ author_id: ctx.authorId }),
+		});
+		const ann = { context: { authorId: 1 } };
+		for (const call of [
+			svc.attach(2, "tags", [1], ann),
+			svc.detach(2, "tags", undefined, ann),
+			svc.sync(2, "tags", [], ann),
+		]) {
+			expect((await caught(call)).getStatus()).toBe(404);
+		}
+		expect(
+			(await svc.find(2, { context: { authorId: 2 }, relations: ["tags"] }))
+				?.tags,
+		).toHaveLength(1);
+		expect((await svc.attach(1, "tags", [1], ann)).tags).toHaveLength(2);
+	});
+});
+
+describe("M14: global hooks and events", () => {
+	function recorder() {
+		const events: CrudEvent[] = [];
+		const bus = new CrudEventBus();
+		bus.subscribe({
+			beforeWrite: (e) => {
+				events.push(e);
+			},
+			afterWrite: (e) => {
+				events.push(e);
+			},
+		});
+		const brief = () =>
+			events.map((e) => `${e.phase}:${e.operation}${e.bulk ? ":bulk" : ""}`);
+		return { bus, events, brief };
+	}
+
+	it("fires once per call for every bulk write, upsert included", async () => {
+		const db = await freshDb();
+		const { bus, events, brief } = recorder();
+		const svc = postsService(db, { events: bus });
+		await svc.massCreate([
+			{ title: "a", author_id: 1, status: "draft", views: 0 },
+			{ title: "b", author_id: 1, status: "draft", views: 0 },
+		]);
+		await svc.massUpdate([1, 2, 3], { title: "bulk" });
+		await svc.massUpsert([
+			{ id: 1, title: "u1", author_id: 1, status: "draft", views: 0 },
+		]);
+		await svc.massSoftDelete([1, 2]);
+		await svc.massRestore([1, 2]);
+		await svc.massDelete([31, 32]);
+		expect(brief()).toEqual([
+			"before:create:bulk",
+			"after:create:bulk",
+			"before:update:bulk",
+			"after:update:bulk",
+			"before:upsert:bulk",
+			"after:upsert:bulk",
+			"before:softDelete:bulk",
+			"after:softDelete:bulk",
+			"before:restore:bulk",
+			"after:restore:bulk",
+			"before:delete:bulk",
+			"after:delete:bulk",
+		]);
+		const update = events.find(
+			(e) => e.phase === "after" && e.operation === "update",
+		)!;
+		expect(update.ids).toEqual([1, 2, 3]);
+		expect(update.rows.map((r: any) => r.title)).toEqual([
+			"bulk",
+			"bulk",
+			"bulk",
+		]);
+		expect(update.entity).toBe("posts");
+		expect(update.transaction).toBeDefined();
+	});
+
+	it("fires for single writes, keeps the per-service hooks, and can be skipped", async () => {
+		const db = await freshDb();
+		const { bus, brief } = recorder();
+		const seen: string[] = [];
+		class Hooked extends Svc {
+			protected override async afterCreate(): Promise<void> {
+				seen.push("afterCreate");
+			}
+		}
+		const svc = new Hooked({
+			...base(db, posts),
+			events: bus,
+			relations: { tags: postTagsRelation },
+		});
+		const post = await svc.create({
+			title: "s",
+			author_id: 1,
+			status: "draft",
+			views: 0,
+		});
+		await svc.update(post.id, { title: "t" });
+		await svc.upsert({
+			id: post.id,
+			title: "u",
+			author_id: 1,
+			status: "draft",
+			views: 0,
+		});
+		await svc.softDelete(post.id);
+		await svc.restore(post.id);
+		await svc.attach(post.id, "tags", [1]);
+		await svc.delete(post.id, { skipEvents: true });
+		expect(seen).toEqual(["afterCreate"]);
+		expect(brief()).toEqual([
+			"before:create",
+			"after:create",
+			"before:update",
+			"after:update",
+			"before:upsert",
+			"after:upsert",
+			"before:softDelete",
+			"after:softDelete",
+			"before:restore",
+			"after:restore",
+			"before:attach",
+			"after:attach",
+		]);
+	});
+
+	it("a before listener stops the write; an after listener that throws rolls a bulk call back", async () => {
+		const db = await freshDb();
+		const bus = new CrudEventBus();
+		const stop = bus.subscribe({
+			entities: ["posts"],
+			beforeDelete: () => {
+				throw new BadRequestException("frozen");
+			},
+		});
+		const svc = postsService(db, { events: bus });
+		await expect400(svc.delete(30));
+		expect(await svc.exists(30)).toBe(true);
+		stop();
+		bus.subscribe({
+			afterUpdate: () => {
+				throw new Error("audit down");
+			},
+		});
+		await expect(svc.massUpdate([1, 2], { title: "lost" })).rejects.toThrow(
+			"audit down",
+		);
+		expect((await svc.find(1))?.title).toBe("Post 1");
+		// A subscriber for another entity is not called.
+		const other = new CrudEventBus();
+		const calls: string[] = [];
+		other.subscribe({
+			entities: ["authors"],
+			afterWrite: () => void calls.push("x"),
+		});
+		await postsService(db, { events: other }).update(1, { title: "y" });
+		expect(calls).toEqual([]);
+	});
+
+	it("enableGlobalHooks wires the module's bus into every service", async () => {
+		const db = await freshDb();
+		const events: string[] = [];
+		const build = async (enableGlobalHooks: boolean) => {
+			const moduleRef = await Test.createTestingModule({
+				imports: [
+					DrizzleCrudModule.forRoot({
+						dialect: "postgresql",
+						db,
+						hooks: {
+							enableGlobalHooks,
+							subscribers: [
+								{
+									afterWrite: (e) =>
+										void events.push(`${e.entity}:${e.operation}`),
+								},
+							],
+						},
+					}),
+					DrizzleCrudModule.forFeature([
+						{
+							service: Svc as any,
+							table: notes,
+							config: { softDelete: { enabled: false }, timestamps: undefined },
+						},
+					]),
+				],
+			}).compile();
+			return moduleRef;
+		};
+		const on = await build(true);
+		await on.get<Svc>(Svc as any).create({ body: "evented" });
+		expect(events).toEqual(["notes:create"]);
+		expect(on.get(CrudEventBus)).toBeInstanceOf(CrudEventBus);
+
+		const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+		const off = await build(false);
+		await off.get<Svc>(Svc as any).create({ body: "quiet" });
+		expect(events).toEqual(["notes:create"]);
+		expect(warn).toHaveBeenCalled();
+		warn.mockRestore();
+	});
+});
+
+describe("M15: optimistic locking", () => {
+	const t1 = asTenant(1);
+
+	it("starts at 1, goes up on every write, and a stale version is a 409", async () => {
+		const db = await freshDb();
+		const svc = docsService(db);
+		const doc = await svc.create({ title: "V", slug: "v", version: 7 }, t1);
+		expect(doc.version).toBe(1);
+
+		const v2 = await svc.update(doc.id, { title: "V2", version: 1 }, t1);
+		expect(v2.version).toBe(2);
+		const stale = await caught(
+			svc.update(doc.id, { title: "late", version: 1 }, t1),
+		);
+		expect(stale).toBeInstanceOf(StaleVersionException);
+		expect(stale.getStatus()).toBe(409);
+		// Without a version the write is not checked, but still counts.
+		expect((await svc.update(doc.id, { title: "V3" }, t1)).version).toBe(3);
+
+		expect(
+			(
+				await caught(svc.softDelete(doc.id, { ...t1, expectedVersion: 2 }))
+			).getStatus(),
+		).toBe(409);
+		await svc.softDelete(doc.id, { ...t1, expectedVersion: 3 });
+		const restored = await svc.restore(doc.id, { ...t1, expectedVersion: 4 });
+		expect(restored.version).toBe(5);
+		expect(
+			(
+				await caught(svc.delete(doc.id, { ...t1, expectedVersion: 4 }))
+			).getStatus(),
+		).toBe(409);
+		expect(await svc.delete(doc.id, { ...t1, expectedVersion: 5 })).toBe(true);
+		await expect400(svc.update(1, { title: "x", version: "abc" }, t1));
+	});
+
+	it("bumps the version on upsert and on every bulk write", async () => {
+		const db = await freshDb();
+		const svc = docsService(db);
+		const up = await svc.upsert({ id: 1, title: "U", slug: "one" }, {}, t1);
+		expect(up.version).toBe(2);
+		const updated = await svc.massUpdate([1, 2], { title: "B" }, t1);
+		expect(updated.map((d: any) => d.version)).toEqual([3, 2]);
+		await svc.massSoftDelete([1, 2], t1);
+		const back = await svc.massRestore([1, 2], t1);
+		expect(back.map((d: any) => d.version)).toEqual([5, 4]);
+	});
+
+	it("checks expectedVersions per id in a bulk write and rolls the batch back", async () => {
+		const db = await freshDb();
+		const svc = docsService(db);
+		const error = await expect400(
+			svc.massUpdate(
+				[1, 2, 3],
+				{ title: "B" },
+				{
+					...t1,
+					expectedVersions: { "1": 1, "2": 9 },
+				},
+			),
+		);
+		expect(error.getResponse().errors).toEqual([
+			{ id: 2, status: 409, message: expect.any(String) },
+		]);
+		expect((await svc.find(1, t1))?.version).toBe(1);
+		const ok = await svc.massDelete([1, 2], {
+			...t1,
+			expectedVersions: { "1": 1, "2": 1 },
+		});
+		expect(ok).toBe(true);
+		expect(await svc.count({}, t1)).toBe(1);
+	});
+});
+
+describe("M16: aggregates", () => {
+	it("counts has-many and many-to-many relations in one grouped query each", async () => {
+		const { db, reset, statements } = await countingDb();
+		const authorsSvc = authorsWithPosts(db);
+		reset();
+		const res = await authorsSvc.findAll({}, {}, { counts: ["posts"] });
+		expect(res.data.map((a: any) => a._count.posts)).toEqual([10, 10, 10]);
+		// data + count + one GROUP BY, whatever the number of rows.
+		expect(statements()).toHaveLength(3);
+
+		const svc = postsWithTags(db);
+		const page = await svc.findAll(
+			{ id: { in: [1, 2, 3, 4] } },
+			{ sortBy: "id", sortOrder: "asc" },
+			{ counts: ["tags"], select: ["title"] },
+		);
+		// Post 3 only has the soft-deleted tag, which is not counted.
+		expect(page.data.map((p: any) => p._count.tags)).toEqual([2, 1, 0, 0]);
+		expect(
+			(await svc.find(1, { counts: { tags: { name: "news" } } }))._count,
+		).toEqual({
+			tags: 1,
+		});
+	});
+
+	it("narrows a count with a filter and works on cursor pages", async () => {
+		const svc = authorsWithPosts(await sharedDb());
+		const res = await svc.findByCursor(
+			{},
+			{ limit: 2 },
+			{ counts: { posts: { status: "published" } } },
+		);
+		expect(res.data.map((a: any) => a._count.posts)).toEqual([5, 5]);
+	});
+
+	it("rejects a belongs-to, an unknown relation and one outside loadableRelations", async () => {
+		const db = await sharedDb();
+		await expect400(postsService(db).findAll({}, {}, { counts: ["author"] }));
+		await expect400(postsService(db).findAll({}, {}, { counts: ["nope"] }));
+		await expect400(
+			postsWithTags(db, { loadableRelations: ["author"] }).findAll(
+				{},
+				{},
+				{ counts: ["tags"] },
+			),
+		);
+	});
+
+	it("countBy groups by a column or a belongs-to column, after filters and soft delete", async () => {
+		const db = await freshDb();
+		const svc = postsService(db);
+		await svc.softDelete(30);
+		expect(await svc.countBy("status")).toEqual([
+			{ value: "published", count: 15 },
+			{ value: "draft", count: 14 },
+		]);
+		expect(await svc.countBy("author.name", { status: "published" })).toEqual([
+			{ value: "Ann", count: 5 },
+			{ value: "Bob", count: 5 },
+			{ value: "Cy", count: 5 },
+		]);
+		await expect400(svc.countBy("nope"));
+		await expect400(
+			postsService(db, { filterableColumns: ["title"] }).countBy("status"),
+		);
+	});
+});
+
+describe("M17: skipping the count query", () => {
+	it("withCount: false runs one query, reports total: null and hasMore", async () => {
+		const { db, reset, statements } = await countingDb();
+		const svc = postsService(db);
+		reset();
+		const first = await svc.findAll({}, { limit: 20, withCount: false });
+		expect(statements()).toHaveLength(1);
+		expect(first.total).toBeNull();
+		expect(first.hasMore).toBe(true);
+		expect(first.data).toHaveLength(20);
+		const last = await svc.findAll(
+			{},
+			{ page: 2, limit: 20, withCount: false },
+		);
+		expect(last.data).toHaveLength(10);
+		expect(last.hasMore).toBe(false);
+		const counted = await svc.findAll({}, { limit: 20 });
+		expect(counted.total).toBe(30);
+		expect(counted).not.toHaveProperty("hasMore");
+	});
+
+	it("the parser reads ?withCount=false", async () => {
+		const svc = postsService(await sharedDb());
+		const q = svc.parseQuery({ withCount: "false", limit: "5" });
+		expect(q.pagination.withCount).toBe(false);
+		const res = await svc.findAll(q.filters, q.pagination, q.options);
+		expect(res.total).toBeNull();
+		expect(res.hasMore).toBe(true);
+	});
+});
+
+describe("M18: deeper relation filters", () => {
+	const citiesSvc = (db: any, overrides: Partial<SqlCrudConfig> = {}) =>
+		new Svc({
+			...base(db, geoCities),
+			softDelete: { enabled: false, column: "deleted_at" },
+			timestamps: undefined,
+			relations: {
+				state: {
+					table: geoStates,
+					localKey: "state_id",
+					relations: {
+						country: { table: geoCountries, localKey: "country_id" },
+						cities: {
+							table: geoCities,
+							type: "hasMany",
+							foreignKey: "state_id",
+						},
+					},
+				},
+			},
+			...overrides,
+		});
+
+	it("filters through a belongs-to path, with EXISTS below the first join", async () => {
+		const svc = citiesSvc(await sharedDb());
+		const res = await svc.findAll({ state: { country: { code: "IN" } } });
+		expect(res.data.map((c: any) => c.name).sort()).toEqual([
+			"Bengaluru",
+			"Kochi",
+			"Mysuru",
+		]);
+		expect(res.total).toBe(3);
+		expect(await svc.count({ state: { country: { code: "NP" } } })).toBe(1);
+		// A collection under a belongs-to: cities whose state has a city named Mysuru.
+		expect(
+			await svc.count({ state: { cities: { some: { name: "Mysuru" } } } }),
+		).toBe(2);
+		// And inside an OR / NOT group.
+		expect(
+			await svc.count({
+				or: [{ state: { country: { code: "NP" } } }, { name: "Kochi" }],
+			}),
+		).toBe(2);
+		expect(
+			await svc.count({ not: { state: { country: { code: "IN" } } } }),
+		).toBe(1);
+	});
+
+	it("some, none and every on a has-many, without multiplying rows", async () => {
+		const db = await freshDb();
+		const authorsSvc = authorsWithPosts(db);
+		await postsService(db).massUpdate([1, 4, 7, 10, 13], { views: 99 });
+		// Ann (1) has posts 1,4,...,28. Make every Ann post published for `every`.
+		await postsService(db).massUpdate(
+			Array.from({ length: 10 }, (_, i) => 1 + i * 3),
+			{ status: "published" },
+		);
+		const names = async (filter: any) =>
+			(await authorsSvc.findAll(filter)).data.map((a: any) => a.name);
+
+		expect(await names({ posts: { some: { views: 99 } } })).toEqual(["Ann"]);
+		expect(await names({ posts: { none: { views: 99 } } })).toEqual([
+			"Bob",
+			"Cy",
+		]);
+		expect(await names({ posts: { every: { status: "published" } } })).toEqual([
+			"Ann",
+		]);
+		expect((await authorsSvc.findAll({ posts: { some: {} } })).total).toBe(3);
+		expect(await authorsSvc.count({ posts: { none: {} } })).toBe(0);
+		// Combined and grouped.
+		expect(
+			await names({
+				posts: { some: { status: "draft" }, none: { views: 99 } },
+			}),
+		).toEqual(["Bob", "Cy"]);
+		expect(
+			await authorsSvc.count({
+				or: [{ posts: { every: { status: "published" } } }, { name: "Cy" }],
+			}),
+		).toBe(2);
+		expect(
+			await authorsSvc.count({ not: { posts: { none: { views: 99 } } } }),
+		).toBe(1);
+	});
+
+	it("every is true for a parent with no rows, and a soft-deleted child does not count", async () => {
+		const db = await freshDb();
+		const authorsSvc = authorsWithPosts(db);
+		await authorsSvc.create({ name: "New", email: "new@x.io", role: "writer" });
+		expect(
+			(
+				await authorsSvc.findAll({ posts: { every: { views: 12345 } } })
+			).data.map((a: any) => a.name),
+		).toEqual(["New"]);
+		// Soft-delete every draft of Bob: his remaining posts are all published.
+		const bobDrafts = (
+			await postsService(db).findAll(
+				{ author_id: 2, status: "draft" },
+				{ limit: 100 },
+			)
+		).data.map((p: any) => p.id);
+		await postsService(db).massSoftDelete(bobDrafts);
+		expect(
+			(
+				await authorsSvc.findAll({ posts: { every: { status: "published" } } })
+			).data.map((a: any) => a.name),
+		).toEqual(["Bob", "New"]);
+	});
+
+	it("none and every on a many-to-many", async () => {
+		const svc = postsWithTags(await sharedDb());
+		expect(
+			await svc.count({ id: { lte: 3 }, tags: { none: { name: "tech" } } }),
+		).toBe(2);
+		// Post 3's only tag is soft-deleted, so it has no live tags: `every`
+		// holds for it vacuously.
+		expect(
+			ids(
+				await svc.findAll(
+					{ id: { lte: 3 }, tags: { every: { name: "news" } } },
+					{ sortBy: "id", sortOrder: "asc" },
+				),
+			),
+		).toEqual([2, 3]);
+	});
+
+	it("checks paths against filterableColumns and parses them from a query string", async () => {
+		const db = await sharedDb();
+		const strict = citiesSvc(db, {
+			filterableColumns: ["name", "state.country.code"],
+		});
+		expect(await strict.count({ state: { country: { code: "IN" } } })).toBe(3);
+		await expect400(strict.count({ state: { name: "Kerala" } }));
+		const q = strict.parseQuery({ "state.country.code": "NP" });
+		expect(q.filters).toEqual({ state: { country: { code: "NP" } } });
+		expect(await strict.count(q.filters)).toBe(1);
+		expect(() => strict.parseQuery({ "state[name]": "Kerala" })).toThrow(
+			BadRequestException,
+		);
+
+		const authorsSvc = authorsWithPosts(db);
+		const parsed = authorsSvc.parseQuery({
+			"posts[none][status]": "draft",
+			"posts[every][views][gte]": "0",
+		});
+		expect(parsed.filters).toEqual({
+			posts: { none: { status: "draft" }, every: { views: { gte: 0 } } },
+		});
+		expect(await authorsSvc.count(parsed.filters)).toBe(0);
+		expect(authorsSvc.parseQuery({ "posts[some]": "" }).filters).toEqual({
+			posts: { some: {} },
+		});
 	});
 });

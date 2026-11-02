@@ -1,6 +1,6 @@
 ---
 title: Pagination & sorting
-description: "The findAll() return shape, default sort, and sortBy: one column, several columns, or a belongs-to relation column such as region.name."
+description: "The findAll() return shape, withCount: false to skip COUNT(*), default sort, and sortBy: one column, several columns, or a belongs-to relation column such as region.name."
 ---
 
 `findAll(filters?, pagination?, options?)` returns a paginated result envelope, **not** a bare array.
@@ -43,6 +43,20 @@ const { data, total, page, limit } = await service.findAll(
 | `limit` | `number` | `defaults.pagination.defaultLimit` | Capped at `defaults.pagination.maxLimit` (default `100`). |
 | `sortBy` | `string \| Array<string \| SortColumn>` | `defaultSort` (entity) | One column, or a list. See below. |
 | `sortOrder` | `'asc' \| 'desc'` | `'desc'` | Direction for a single `sortBy` string. |
+| `withCount` | `boolean` | `true` | `false` skips the count query. See below. |
+
+## How do I skip the count query?
+
+Pass `withCount: false`. `findAll` then runs one query instead of two, `total` is `null`, and `hasMore` says whether another page follows:
+
+```ts
+const page = await posts.findAll({}, { page: 3, limit: 20, withCount: false });
+// { data: [...20 rows], total: null, page: 3, limit: 20, hasMore: true }
+```
+
+`hasMore` comes from fetching one row more than the page and dropping it, so it costs nothing extra. `COUNT(*)` is the expensive half of a list on a big table, and infinite scroll or a "next" button does not need it. From a query string, `?withCount=false` sets it.
+
+The return type follows the option: with `withCount: false` written in the call, `total` is typed `null` and `hasMore` is a `boolean`; with nothing (or `true`), `total` is a `number`. When the value is only known at run time, as with the output of `parseQuery`, `total` is typed `number | null`. With the count on, the envelope has no `hasMore` key, the same as before.
 
 ## Sorting
 

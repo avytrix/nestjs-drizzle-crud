@@ -64,3 +64,14 @@ export const countryTags = pgTable("country_tags", {
 	country_id: integer("country_id").notNull(),
 	tag_id: uuid("tag_id").notNull(),
 });
+
+// Projects are scoped by tenant (projects.module.ts), versioned for optimistic
+// locking and soft-deleted. They are served by a createCrudController.
+export const projects = pgTable("projects", {
+	id: serial("id").primaryKey(),
+	tenant_id: integer("tenant_id").notNull(),
+	name: varchar("name").notNull(),
+	version: integer("version").notNull().default(1),
+	...timestamps,
+	deleted_at: timestamp("deleted_at", { withTimezone: true }),
+});

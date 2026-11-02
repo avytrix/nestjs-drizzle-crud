@@ -30,13 +30,16 @@ The four generics correspond to:
 | --- | --- | --- |
 | `find(id, options?)` | `Promise<T \| null>` | By primary key. Skips soft-deleted rows. |
 | `findOne(where, options?)` | `Promise<T \| null>` | `where` is a `Partial<T>`: exact, case-sensitive equality, `null` for `IS NULL`, or an operator object. `undefined` values are skipped; if nothing is left, or a key is not a column, it throws a 400 rather than returning an arbitrary row. |
-| `findAll(filters?, pagination?, options?)` | `Promise<{ data: T[]; total: number; page: number; limit: number }>` | Supports `options.search`, `and` / `or` / `not` groups and multi-column or relation `sortBy`. An unknown filter key is a 400. Always ends `ORDER BY` with the primary key. See [Filtering](/docs/filtering) and [Pagination](/docs/pagination-sorting). |
+| `findAll(filters?, pagination?, options?)` | `Promise<CrudPage<T>>`: `{ data, total, page, limit }` | `withCount: false` skips the count: `total` is `null` and `hasMore` is set ([Pagination](/docs/pagination-sorting#how-do-i-skip-the-count-query)). Supports `options.search`, `and` / `or` / `not` groups and multi-column or relation `sortBy`. An unknown filter key is a 400. Always ends `ORDER BY` with the primary key. See [Filtering](/docs/filtering) and [Pagination](/docs/pagination-sorting). |
 | `findByCursor(filters?, pagination?, options?)` | `Promise<CursorPage<T>>` | Keyset pagination: `{ data, limit, nextCursor, total? }`. `total` only with `count: true`. See [Cursor pagination](/docs/cursor-pagination). |
 | `exists(id, options?)` | `Promise<boolean>` | Cheaper than `find` when you only need a yes/no. |
 | `count(filters?, options?)` | `Promise<number>` | Total rows matching the filter and `options.search`, ignoring pagination. |
+| `countBy(column, filters?, options?)` | `Promise<CountByRow[]>` | `[{ value, count }]` per value of a column or a belongs-to `relation.column`, largest first. One `GROUP BY`. See [Aggregates](/docs/aggregates). |
+| `parseId(raw)` | `Promise<unknown>` | Parses a route id by the primary key column: `ParseIntPipe` for an integer, `ParseUUIDPipe` for a uuid, `BigInt` for a bigint, the string otherwise. Bad input is a 400. |
+| `idKind()` | `'int' \| 'bigint' \| 'uuid' \| 'string'` | What the primary key column holds. |
 | `parseQuery(query, options?)` | `ParsedCrudQuery` | Turns an HTTP query object into `{ filters, pagination, options, ... }` for this entity. See [Parse query strings](/docs/query-parsing). |
 
-Every read takes `withDeleted` / `onlyDeleted` to include or only return soft-deleted rows. See [Soft delete](/docs/soft-delete#how-do-i-list-soft-deleted-rows).
+Every read takes `withDeleted` / `onlyDeleted` to include or only return soft-deleted rows. See [Soft delete](/docs/soft-delete#how-do-i-list-soft-deleted-rows). Every read also takes `counts` for `_count` on each row ([Aggregates](/docs/aggregates)), and on an entity with a [`scope`](/docs/multi-tenancy) every read only sees the caller's rows.
 
 ### `find` signature
 
@@ -104,6 +107,11 @@ const total = s.count(
 | `restore(id, options?)` | `Promise<T>` | Clears `deleted_at`. Throws `EntityNotFoundException` if missing. |
 | `forceDelete(id, options?)` | `Promise<boolean>` | Hard delete, soft-deleted or not. |
 | `upsert(data, upsert?, options?)` | `Promise<T>` | `ON CONFLICT DO UPDATE` (Postgres) or `ON DUPLICATE KEY UPDATE` (MySQL). `upsert` is `{ conflictTarget?, update? }`. See [Upsert](/docs/upsert). |
+| `attach(id, relation, relatedIds, options?)` | `Promise<T>` | Links many-to-many rows through the join table; returns the row with the relation loaded. See [Relations on writes](/docs/relations-on-writes). |
+| `detach(id, relation, relatedIds?, options?)` | `Promise<T>` | Unlinks the ids, or every link when `relatedIds` is left out. |
+| `sync(id, relation, relatedIds, options?)` | `Promise<T>` | Makes the links exactly `relatedIds`. |
+
+Writes take `options.relations` and `options.counts` and return the rows with them loaded. With [`versionColumn`](/docs/optimistic-locking), `update`, `softDelete`, `restore` and `delete` take `expectedVersion` (or the version in the body) and answer a stale one with a 409. With [global hooks](/docs/events) on, every write raises a before and an after event.
 
 `create`, `update` and `upsert` apply [`writableColumns`](/docs/allowlists#which-columns-can-a-body-write-by-default). Without it, `update` ignores the primary key and `createdAt`, and both ignore the soft delete column.
 
@@ -181,6 +189,18 @@ interface SqlOperationOptions {
   skipAllowlists?: boolean;
   /** Mass writes: one statement ('set', default) or one call per item ('perItem'). */
   bulkMode?: 'set' | 'perItem';
+  /** Relation counts under `_count`: ['posts'] or { posts: { status: 'draft' } }. */
+  counts?: string[] | Record<string, true | object>;
+  /** The context a function `scope` reads. Defaults to CrudContext.current(). */
+  context?: Record<string, unknown>;
+  /** Run this trusted call without the entity's scope. */
+  skipScope?: boolean;
+  /** Do not raise module-level events for this call. */
+  skipEvents?: boolean;
+  /** Optimistic locking: the version the caller last read. */
+  expectedVersion?: number;
+  /** Optimistic locking for mass writes, keyed by id as a string. */
+  expectedVersions?: Record<string, number>;
 }
 ```
 

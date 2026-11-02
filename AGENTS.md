@@ -20,6 +20,10 @@ Node >= 20, pnpm 10, TypeScript 7 (except `apps/docs`, which pins 5.9). Lint and
 | New public type or config option | `src/core/interfaces/*.ts` or `src/core/types/sql.types.ts`, then **re-export from `src/index.ts`** |
 | New exception | `src/exceptions/crud.exceptions.ts`, extending the NestJS `HttpException` subclass that carries the right status |
 | Module wiring, defaults, per-entity config merge | `src/modules/drizzle-crud.module.ts` |
+| Generated CRUD routes (`createCrudController`) | `src/controller/crud-controller.factory.ts` |
+| OpenAPI decorators (`ApiCrudQuery`, `ApiCrudList`) | `src/openapi/api-crud.decorators.ts`, requiring `@nestjs/swagger` lazily |
+| Module-level write events (`CrudEventBus`) | `src/core/events/crud-event-bus.ts`, wired in the module when `hooks.enableGlobalHooks` is on |
+| Per-request context for tenant scopes (`CrudContext`) | `src/core/context/crud-context.ts` (Node `AsyncLocalStorage`) |
 | Driver or connection lifecycle | `src/modules/drizzle-connection.ts` |
 | Helper shipped to consumers for their tests | `src/test-utils/` (exported from `src/index.ts`) |
 | MCP server tools, protocol handling, doc sources | `src/mcp/server.ts` (zero deps, stdio JSON-RPC; the `nestjs-drizzle-crud-mcp` bin) |
@@ -61,6 +65,9 @@ Other invariants:
 - **Eager loading is never per row.** `loadRelations` costs one query per relation per level for the whole result set, whatever the row count, and siblings run concurrently. A new read path that loops a query over rows is the N+1 bug this exists to prevent.
 - **A narrowed projection still carries its keys.** `withRequiredKeys` and `keysForChildren` add back the parent key, the child foreign key and any key a nested level needs. Drop one and the grouping silently produces empty collections.
 - **Soft delete is a predicate, not a mode.** Every read appends `isNull(deleted_at)` when it is enabled. A new read path that forgets it will happily return deleted rows.
+- **The tenant scope rides on the same predicate.** Reads, counts and existence checks take their WHERE from `rowScope(options)` (tenant scope plus soft delete), and every UPDATE or DELETE takes it from `writeWhere(ids, options)` (primary key, tenant scope, expected version). A new read or write path builds its WHERE from these two, never from `softDeleteScope` or a bare `eq(pk, id)`, or it leaks across tenants. Inserts go through `prepareCreate`, which writes the scope onto the row.
+- **Events fire once per call.** A mass write raises one before and one after event with every id, from inside its transaction. Do not emit per item from a set statement.
+- **Relation filters below the first belongs-to are subqueries.** A path (`state.country.code`) is `EXISTS` on an aliased table, and `none` / `every` are `NOT EXISTS`. Only a top-level belongs-to may be joined.
 - **Errors map to HTTP by construction.** The exceptions extend `NotFoundException`, `ConflictException` and `BadRequestException`, so Nest's default filter returns 404, 409 and 400 without a custom filter. Driver error codes are translated at the service boundary. Never let a raw `DrizzleQueryError` reach the client as a 500 when it is caused by bad input.
 
 ## Hard rules
@@ -68,7 +75,7 @@ Other invariants:
 1. **Public API changes go through `src/index.ts`.** Anything exported is a contract; removing or renaming it is a major version.
 2. **Strict TypeScript.** The `any` in the config plumbing is deliberate because Drizzle table types are structural, but new code takes typed parameters and returns typed results. Do not spread `any` outward into the public surface.
 3. **No new runtime dependency.** The package has zero dependencies and only peers (`@nestjs/common`, `@nestjs/core`, `drizzle-orm`, `reflect-metadata`, optional `postgres`). Adding one is a breaking decision for every consumer, so solve it with what is there.
-4. **Peer imports of optional drivers stay dynamic.** `postgres` and `drizzle-orm/postgres-js` are imported inside `DrizzleConnection.init` with `await import(...)` so a consumer who passes their own `db` never needs them installed. Keep it that way.
+4. **Peer imports of optional drivers stay dynamic.** `postgres` and `drizzle-orm/postgres-js` are imported inside `DrizzleConnection.init` with `await import(...)` so a consumer who passes their own `db` never needs them installed. `@nestjs/swagger` is required inside `ApiCrudQuery` / `ApiCrudList` the first time one runs. Keep it that way.
 5. **One query per operation where the SQL allows it.** Data and count run as a single `Promise.all`. Do not add a per row lookup, and never loop a query over an array of ids when `inArray` covers it.
 6. **Bulk operations run in a transaction** and report per item failures through `BulkOperationException`. A partial write that silently succeeds is a bug.
 7. **Type checking is a separate gate.** Tests run through `@swc/jest`, which only strips types, so a type error will not fail the test run. `pnpm typecheck` is the check that catches it, and it is not optional.

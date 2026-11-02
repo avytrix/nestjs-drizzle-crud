@@ -4,7 +4,7 @@ export const siteConfig = {
 	name: "nestjs-drizzle-crud", // the npm package: structured data, llms.txt, install commands
 	displayName: "Nestjs Drizzle", // what readers see: header, tab titles, site name
 	logo: "/avytrix-icon.png", // Avytrix Technologies mark
-	version: "3.4.0",
+	version: "3.5.0",
 	tagline: "Type-safe CRUD for Drizzle ORM in NestJS",
 	description:
 		"Type-safe CRUD for Drizzle ORM in NestJS. Configure the connection once, and every entity gets full CRUD: find, create, update, soft-delete, bulk ops, pagination, filtering, relations and full-text search.",
