@@ -2827,6 +2827,7 @@ export abstract class SqlBaseCrudService<
 		options?: SqlOperationOptions,
 	): Promise<T[]> {
 		this.checkReadOptions(options);
+		this.assertBatchSize(this.insertParameters(data));
 		const message = "Mass upsert errors";
 		return this.executeSqlTransaction(async (tx) => {
 			const opts = { ...options, transaction: tx };
@@ -3064,6 +3065,7 @@ export abstract class SqlBaseCrudService<
 			return this.massCreatePerItem(data, options);
 		}
 		this.checkReadOptions(options);
+		this.assertBatchSize(this.insertParameters(data));
 		return this.executeSqlTransaction(async (tx) => {
 			const opts = { ...options, transaction: tx };
 			const rows = await this.eachItem(
@@ -3173,6 +3175,7 @@ export abstract class SqlBaseCrudService<
 		if (options?.bulkMode === "perItem") {
 			return this.massUpdatePerItem(ids, data, options);
 		}
+		this.assertBatchSize(Array.isArray(ids) ? ids.length : 0);
 		this.checkReadOptions(options);
 		const message = "Mass update errors";
 		return this.executeSqlTransaction(async (tx) => {
@@ -3281,6 +3284,7 @@ export abstract class SqlBaseCrudService<
 		if (options?.bulkMode === "perItem") {
 			return this.massSoftDeletePerItem(ids, options);
 		}
+		this.assertBatchSize(Array.isArray(ids) ? ids.length : 0);
 		const message = "Mass soft delete errors";
 		return this.executeSqlTransaction(async (tx) => {
 			const opts = {
@@ -3349,6 +3353,7 @@ export abstract class SqlBaseCrudService<
 		if (options?.bulkMode === "perItem") {
 			return this.massRestorePerItem(ids, options);
 		}
+		this.assertBatchSize(Array.isArray(ids) ? ids.length : 0);
 		this.checkReadOptions(options);
 		const message = "Mass restore errors";
 		return this.executeSqlTransaction(async (tx) => {
@@ -3409,6 +3414,7 @@ export abstract class SqlBaseCrudService<
 		if (options?.bulkMode === "perItem") {
 			return this.massDeletePerItem(ids, options);
 		}
+		this.assertBatchSize(Array.isArray(ids) ? ids.length : 0);
 		const message = "Mass delete errors";
 		return this.executeSqlTransaction(async (tx) => {
 			const opts = { ...options, transaction: tx };
@@ -3988,6 +3994,7 @@ export abstract class SqlBaseCrudService<
 		caseInsensitive = this.config.sql?.caseSensitive === false,
 	): void {
 		if (Array.isArray(value)) {
+			this.assertBatchSize(value.length);
 			conditions.push(
 				inArray(
 					column,
@@ -4450,7 +4457,36 @@ export abstract class SqlBaseCrudService<
 		if (!Array.isArray(raw)) {
 			throw new BadRequestException(`Filter operator "${op}" expects an array`);
 		}
+		this.assertBatchSize(raw.length);
 		return raw;
+	}
+
+	// Postgres accepts at most 65,535 bound parameters per statement, and MySQL
+	// about the same. Past that the driver fails with a confusing protocol error
+	// (08P01) and a 500. A batch that would come near it is a 400 that names the
+	// limit instead, so the caller can split it.
+	// ponytail: refuses instead of chunking; chunk inside the transaction if
+	// single calls over this size become a real need.
+	static readonly MAX_BATCH_PARAMETERS = 60_000;
+
+	protected assertBatchSize(parameters: number): void {
+		const max = SqlBaseCrudService.MAX_BATCH_PARAMETERS;
+		if (parameters > max) {
+			throw new BadRequestException(
+				`Too many values in one call (${parameters}); the limit is ${max}. Split the batch.`,
+			);
+		}
+	}
+
+	// Values a multi-row INSERT binds: rows times the widest row, plus the
+	// columns the service adds (timestamps, scope, version).
+	protected insertParameters(rows: unknown[]): number {
+		let widest = 0;
+		for (const row of rows) {
+			if (isPlainObject(row))
+				widest = Math.max(widest, Object.keys(row).length);
+		}
+		return rows.length * (widest + 4);
 	}
 
 	private requirePostgres(op: string): void {

@@ -2742,3 +2742,24 @@ describe("re-audit: allowlists and nested rows", () => {
 		expect(doc.notes[0].id).not.toBe(99999);
 	});
 });
+
+describe("re-audit R-06: batches past the parameter limit are a 400", () => {
+	it("refuses a huge insert, id list or IN filter with a 400 that names the limit", async () => {
+		const svc = new Svc(base(await sharedDb(), authors));
+		const rows = Array.from({ length: 14_000 }, (_, i) => ({
+			name: `n${i}`,
+			email: `n${i}@x.io`,
+			role: "writer",
+		}));
+		const many = Array.from({ length: 70_000 }, (_, i) => i + 1);
+		for (const call of [
+			svc.massCreate(rows as any),
+			svc.massUpdate(many, { name: "x" } as any),
+			svc.findAll({ id: many }),
+			svc.findAll({ id: { in: many } }),
+		]) {
+			const error = await expect400(call);
+			expect(JSON.stringify(error.getResponse())).toContain("60000");
+		}
+	});
+});
