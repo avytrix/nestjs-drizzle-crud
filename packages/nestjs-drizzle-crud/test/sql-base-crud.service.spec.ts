@@ -167,17 +167,23 @@ describe("SqlBaseCrudService", () => {
 		const orderBy = (sortBy?: string, sortOrder?: any) =>
 			(service as any).buildOrderBy(sortBy, sortOrder);
 
-		it("uses the explicit caller sortBy when the column exists", () => {
-			expect(orderBy("name", "asc")).toHaveLength(1);
+		// Every ordering ends with the primary key as a tiebreaker, so pages
+		// never repeat or skip rows that tie on the sort columns.
+		it("uses the explicit caller sortBy, then the primary key", () => {
+			expect(orderBy("name", "asc")).toHaveLength(2);
 		});
 
-		it("returns no ordering when no sortBy and no defaultSort", () => {
-			expect(orderBy()).toHaveLength(0);
+		it("orders by the primary key alone when no sortBy and no defaultSort", () => {
+			expect(orderBy()).toHaveLength(1);
+		});
+
+		it("does not repeat the primary key when it is the sort column", () => {
+			expect(orderBy("id", "desc")).toHaveLength(1);
 		});
 
 		it("falls back to a single-column defaultSort", () => {
 			service["config"].defaultSort = [{ column: "name" }];
-			expect(orderBy()).toHaveLength(1);
+			expect(orderBy()).toHaveLength(2);
 		});
 
 		it("applies a multi-column defaultSort in order", () => {
@@ -185,7 +191,7 @@ describe("SqlBaseCrudService", () => {
 				{ column: "name", order: "asc" },
 				{ column: "created_at", order: "desc" },
 			];
-			expect(orderBy()).toHaveLength(2);
+			expect(orderBy()).toHaveLength(3);
 		});
 
 		it("explicit sortBy replaces the configured default", () => {
@@ -193,8 +199,8 @@ describe("SqlBaseCrudService", () => {
 				{ column: "name" },
 				{ column: "created_at" },
 			];
-			// One expression (the caller column), not the two defaults.
-			expect(orderBy("email", "asc")).toHaveLength(1);
+			// The caller column plus the tiebreaker, not the two defaults.
+			expect(orderBy("email", "asc")).toHaveLength(2);
 		});
 
 		it("skips unknown columns in defaultSort", () => {
@@ -202,7 +208,7 @@ describe("SqlBaseCrudService", () => {
 				{ column: "name" },
 				{ column: "does_not_exist" },
 			];
-			expect(orderBy()).toHaveLength(1);
+			expect(orderBy()).toHaveLength(2);
 		});
 
 		it("throws BadRequest when caller sortBy is an unknown column", () => {

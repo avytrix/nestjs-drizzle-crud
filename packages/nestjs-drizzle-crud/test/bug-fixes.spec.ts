@@ -14,6 +14,12 @@ import {
 	ConflictException,
 	HttpException,
 } from "@nestjs/common";
+import {
+	int,
+	MySqlDialect,
+	mysqlTable,
+	varchar as myVarchar,
+} from "drizzle-orm/mysql-core";
 import { PgDialect, pgTable, serial, varchar } from "drizzle-orm/pg-core";
 import { SqlBaseCrudService } from "../src/core/abstract/sql-base-crud.service";
 import {
@@ -116,9 +122,7 @@ describe("Bug #8: data violations -> ValidationFailedException (400)", () => {
 		const insert: any = {
 			values: jest.fn(() => insert),
 			returning: jest.fn(() =>
-				Promise.reject(
-					Object.assign(new Error("too long"), { code: "22001" }),
-				),
+				Promise.reject(Object.assign(new Error("too long"), { code: "22001" })),
 			),
 		};
 		const db: any = { insert: jest.fn(() => insert) };
@@ -208,7 +212,7 @@ describe("Bug #5: unknown sort column fails fast", () => {
 	});
 
 	it("still sorts by a valid column", () => {
-		expect(svc.buildOrderBy("name", "asc")).toHaveLength(1);
+		expect(svc.buildOrderBy("name", "asc")).toHaveLength(2);
 	});
 });
 
@@ -240,7 +244,10 @@ describe("Bug #7: lock options applied on Postgres reads", () => {
 			TestCrudFactory.createMockTable(),
 		);
 		await (svc as any).find(1, { lock: "update" });
-		expect(q.for).toHaveBeenCalledWith("update");
+		// `of` the base table, so a LEFT JOINed relation is never locked.
+		expect(q.for).toHaveBeenCalledWith("update", {
+			of: (svc as any).config.table,
+		});
 	});
 });
 
@@ -282,8 +289,8 @@ describe("F2: invalid sortOrder fails fast (mirrors unknown-column)", () => {
 	});
 
 	it("still accepts asc and desc", () => {
-		expect(svc.buildOrderBy("name", "asc")).toHaveLength(1);
-		expect(svc.buildOrderBy("name", "desc")).toHaveLength(1);
+		expect(svc.buildOrderBy("name", "asc")).toHaveLength(2);
+		expect(svc.buildOrderBy("name", "desc")).toHaveLength(2);
 	});
 });
 
@@ -321,10 +328,16 @@ describe("F4: case-insensitive string filter is EXACT, not a wildcard pattern", 
 		id: serial("id").primaryKey(),
 		name: varchar("name", { length: 100 }),
 	});
+	// The table has no deleted_at or timestamp columns, so both are off: since
+	// 3.3.1 a configured column the table lacks fails at construction.
 	const svc: any = TestCrudFactory.createTestService(
 		Svc,
 		TestCrudFactory.createMockDb(),
 		table,
+		{
+			softDelete: { enabled: false, column: "deleted_at" },
+			timestamps: undefined,
+		},
 	);
 
 	const render = (filters: any) => {
@@ -368,7 +381,10 @@ describe("F5: findAll supports cross-column search options", () => {
 			Svc,
 			TestCrudFactory.createMockDb(),
 			table,
-			{ softDelete: { enabled: false, column: "deleted_at" } },
+			{
+				softDelete: { enabled: false, column: "deleted_at" },
+				timestamps: undefined,
+			},
 		);
 	});
 
@@ -415,6 +431,7 @@ describe("F5: findAll supports cross-column search options", () => {
 		};
 		const searchSvc = TestCrudFactory.createTestService(Svc, db, table, {
 			softDelete: { enabled: false, column: "deleted_at" },
+			timestamps: undefined,
 		});
 
 		const res = await (searchSvc as any).findAll(
@@ -520,5 +537,44 @@ describe("FK violations (23503) map by direction, restored in 3.2.2", () => {
 		});
 
 		await expect((svc as any).delete(1)).rejects.toThrow("connection lost");
+	});
+});
+
+describe("BUG-15: MySQL gets LIKE, never ILIKE", () => {
+	// MySQL has no ILIKE operator; its default collations compare
+	// case-insensitively, so LIKE is the equivalent.
+	const dialect = new MySqlDialect();
+	const table = mysqlTable("t", {
+		id: int("id").primaryKey(),
+		name: myVarchar("name", { length: 50 }),
+	});
+	const svc: any = TestCrudFactory.createTestService(
+		Svc,
+		TestCrudFactory.createMockDb(),
+		table,
+		{
+			dialect: "mysql",
+			softDelete: { enabled: false, column: "deleted_at" },
+			timestamps: undefined,
+		},
+	);
+	const render = (condition: any) =>
+		dialect.sqlToQuery(condition).sql.toLowerCase();
+
+	it("compiles search to LIKE", () => {
+		const sqlText = render(
+			svc.buildSearchCondition({ term: "jo", columns: ["name"] }),
+		);
+		expect(sqlText).toContain(" like ");
+		expect(sqlText).not.toContain("ilike");
+	});
+
+	it("compiles the ilike operator to LIKE", () => {
+		const { conditions } = svc.buildFilterConditions({
+			name: { ilike: "jo%" },
+		});
+		const sqlText = render(conditions[0]);
+		expect(sqlText).toContain(" like ");
+		expect(sqlText).not.toContain("ilike");
 	});
 });
