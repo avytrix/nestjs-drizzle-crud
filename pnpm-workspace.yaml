@@ -31,7 +31,8 @@ onlyBuiltDependencies:
 overrides:
   postcss: ">=8.5.23" # GHSA-qx2v-qp2m-jg93, GHSA-fxqj-rqcc-2cmp, via next
   nanoid: ">=3.3.17" # GHSA-2v37-7h3g-55p8, via next > postcss
-  sharp: ">=0.35.0" # libvips advisories, via next
+  sharp: ">=0.35.5" # libvips advisories, via next
+  multer: ">=2.5.0" # GHSA on <2.5.0, via @nestjs/platform-express in apps/api (its latest ships 2.5.0)
   # Dev tree only, so these never reached `audit --prod`, but Dependabot's
   # security updates kept failing to patch them through the lockfile. Both are
   # single-function modules with a stable API, and the whole verify set passes
