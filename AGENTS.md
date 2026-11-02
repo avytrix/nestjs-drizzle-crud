@@ -7,7 +7,7 @@ Deterministic rules for AI agents working in this repo. Read this first.
 Turborepo + pnpm monorepo. One published library, two private apps:
 
 - `packages/nestjs-drizzle-crud` (npm: `nestjs-drizzle-crud`), the only public artifact. Built with `tsc` to `dist/`.
-- `apps/docs`, Next.js 16 + Fumadocs, static-exported to GitHub Pages at [crud.viliha.com](https://crud.viliha.com). This is what `pnpm dev` runs, on **:3000**. Its own rules live in `apps/docs/AGENTS.md`.
+- `apps/docs`, Next.js 16 + Fumadocs, static-exported to GitHub Pages at [crud.avytrix.dev](https://crud.avytrix.dev). This is what `pnpm dev` runs, on **:3000**. Its own rules live in `apps/docs/AGENTS.md`.
 - `apps/api`, an example NestJS 11 app that doubles as the e2e testbed. `pnpm dev:api`, on **:4000**. `pnpm dev:all` runs both. Its e2e suite is Playwright over real HTTP against **PGlite** (Postgres compiled to WASM, in-process), so it needs no container, no credentials and no browser download.
 
 Node >= 20, pnpm 10, TypeScript 7 (except `apps/docs`, which pins 5.9). Lint and format are Biome, tabs, double quotes, 80 columns.

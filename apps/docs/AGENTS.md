@@ -92,7 +92,7 @@ Deploy is automatic: pushing to `main` runs `.github/workflows/deploy-docs.yml`,
 which builds the library first (Twoslash needs its types), exports the site, and
 publishes `apps/docs/out` to GitHub Pages. There is no manual deploy command and
 no Vercel project. The workflow copies the root `CNAME` into the output and adds
-`.nojekyll`, so the site serves at [crud.viliha.com](https://crud.viliha.com).
+`.nojekyll`, so the site serves at [crud.avytrix.dev](https://crud.avytrix.dev).
 
 Env: `NEXT_PUBLIC_SITE_URL` (consumed by `lib/seo.ts`, `app/sitemap.ts`,
 `app/robots.ts`, `app/layout.tsx`); the workflow sets it from `CNAME`.

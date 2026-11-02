@@ -1,9 +1,11 @@
 # nestjs-drizzle-crud
 
-[![docs](https://img.shields.io/badge/docs-crud.viliha.com-E0234E)](https://crud.viliha.com)
+[![docs](https://img.shields.io/badge/docs-crud.avytrix.dev-E0234E)](https://crud.avytrix.dev)
 [![npm](https://img.shields.io/npm/v/nestjs-drizzle-crud?color=E0234E)](https://www.npmjs.com/package/nestjs-drizzle-crud)
 [![license](https://img.shields.io/npm/l/nestjs-drizzle-crud)](./LICENSE)
-[![Sponsor @myviliha](https://img.shields.io/badge/Sponsor-%40myviliha-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/myviliha)
+[![Sponsor @avytrix](https://img.shields.io/badge/Sponsor-%40avytrix-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/avytrix)
+
+Built and maintained by **[Avytrix Technologies](https://avytrix.dev)**.
 
 ## ❤️ Sponsoring is what keeps this package free
 
@@ -17,16 +19,16 @@ sponsors are what make keeping it free sustainable.
 
 **Even $1 a month helps.** It funds bug fixes, new guides, and the next release.
 
-> Sponsors get a spot on the [sponsor page](https://crud.viliha.com/docs/sponsor)
+> Sponsors get a spot on the [sponsor page](https://crud.avytrix.dev/docs/sponsor)
 > and our genuine thanks.
 
-### 👉 [Sponsor on GitHub →](https://github.com/sponsors/myviliha) &nbsp;·&nbsp; thank you 🙏
+### 👉 [Sponsor on GitHub →](https://github.com/sponsors/avytrix) &nbsp;·&nbsp; thank you 🙏
 
 ---
 
 A complete, type-safe CRUD abstraction layer for [Drizzle ORM](https://orm.drizzle.team/) in [NestJS](https://nestjs.com/) applications.
 
-**[Documentation](https://crud.viliha.com)** · **[npm](https://www.npmjs.com/package/nestjs-drizzle-crud)** · **[GitHub](https://github.com/myviliha/viliha-drizzle-crud)** · **[Sponsor](https://github.com/sponsors/myviliha)**
+**[Documentation](https://crud.avytrix.dev)** · **[npm](https://www.npmjs.com/package/nestjs-drizzle-crud)** · **[GitHub](https://github.com/avytrix/nestjs-drizzle-crud)** · **[Sponsor](https://github.com/sponsors/avytrix)**
 
 Configure the database connection **once**, then every entity gets full CRUD (find / create / update / delete / soft-delete / bulk / pagination / filtering / full-text search) by extending one base class. No per-service connection wiring.
 
@@ -851,7 +853,7 @@ Windsurf, Gemini CLI and Cline. VS Code and Copilot use `.vscode/mcp.json` with
 the entries under `servers`; Codex uses `[mcp_servers.*]` in
 `~/.codex/config.toml`; Zed uses a `context_servers` entry. The server is
 read-only and never touches your database. Full setup:
-[crud.viliha.com/docs/ai-agents](https://crud.viliha.com/docs/ai-agents).
+[crud.avytrix.dev/docs/ai-agents](https://crud.avytrix.dev/docs/ai-agents).
 
 ### Facts for code generation
 
@@ -916,16 +918,16 @@ interface SqlCrudConfig {
 
 ## Support
 
-- **Docs:** [crud.viliha.com](https://crud.viliha.com), including a
-  [FAQ and where-to-ask guide](https://crud.viliha.com/docs/getting-help).
-- **Questions:** [GitHub Discussions](https://github.com/myviliha/viliha-drizzle-crud/discussions).
-- **Bugs:** [open an issue](https://github.com/myviliha/viliha-drizzle-crud/issues/new/choose)
+- **Docs:** [crud.avytrix.dev](https://crud.avytrix.dev), including a
+  [FAQ and where-to-ask guide](https://crud.avytrix.dev/docs/getting-help).
+- **Questions:** [GitHub Discussions](https://github.com/avytrix/nestjs-drizzle-crud/discussions).
+- **Bugs:** [open an issue](https://github.com/avytrix/nestjs-drizzle-crud/issues/new/choose)
   with the version, dialect, table definition and the call you made.
-- **Security:** follow [SECURITY.md](https://github.com/myviliha/viliha-drizzle-crud/blob/main/SECURITY.md),
+- **Security:** follow [SECURITY.md](https://github.com/avytrix/nestjs-drizzle-crud/blob/main/SECURITY.md),
   never a public issue.
 - **AI agents:** this package ships `AGENT.md` plus an MCP server. See
   [For AI agents / LLM tools](#for-ai-agents--llm-tools).
-- **Sponsor:** [github.com/sponsors/myviliha](https://github.com/sponsors/myviliha).
+- **Sponsor:** [github.com/sponsors/avytrix](https://github.com/sponsors/avytrix).
 
 ---
 

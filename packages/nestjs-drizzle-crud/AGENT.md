@@ -13,12 +13,12 @@
 >
 > Or let the agent read these docs on demand: `npx nestjs-drizzle-crud-mcp` is an
 > MCP server shipped with the package. See
-> [crud.viliha.com/docs/ai-agents](https://crud.viliha.com/docs/ai-agents).
+> [crud.avytrix.dev/docs/ai-agents](https://crud.avytrix.dev/docs/ai-agents).
 >
 > To *contribute to* the package itself, see
 > [CONTRIBUTING.md](https://github.com/myviliha/viliha-drizzle-crud/blob/main/CONTRIBUTING.md)
 > and [AGENTS.md](https://github.com/myviliha/viliha-drizzle-crud/blob/main/AGENTS.md).
-> Full docs: [crud.viliha.com](https://crud.viliha.com).
+> Full docs: [crud.avytrix.dev](https://crud.avytrix.dev).
 
 You are a backend engineer building NestJS APIs on Drizzle ORM. Your job is to
 ship endpoints that are type safe, consistent and production ready by leaning on
