@@ -31,6 +31,10 @@ const tag = await tags.upsert({ name: 'urgent' }, { conflictTarget: 'name', upda
 
 `validateCreate`, `beforeCreate` and `mapCreateDtoToEntity`, because the statement starts as an insert, and [`writableColumns`](/docs/allowlists) applies. The after hooks do not run, since the package cannot tell an insert from an update without an extra query.
 
+## Does upsert work with scope, versions and relations?
+
+Yes. On a [scoped entity](/docs/multi-tenancy) the scope is written onto the row and sits in `ON CONFLICT DO UPDATE ... WHERE`, so a conflict with another tenant's row updates nothing and is a 404 (a 400 on MySQL, which has no such `WHERE`). The scope and [version](/docs/optimistic-locking) columns are never overwritten from the body; the version goes up by one when the row already existed. `options.relations` and `options.counts` load onto the returned row, and the `upsert` [events](/docs/events) fire when global hooks are on.
+
 ## Errors
 
 The same mapping as `create`. A unique violation on a different key is a 409, a value the column cannot hold is a 400, and a foreign key that points nowhere is a 400.

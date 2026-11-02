@@ -131,18 +131,30 @@ Those are legacy manual patterns and they break registration.
 
 | Group | Methods |
 | --- | --- |
-| Read | `find(id)`, `findOne(where)`, `findAll(filters, pagination, options)`, `findByCursor(filters, cursorPagination, options)`, `exists(id)`, `count(filters)` |
+| Read | `find(id)`, `findOne(where)`, `findAll(filters, pagination, options)`, `findByCursor(filters, cursorPagination, options)`, `exists(id)`, `count(filters)`, `countBy(column, filters)` |
 | Write | `create(dto)`, `update(id, dto)`, `upsert(dto, { conflictTarget, update })`, `softDelete(id)`, `restore(id)`, `delete(id)`, `forceDelete(id)` |
+| Many-to-many links | `attach(id, relation, ids)`, `detach(id, relation, ids?)`, `sync(id, relation, ids)` |
+| Controller | `createCrudController(Service, options)`, `service.parseId(raw)` |
+| OpenAPI | `@ApiCrudList(source)`, `@ApiCrudQuery(source)` (needs `@nestjs/swagger`) |
 | Bulk | `massCreate`, `massUpdate`, `massUpsert`, `massSoftDelete`, `massRestore`, `massDelete`, `massForceDelete` |
 | Query string | `parseQuery(query, options)`, or the standalone `parseCrudQuery(query, table, options)` |
 | Search | `fullTextSearch(term, columns, pagination)`, PostgreSQL only |
 | Transaction | `executeSqlTransaction(cb)` |
 
-`findAll` returns `{ data, total, page, limit }`, not a bare array. `delete` and
-`softDelete` return a boolean. `update` and `restore` return the entity and
+`findAll` returns `{ data, total, page, limit }`, not a bare array; with
+`withCount: false` it skips the count, `total` is `null` and `hasMore` is set.
+`delete` and `softDelete` return a boolean. `update` and `restore` return the entity and
 throw `EntityNotFoundException` when the row is missing.
 
-Every method takes `options`: `{ transaction, relations, select, search, hooks, lock, forNoKeyUpdate, withDeleted, onlyDeleted, skipAllowlists, bulkMode }`.
+Every method takes `options`: `{ transaction, relations, select, search, hooks, lock, forNoKeyUpdate, withDeleted, onlyDeleted, skipAllowlists, bulkMode, counts, context, skipScope, skipEvents, expectedVersion, expectedVersions }`.
+
+**Do not hand write CRUD controllers.** Extend `createCrudController(Service, {
+dto, routes, decorators })`. It registers list (offset and `?cursor=`), trash,
+get, create, update, delete, soft delete, restore and, when enabled, the bulk
+routes, all through `parseQuery`, and parses `:id` by the primary key type
+(ParseIntPipe, ParseUUIDPipe). Add guards with `decorators` or per route, turn
+routes off with `routes: { delete: false }`, and add your own routes to the
+subclass.
 
 ---
 
@@ -293,9 +305,21 @@ Filter with `findAll({ region: { name: 'Asia' } })`,
 `findAll({ states: { name: 'Kerala' } })` or
 `findAll({ tags: { name: 'himalayan' } })` using the same operators. A collection
 filter compiles to `id IN (SELECT ... WHERE ...)`, never a join, so `total` and
-pagination stay correct. Filters are one level deep: go through the intermediate
-table's own columns (`state: { country_id: 3 }`) instead of nesting filter
-objects.
+pagination stay correct. A filter can go through relations at any depth:
+`{ state: { country: { code: 'IN' } } }` (`?state[country][code]=IN`). A
+collection takes `some` (the default), `none` or `every`:
+`{ posts: { none: { status: 'draft' } } }`. They compile to `EXISTS` /
+`NOT EXISTS` subqueries; never post-filter rows in JavaScript instead.
+
+**Counts.** Ask for `options.counts: ['posts']` to get `_count: { posts: n }`
+on each row, one grouped query per relation, and `countBy('status', filters)`
+for facet counts. Never call `count()` once per row.
+
+**Relations on writes.** Pass `options.relations` to `create`, `update`,
+`upsert` and the mass writes to get the related rows back. Nested create
+(`authors.create({ name, posts: [...] })`) only writes relations listed in
+`writableRelations`, inside one transaction. Change many-to-many links with
+`attach` / `detach` / `sync`, never with raw inserts into the join table.
 
 A relation missing its keys throws at startup, with the full path in the message.
 For a join table that carries its own columns, model it as an entity with two
@@ -343,13 +367,46 @@ you asked for them or not.
 
 ---
 
-# Hooks and validation
+# Multi-tenancy: use `scope`, never hand written tenant filters
+
+For data owned by a tenant or a user, set `scope` in the entity config and put
+the tenant in the context once per request:
+
+```typescript
+config: { scope: (ctx) => ({ tenant_id: ctx.tenantId }) }
+
+// in a NestModule
+consumer
+  .apply(CrudContext.middleware((req) => ({ tenantId: req.user?.tenantId })))
+  .forRoutes('*');
+```
+
+The scope is ANDed into every read, count and write (bulk, upsert, soft delete,
+restore, force delete, attach included) and written onto every created row, so
+another tenant's id is a 404. A missing context value is a 403, never an
+unscoped query. Do not add `tenant_id` to filters or DTOs by hand, and use
+`skipScope: true` only in trusted server code.
+
+# Optimistic locking
+
+Set `versionColumn: 'version'` when two people can edit the same row. Clients
+send back the `version` they read; a stale one is a 409
+(`StaleVersionException`). Pass `expectedVersion` in code, or
+`expectedVersions: { [id]: version }` for mass writes.
+
+# Hooks, events and validation
 
 Override the `protected` hooks on your service rather than wrapping the service
 in another layer: `validateCreate`, `validateUpdate`, `mapCreateDtoToEntity`,
 `mapUpdateDtoToEntity`, and the `before*` / `after*` pairs for create, update,
 delete, soft delete and restore. Defaults are no ops and pass throughs, so
 override only what you need.
+
+For cross-cutting work (audit trails, cache busting, outbox rows) turn on
+`hooks.enableGlobalHooks` in `forRoot` and subscribe on the injected
+`CrudEventBus` instead of copying hooks into every service. A bulk call raises
+one event with every id; write audit rows with `event.transaction` so they
+commit or roll back with the write.
 
 Validation of request shape stays in DTOs with `class-validator`. Use
 `validateCreate` for rules that need the database.
@@ -361,7 +418,8 @@ Validation of request shape stays in DTOs with `class-validator`. Use
 The package throws NestJS exceptions, so the default filter maps them without
 extra wiring: `EntityNotFoundException` gives 404, `DuplicateEntityException`
 and `EntityInUseException` give 409, and `ValidationFailedException`,
-`ForeignKeyViolationException` and `BulkOperationException` give 400. Do not
+`ForeignKeyViolationException` and `BulkOperationException` give 400,
+`StaleVersionException` gives 409 and `MissingScopeException` gives 403. Do not
 catch these to re-throw a generic 500, and do not add a custom filter to
 translate them again.
 
@@ -443,6 +501,8 @@ A feature is complete only when:
 ✓ Returns the right HTTP status through the package's exceptions.
 
 ✓ Handles pagination and filtering through `findAll`, not in the controller.
+
+✓ Uses `createCrudController` for CRUD routes and `scope` for tenant data.
 
 ✓ Runs multi row writes in a transaction.
 

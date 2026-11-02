@@ -69,6 +69,13 @@ DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
 - [Timestamps](#timestamps)
 - [Bulk operations](#bulk-operations)
 - [Upsert](#upsert)
+- [Relations on writes](#relations-on-writes)
+- [Controller factory](#controller-factory)
+- [OpenAPI (Swagger)](#openapi-swagger)
+- [Multi-tenancy: scope](#multi-tenancy-scope)
+- [Events and global hooks](#events-and-global-hooks)
+- [Optimistic locking](#optimistic-locking)
+- [Counts and grouped counts](#counts-and-grouped-counts)
 - [Transactions](#transactions)
 - [Full-text search (PostgreSQL)](#full-text-search-postgresql)
 - [Lifecycle hooks & validation](#lifecycle-hooks--validation)
@@ -91,7 +98,13 @@ DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
 - 🛡️ **Allowlists**. Limit what a client may filter, sort, select and write
 - 📜 **Cursor pagination**. `findByCursor` with an opaque `nextCursor`
 - 🔎 **Full-text search**. PostgreSQL `tsvector`/`tsquery`
-- 🔗 **Relations**. Belongs-to, has-many, many-to-many and nested eager loading with no N+1, plus filtering by related columns
+- 🔗 **Relations**. Belongs-to, has-many, many-to-many and nested eager loading with no N+1, filtering through relation paths with `some` / `none` / `every`, and relations on writes (nested create, `attach` / `detach` / `sync`)
+- 🧭 **Controller factory**. `createCrudController(Service)` wires list, get, create, update, delete, trash, restore and bulk routes, with the id pipe picked from the key
+- 📘 **OpenAPI**. `@ApiCrudList()` documents every list parameter and filterable column (optional `@nestjs/swagger` peer)
+- 🏢 **Multi-tenancy**. A `scope` keeps every read and write inside the caller's tenant; another tenant's id is a 404
+- 📣 **Events**. Module-level before/after events for every write, bulk included, for audit trails and cache busting
+- 🔒 **Optimistic locking**. A version column; a stale write is a 409
+- 🔢 **Counts**. `_count` for collections and `countBy(column)`, batched; `withCount: false` skips `COUNT(*)`
 - 🎯 **Column selection**. Ask for the columns you need, relation columns included
 - 🤖 **Agent ready**. Rules templates for every agent, and an MCP server in the box
 - 🔑 **Flexible primary keys**, `serial` / `int` / `bigint` / `bigserial` / `uuid`
@@ -121,6 +134,9 @@ pnpm add postgres
 
 # MySQL
 pnpm add mysql2
+
+# Only for ApiCrudQuery / ApiCrudList (OpenAPI docs)
+pnpm add @nestjs/swagger
 ```
 
 > Using npm or yarn? Swap `pnpm add` for `npm install` / `yarn add`.
@@ -273,6 +289,7 @@ export class UsersController {
 | `defaults.pagination` | `{ defaultLimit?, maxLimit? }` | Pagination defaults (default `{ 20, 100 }`). Either key alone keeps the other's default. |
 | `defaults.sortOrder` | `'asc' \| 'desc'` | Opt-in default sort: entities **without** an explicit `defaultSort` fall back to ordering by their `created_at` column in this direction. Omit it and `findAll` orders by the primary key only. |
 | `sql` | `{ caseSensitive?, useReturning? }` | Dialect tuning. `useReturning` defaults to `true` for PostgreSQL, `false` for MySQL. `jsonSupport` and `enableFullTextSearch` are deprecated and do nothing. |
+| `hooks` | `{ enableGlobalHooks?, subscribers? }` | Module-level write events on the `CrudEventBus`. See [Events](#events-and-global-hooks). |
 
 > **Provide exactly one of `connectionString` or `db`.** If your tables have no
 > `created_at`/`updated_at`/`deleted_at` columns, set
@@ -375,11 +392,13 @@ export class UsersService extends SqlBaseCrudService<User, CreateUserDto, Update
 |---|---|---|
 | `find(id, options?)` | `Promise<T \| null>` | By primary key. Skips soft-deleted rows. |
 | `findOne(where, options?)` | `Promise<T \| null>` | Exact values, `null` for `IS NULL`, or operator objects. |
-| `findAll(filters?, pagination?, options?)` | `Promise<{ data: T[]; total: number; page: number; limit: number }>` | See [Filtering](#filtering) / [Pagination](#pagination--sorting). |
+| `findAll(filters?, pagination?, options?)` | `Promise<{ data: T[]; total: number; page: number; limit: number }>` | See [Filtering](#filtering) / [Pagination](#pagination--sorting). With `withCount: false`, `total` is `null` and `hasMore` is set. |
 | `findByCursor(filters?, pagination?, options?)` | `Promise<{ data: T[]; limit: number; nextCursor: string \| null; total?: number }>` | Keyset pages. See [Cursor pagination](#cursor-pagination). |
 | `exists(id, options?)` | `Promise<boolean>` | |
 | `count(filters?, options?)` | `Promise<number>` | |
+| `countBy(column, filters?, options?)` | `Promise<{ value; count }[]>` | Grouped counts, largest first. See [Counts](#counts-and-grouped-counts). |
 | `parseQuery(query, options?)` | `ParsedCrudQuery` | See [Query strings](#query-strings-parsequery). |
+| `parseId(raw)` | `Promise<unknown>` | Parses a route id by the key's type (ParseIntPipe, ParseUUIDPipe, bigint, string). |
 
 ### Write
 
@@ -392,6 +411,9 @@ export class UsersService extends SqlBaseCrudService<User, CreateUserDto, Update
 | `restore(id, options?)` | `Promise<T>` | Clears the soft-delete column. |
 | `forceDelete(id, options?)` | `Promise<boolean>` | Hard delete, soft-deleted or not. |
 | `upsert(data, upsert?, options?)` | `Promise<T>` | Insert or update by a unique key. See [Upsert](#upsert). |
+| `attach(id, relation, ids, options?)` | `Promise<T>` | Link many-to-many rows. See [Relations on writes](#relations-on-writes). |
+| `detach(id, relation, ids?, options?)` | `Promise<T>` | Unlink some, or all when `ids` is left out. |
+| `sync(id, relation, ids, options?)` | `Promise<T>` | Make the links exactly `ids`. |
 
 ### Bulk (run inside a transaction)
 
@@ -445,6 +467,12 @@ interface SqlOperationOptions {
   onlyDeleted?: boolean;        // only soft-deleted rows: the trash view
   skipAllowlists?: boolean;     // trusted, server-side call
   bulkMode?: 'set' | 'perItem'; // mass writes: one statement, or one call per item
+  counts?: string[] | Record<string, true | CrudFilter>; // _count per collection
+  context?: Record<string, unknown>; // what a function `scope` reads
+  skipScope?: boolean;          // trusted call, without the tenant scope
+  skipEvents?: boolean;         // no module-level events for this call
+  expectedVersion?: number;     // optimistic locking: 409 when stale
+  expectedVersions?: Record<string, number>; // the same per id, for mass writes
 }
 ```
 
@@ -717,11 +745,25 @@ four states would become four rows, `count(*)` would return 4 instead of 1, and
 `limit` would cut a country in half. The subquery and the batched load keep one
 row per parent, so `total` and pagination stay correct.
 
-> **Scope:** filters are one level deep, so filter through the intermediate
-> table's own columns (e.g. cities by `state.country_id`) rather than nesting
-> filter objects. `orderBy` sorts a collection but does not limit it per parent,
-> and a join table's own columns are not returned. Model a join table that
-> carries data as an entity with two belongs-to relations.
+A filter can go on through the related table's own relations, at any depth.
+Below the first joined belongs-to, each level is an `EXISTS` subquery:
+
+```typescript
+await cities.findAll({ state: { country: { code: 'IN' } } }); // ?state[country][code]=IN
+```
+
+A collection takes `some` (the default), `none` or `every`, which compile to
+`IN` / `NOT EXISTS` subqueries and work inside `or` / `not` groups and `count`:
+
+```typescript
+await authors.findAll({ posts: { none: { status: 'draft' } } });
+await authors.findAll({ posts: { every: { status: 'published' } } }); // also authors with no posts
+await authors.findAll({ posts: { some: {} } });                         // has at least one
+```
+
+> `orderBy` sorts a collection but does not limit it per parent, and a join
+> table's own columns are not returned. Model a join table that carries data as
+> an entity with two belongs-to relations.
 
 ---
 
@@ -886,6 +928,158 @@ clash on another unique key is a 409, bad input a 400.
 
 ---
 
+## Relations on writes
+
+Writes take `relations` and `counts` like reads, and load them with the same
+batched loaders, one query per relation for the whole batch:
+
+```typescript
+const post = await posts.create(dto, { relations: ['author', 'tags'] });
+await posts.massCreate(rows, { relations: ['author'] }); // 1 INSERT + 1 SELECT
+```
+
+A create body can also write relations listed in `writableRelations`, inside one
+transaction: an array for a has-many, an object for a belongs-to, ids or objects
+for a many-to-many.
+
+```typescript
+// forFeature config: writableRelations: ['posts', 'tags']
+await authors.create({ name: 'Ada', posts: [{ title: 'One' }, { title: 'Two' }] });
+await posts.create({ title: 'Tagged', tags: [1, { name: 'new' }] });
+```
+
+Many-to-many links change with set-based `attach`, `detach` and `sync`, which
+return the row with the relation loaded:
+
+```typescript
+await posts.attach(1, 'tags', [2, 3]);
+await posts.detach(1, 'tags', [3]);   // or detach(1, 'tags') for all
+await posts.sync(1, 'tags', [2]);     // exactly these
+```
+
+---
+
+## Controller factory
+
+`createCrudController(Service, options)` builds a controller with list (offset,
+or keyset with `?cursor=`), `GET /trash`, get, create, update, delete,
+`POST /:id/soft-delete`, `POST /:id/restore` and, when you turn them on, the bulk
+routes. `:id` is parsed from the primary key column: `ParseIntPipe` for an
+integer, `ParseUUIDPipe` for a uuid.
+
+```typescript
+@Controller('projects')
+export class ProjectsController extends createCrudController(ProjectsService, {
+  dto: { create: CreateProjectDto, update: UpdateProjectDto },
+  routes: { bulkCreate: true, delete: { decorators: [UseGuards(AdminGuard)] } },
+  decorators: [UseGuards(AuthGuard)],
+  deleteMode: 'soft',
+}) {}
+```
+
+---
+
+## OpenAPI (Swagger)
+
+`@ApiCrudList(source)` documents a list route: `page`, `limit`, `sortBy`,
+`cursor`, `withCount`, `fields`, `with`, `counts`, `search` and one parameter per
+filterable column, plus the page envelope. `@ApiCrudQuery(source)` adds only the
+parameters. `@nestjs/swagger` is an optional peer, loaded only when a decorator
+runs.
+
+```typescript
+@Get()
+@ApiCrudList({ table: countries, ...countriesConfig })
+findAll(@Query() query: Record<string, unknown>) { ... }
+```
+
+---
+
+## Multi-tenancy: scope
+
+A `scope` is ANDed into every read, count and write, bulk and upsert included,
+and written onto every row a create inserts. Another tenant's id is a 404.
+
+```typescript
+// forFeature config
+scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+
+// per request, in a NestModule
+consumer
+  .apply(CrudContext.middleware((req) => ({ tenantId: req.user?.tenantId })))
+  .forRoutes('*');
+
+// or per call
+await docs.findAll({}, {}, { context: { tenantId: 7 } });
+```
+
+A missing context value is a 403 (`MissingScopeException`), never an unscoped
+query. A resolver that returns `null`, or `skipScope: true`, runs unscoped on
+purpose.
+
+---
+
+## Events and global hooks
+
+With `hooks.enableGlobalHooks: true`, every service raises a before and an after
+event on the injectable `CrudEventBus` for each write. A bulk call raises one
+event with `bulk: true` and every id.
+
+```typescript
+DrizzleCrudModule.forRoot({
+  dialect: 'postgresql', connectionString,
+  hooks: { enableGlobalHooks: true },
+});
+
+@Injectable()
+export class Audit implements OnModuleInit {
+  constructor(private readonly bus: CrudEventBus) {}
+  onModuleInit() {
+    this.bus.subscribe({
+      afterWrite: (e) => this.log(e.entity, e.operation, e.ids),
+    });
+  }
+}
+```
+
+A before listener that throws stops the write; an after listener that throws
+inside a transaction rolls it back. The per-service hooks run as before.
+
+---
+
+## Optimistic locking
+
+```typescript
+// forFeature config
+versionColumn: 'version',
+
+await docs.update(1, { title: 'New', version: 3 }); // 409 if the row is past 3
+await docs.delete(1, { expectedVersion: 4 });
+await docs.massUpdate([1, 2], data, { expectedVersions: { '1': 4, '2': 7 } });
+```
+
+The version starts at 1 and goes up on every update, soft delete, restore,
+upsert conflict and bulk write. A stale one is a 409 `StaleVersionException`.
+
+---
+
+## Counts and grouped counts
+
+```typescript
+await authors.findAll({}, {}, { counts: ['posts'] });
+// [{ id: 1, name: 'Ann', _count: { posts: 10 } }, ...]
+await authors.findAll({}, {}, { counts: { posts: { status: 'published' } } });
+
+await posts.countBy('status');            // [{ value: 'draft', count: 15 }, ...]
+await posts.countBy('author.name', { status: 'published' });
+```
+
+Each count is one `GROUP BY` query for the whole result, never one per row, and
+skips soft-deleted related rows. `findAll(filters, { withCount: false })` skips
+the `COUNT(*)`: `total` is `null` and `hasMore` tells you if another page follows.
+
+---
+
 ## Transactions
 
 ```typescript
@@ -1010,7 +1204,7 @@ read-only and never touches your database. Full setup:
 
 Concise, accurate facts for code generation. Prefer these over guessing.
 
-**Package:** `nestjs-drizzle-crud` · **Peers:** `@nestjs/common`, `@nestjs/core`, `drizzle-orm`, `reflect-metadata`; optional `postgres` (PG) / `mysql2` (MySQL).
+**Package:** `nestjs-drizzle-crud` · **Peers:** `@nestjs/common`, `@nestjs/core`, `drizzle-orm`, `reflect-metadata`; optional `postgres` (PG) / `mysql2` (MySQL) / `@nestjs/swagger` (for `ApiCrudList`).
 
 **Setup is two steps and no per-service connection wiring:**
 1. `DrizzleCrudModule.forRoot({ dialect, connectionString | db, schema, defaults })` once in `AppModule`.
@@ -1032,10 +1226,17 @@ export class XService extends SqlBaseCrudService<X, CreateXDto, UpdateXDto, XFil
 - Soft-deleted rows: `onlyDeleted: true` / `withDeleted: true` on any read; `forceDelete(id)` purges. Bulk methods are one statement per set; `upsert(dto, { conflictTarget })` exists.
 - `delete`/`softDelete` return `boolean`; `update`/`restore` return the entity and throw `EntityNotFoundException` when missing.
 - Postgres error codes are translated for you: `23505` unique -> 409, `22001`/`23514`/`22003`/`22P02`/`22007`/`22008` bad value -> 400 (reads included), `23503` on create/update (missing FK target) -> 400 `ForeignKeyViolationException`, `23503` on delete (still referenced) -> 409 `EntityInUseException`.
-- Relations: declare in forFeature `config.relations` and eager-load via `options.relations: ['relName']`, where a dotted path nests (`['states', 'states.cities']`, `['state.country']`; the parent path is pulled in automatically). Belongs-to is `{ table, localKey, references? }`, LEFT JOINed into the main query, resolving to an object or `null`. Has-many is `{ table, type: 'hasMany', foreignKey, parentKey?, orderBy? }`. Many-to-many is `{ table, type: 'manyToMany', through, throughLocalKey, throughForeignKey, references?, parentKey?, orderBy? }`. Nested relations live in a `relations` map on the relation. Every collection and every nested level costs exactly one extra query for the whole result set, never one per row. Filter via `findAll({ relName: { col: value } })` with the same operators; collection filters compile to `parentKey IN (SELECT ... WHERE ...)`, so `total` stays correct. Filters are one level deep, so go through the intermediate table's columns, e.g. `state.country_id`.
+- Relations on writes: `create`/`update`/`upsert`/mass writes take `relations` and `counts`. Nested create only for relations in `writableRelations`; many-to-many links change with `attach`/`detach`/`sync`.
+- Controllers: prefer `createCrudController(Service, { dto, routes, decorators })` over hand-written CRUD routes. The id pipe follows the primary key.
+- Multi-tenant data: set `scope: (ctx) => ({ tenant_id: ctx.tenantId })` and fill the context with `CrudContext.middleware`. Do not add `tenant_id` filters by hand.
+- `hooks.enableGlobalHooks: true` + `CrudEventBus.subscribe` for audit and cache busting; one event per bulk call.
+- `versionColumn` for optimistic locking: a stale `version` in the body or `expectedVersion` is a 409.
+- `options.counts: ['posts']` gives `_count`; `countBy(column)` gives grouped counts; `withCount: false` skips `COUNT(*)`.
+- Relations: declare in forFeature `config.relations` and eager-load via `options.relations: ['relName']`, where a dotted path nests (`['states', 'states.cities']`, `['state.country']`; the parent path is pulled in automatically). Belongs-to is `{ table, localKey, references? }`, LEFT JOINed into the main query, resolving to an object or `null`. Has-many is `{ table, type: 'hasMany', foreignKey, parentKey?, orderBy? }`. Many-to-many is `{ table, type: 'manyToMany', through, throughLocalKey, throughForeignKey, references?, parentKey?, orderBy? }`. Nested relations live in a `relations` map on the relation. Every collection and every nested level costs exactly one extra query for the whole result set, never one per row. Filter via `findAll({ relName: { col: value } })` with the same operators; collection filters compile to `parentKey IN (SELECT ... WHERE ...)`, so `total` stays correct. Filters go through relation paths at any depth (`{ state: { country: { code: 'IN' } } }`), and collections take `some` / `none` / `every` (`{ posts: { none: { status: 'draft' } } }`), compiled to subqueries.
 - `options.select` narrows the projection and takes dotted relation paths at any depth: `['id', 'name', 'region.code', 'states.cities.name']`. Unknown names are ignored; an all-dotted list leaves the base row complete; the parent key, the child foreign key and any nested key are re-added automatically.
 - Primary keys: `primaryKey` (default `'id'`) per entity in forFeature config (`primaryKeyType` is deprecated and does nothing). UUID works on Postgres via RETURNING; with uuid keys, route params are strings. Don't use `ParseIntPipe`.
 - Full-text search is PostgreSQL-only.
+- Exports (3.5): `createCrudController`, `CrudContext`, `CrudEventBus`, `ApiCrudQuery`, `ApiCrudList`, `MissingScopeException`, `StaleVersionException`, and the types `CrudControllerOptions`, `CrudEvent`, `CrudSubscriber`, `CrudScope`, `CollectionFilter`, `CountByRow`, `CrudPage`, `UncountedCrudPage`, `RelationCounts`.
 - Exports: `SqlBaseCrudService`, `DrizzleCrudModule`, `DRIZZLE_DB`, `DRIZZLE_CRUD_CONFIG`, `TestCrudFactory`, exceptions (`EntityNotFoundException`, `DuplicateEntityException`, `ForeignKeyViolationException`, `EntityInUseException`, `ValidationFailedException`, `BulkOperationException`, plus the deprecated `DatabaseConnectionException` and `TransactionException`), and types (`SqlCrudConfig`, `SqlOperationOptions`, `DrizzleCrudConfig`, `CrudFeature`, `CrudFeatureConfig`, `PaginationOptions`, `OperationOptions`, `SqlSearchOptions`, `SqlSearchMode`, `BulkOperationResult`, `BulkOperationItemError`, `SqlDialect`, `PrimaryKeyType`, `CrudFilter`, `FilterOperators`, `SortInput`, `CursorPaginationOptions`, `CursorPage`, `CrudAllowlists`, `UpsertOptions`, `BulkMode`, `ParsedCrudQuery`), and `parseCrudQuery`.
 
 ### `SqlCrudConfig`
@@ -1071,6 +1272,10 @@ interface SqlCrudConfig {
   searchableColumns?: string[];
   loadableRelations?: string[];
   writableColumns?: string[];
+  writableRelations?: string[];   // nested create; attach/detach/sync when set
+  scope?: Record<string, unknown> | ((ctx) => Record<string, unknown> | null);
+  versionColumn?: string;         // optimistic locking
+  events?: CrudEventBus;          // set by the module with enableGlobalHooks
 }
 ```
 

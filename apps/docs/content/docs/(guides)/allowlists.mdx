@@ -34,10 +34,13 @@ Because a list endpoint that forwards the query string otherwise lets a client r
 | `sortableColumns` | a caller `sortBy` | Columns, and `relation.column` for a belongs-to. The primary key is always allowed. |
 | `selectableColumns` | `options.select` on every read | Columns, and dotted paths at any depth (`states.cities.name`). The primary key is always allowed. |
 | `searchableColumns` | `options.search.columns` and `fullTextSearch` | Columns. `parseQuery` also uses it as the default search columns. |
-| `loadableRelations` | `options.relations` | Relation paths. Listing `states.cities` allows `states` too. |
+| `loadableRelations` | `options.relations` and `options.counts` | Relation paths. Listing `states.cities` allows `states` too. |
 | `writableColumns` | `create`, `update`, `upsert` and the mass versions | Columns. |
+| `writableRelations` | nested create bodies, `attach`, `detach`, `sync` | Relation names. Unset, nested writes are off and the link methods work on any many-to-many relation. See [Relations on writes](/docs/relations-on-writes). |
 
-An unset list allows everything, which is how 3.3 behaved. An empty list (`[]`) allows nothing.
+`filterableColumns` also governs [`countBy`](/docs/aggregates), and takes full dotted paths for [deeper relation filters](/docs/relation-filters) (`state.country.code`).
+
+An unset list allows everything, which is how 3.3 behaved, except `writableRelations`, where unset means no nested writes. An empty list (`[]`) allows nothing.
 
 ## What is not checked?
 

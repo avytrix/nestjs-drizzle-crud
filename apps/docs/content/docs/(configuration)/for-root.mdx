@@ -24,6 +24,8 @@ DrizzleCrudModule.forRoot(config: DrizzleCrudConfig): DynamicModule
 | `defaults.pagination` | `{ defaultLimit?: number; maxLimit?: number }` | Pagination defaults (default `{ 20, 100 }`). Set one key and the other keeps its default. |
 | `defaults.sortOrder` | `'asc' \| 'desc'` | Opt-in default sort. Entities **without** an explicit `defaultSort` fall back to ordering by their `created_at` column in this direction. Omit it and `findAll` orders by the primary key only. |
 | `sql` | `{ caseSensitive?, useReturning? }` | Dialect tuning. `useReturning` defaults to `true` for PostgreSQL, `false` for MySQL. Every key is optional. |
+| `hooks.enableGlobalHooks` | `boolean` | Raise a before and an after event for every write on the module's `CrudEventBus` (default `false`). See [Global hooks and write events](/docs/events). |
+| `hooks.subscribers` | `CrudSubscriber[]` | Subscribers added to the bus when it is created. Only called with `enableGlobalHooks: true`. |
 
 <Callout type="warn">
   Provide **exactly one** of `connectionString` or `db`. The module will throw
@@ -129,7 +131,7 @@ export class AppModule {}
 | `jsonSupport` | `true` | **Deprecated, no effect.** Nothing reads it. It is still accepted so existing configs compile, and will be removed in the next major version. |
 | `enableFullTextSearch` | `false` | **Deprecated, no effect.** `fullTextSearch()` and `search.mode: 'fullText'` work on PostgreSQL whatever this is set to. Removed in the next major version. |
 
-`hooks.enableGlobalHooks` is deprecated too: there are no global hooks, so it does nothing. Override the hooks on each service instead.
+`hooks.enableGlobalHooks` is not deprecated any more: since 3.5.0 it turns on module-level [write events](/docs/events). Per-service hooks run either way.
 
 `caseSensitive: false` only applies `lower()` to text columns (`text`, `varchar`, `char`). A string filter on an integer, uuid or enum column is a plain `=`, so a query string value such as `?author_id=1` works.
 

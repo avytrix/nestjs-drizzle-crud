@@ -254,6 +254,8 @@ await cities.findAll({
 });
 ```
 
+Or filter through the relation chain itself, `{ state: { country: { code: 'IN' } } }`, and quantify collections with `some`, `none` and `every`. See [Relation filters](/docs/relation-filters).
+
 You can also declare a direct relation to the far table if the queries are frequent. Each declared relation is joined (belongs-to) or batched (has-many) independently when it is referenced in a filter or in `options.relations`.
 
 ## Selecting relation columns
@@ -276,10 +278,13 @@ The child keeps its foreign key even when you do not list it, because that colum
 
 ## Limitations
 
-- **Filters are one level deep.** `findAll({ states: { name: 'X' } })` works; `findAll({ states: { cities: { name: 'X' } } })` does not. Filter on the intermediate table's own columns instead.
 - **Belongs-to joins are always `LEFT`.** Filter by `id: { isNotNull: true }` if you need to drop the unmatched rows.
 - **A collection is not paginated per parent.** `orderBy` sorts the children, but every matching child is returned. Use a custom method when you need "the latest three per parent".
 - **Join-table columns are not returned.** If the join table carries data of its own (a role, a position), model it as an entity with two belongs-to relations.
+
+## Can I load relations on a write, or count them?
+
+Yes. `create`, `update`, `upsert` and the mass writes take `options.relations` and return the rows with them loaded, and a create body can write children too. See [Relations on writes](/docs/relations-on-writes). `options.counts` adds `_count` for collections; see [Aggregates](/docs/aggregates).
 
 ## Next
 

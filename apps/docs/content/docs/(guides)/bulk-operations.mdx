@@ -106,6 +106,8 @@ The `errors` property keeps the original `Error` objects for logging. The respon
 
 The standard `beforeCreate` / `afterCreate` (and the corresponding update / delete / softDelete / restore hooks) fire **once per row**, in array order. A `massCreate([a, b, c])` calls `validateCreate` and `beforeCreate` three times, then runs the one insert, then calls `afterCreate` three times. `massUpdate` checks the ids first, then calls `validateUpdate` and `beforeUpdate` once per id.
 
+Module-level [events](/docs/events) fire once for the whole call instead, with `bulk: true` and every id, before and after the statement and inside the transaction.
+
 If any row's hook throws, that item is recorded as failed, the rest still run, and nothing is written. If `beforeUpdate` returns different data for different ids, one `SET` cannot express it, so `massUpdate` writes those rows with one `UPDATE` each.
 
 ## Passing options
@@ -120,6 +122,8 @@ await service.executeSqlTransaction(async (tx) => {
 ```
 
 See [Transactions](/docs/transactions) for the full pattern.
+
+`relations` and `counts` load onto the rows a bulk write returns with one query per relation ([Relations on writes](/docs/relations-on-writes)). On a [scoped entity](/docs/multi-tenancy) an id of another tenant is a 404 entry and nothing is written. With [optimistic locking](/docs/optimistic-locking), every written row's version goes up by one, and `expectedVersions: { '1': 4 }` turns an id at another version into a 409 entry.
 
 ## Limits and pagination
 

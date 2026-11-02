@@ -109,6 +109,12 @@ await users.create(dto, { hooks: { skipBefore: true, skipAfter: true } });
 
 This is useful for migrations or admin scripts that shouldn't fire domain events.
 
+`skipBefore` and `skipAfter` only skip the hooks on this service. Module-level [events](/docs/events) follow `options.skipEvents` instead, so an audit trail built on them is not skipped by accident.
+
+## Hooks or events?
+
+Hooks are protected methods on one service, good for logic that belongs to that entity. [Global events](/docs/events) (`hooks.enableGlobalHooks`) fire for every entity on one bus, once per bulk call, which suits audit trails and cache busting. Both run when both are set up.
+
 ## Full hook list
 
 | Hook | Argument | Returns | Fires on |
@@ -132,5 +138,6 @@ All hooks are `protected` so they can't be called from outside the class. They'r
 
 ## Next
 
+- → [Global hooks and write events](/docs/events)
 - → [Testing: using `TestCrudFactory` with hooks](/docs/testing)
 - → [Transactions: hooks fire inside transactions too](/docs/transactions)

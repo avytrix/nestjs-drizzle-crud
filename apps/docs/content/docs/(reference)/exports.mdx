@@ -11,6 +11,19 @@ Every export below is available from the package root: `import { ... } from 'nes
 | --- | --- | --- |
 | `SqlBaseCrudService` | class | The base class your services extend. See [API reference](/docs/api). |
 | `parseCrudQuery` | function | `parseCrudQuery(query, table, options?)` turns an HTTP query object into filters, pagination and options. Since 3.4.0. See [Parse query strings](/docs/query-parsing). |
+| `createCrudController` | function | `createCrudController(Service, options?)` returns a controller class with list, get, create, update, delete, soft delete, restore, trash and bulk routes. Since 3.5.0. See [CRUD controller factory](/docs/controller-factory). |
+| `CrudContext` | object | `run(context, fn)`, `current()` and `middleware(resolve)`: the per-request context a `scope` reads, in `AsyncLocalStorage`. Since 3.5.0. See [Multi-tenancy](/docs/multi-tenancy). |
+| `CrudEventBus` | class | The module-level event bus behind `hooks.enableGlobalHooks`. Inject it and call `subscribe`. Since 3.5.0. See [Global hooks and write events](/docs/events). |
+
+## OpenAPI
+
+Both need the optional peer `@nestjs/swagger`, loaded only when a decorator runs. Since 3.5.0. See [OpenAPI docs for list queries](/docs/openapi).
+
+| Export | Kind | Description |
+| --- | --- | --- |
+| `ApiCrudQuery` | decorator | Documents every list query parameter and each filterable column. |
+| `ApiCrudList` | decorator | `ApiCrudQuery` plus the 200 page envelope with the row schema. |
+| `ApiCrudSource`, `ApiCrudQueryOptions` | types | The decorators' source (`{ table, ...allowlists }` or a `@CrudService` class) and options (`{ cursor?, trash? }`). |
 
 ## Module & DI tokens
 
@@ -20,6 +33,7 @@ Every export below is available from the package root: `import { ... } from 'nes
 | `DRIZZLE_DB` | `string` | DI token for the resolved Drizzle instance. |
 | `DRIZZLE_CONNECTION` | `string` | DI token for the connection wrapper. |
 | `DRIZZLE_CRUD_CONFIG` | `string` | DI token for the normalized global config. |
+| `CrudEventBus` | class | Also a provider: `forRoot` / `forRootAsync` register and export it globally. |
 | `DrizzleConnection` | class | The internal connection wrapper. Exposed for advanced use. |
 
 ## Decorators
@@ -37,6 +51,8 @@ All exceptions extend `@nestjs/common`'s `HttpException`, so Nest's default exce
 | `EntityNotFoundException` | 404 | Thrown by `update`, `restore`, `massUpdate`, `massRestore` when the row doesn't exist. |
 | `DuplicateEntityException` | 409 | Thrown by `create` / `update` when a unique constraint is violated (Postgres SQLSTATE `23505`). |
 | `ForeignKeyViolationException` | 400 | Thrown by `create` / `update` when a supplied foreign key references no existing row (`23503`). Names the offending column. |
+| `StaleVersionException` | 409 | Optimistic locking: a write named a version the row is no longer at. Since 3.5.0. See [Optimistic locking](/docs/optimistic-locking). |
+| `MissingScopeException` | 403 | A scoped entity was used without the context value its scope needs. Since 3.5.0. See [Multi-tenancy](/docs/multi-tenancy). |
 | `EntityInUseException` | 409 | Thrown by `delete` when other rows still reference this one (`23503`, `ON DELETE RESTRICT` or `NO ACTION`). |
 | `ValidationFailedException` | 400 | Throw this from your `validateCreate` / `validateUpdate` hooks to reject bad input. |
 | `BulkOperationException` | 400 | Thrown by any bulk method when the transaction rolls back. The response body lists each failed item as `{ index \| id, status, message }`; `errors` keeps the original errors. |
@@ -54,7 +70,7 @@ All exceptions extend `@nestjs/common`'s `HttpException`, so Nest's default exce
 | `SqlCrudConfig` | `interface`, the per-entity merged config. |
 | `SqlOperationOptions` | `interface`, the third argument to most methods, including `search` for `findAll` and `count`. |
 | `OperationOptions` | `interface`, the options type used by `ICrudService`. Since 3.3.1. |
-| `PaginationOptions` | `interface`, the second argument of `findAll` and `fullTextSearch`: `{ page, limit, sortBy, sortOrder }`. Since 3.3.1. |
+| `PaginationOptions` | `interface`, the second argument of `findAll` and `fullTextSearch`: `{ page, limit, sortBy, sortOrder, withCount }`. Since 3.3.1; `withCount` since 3.5.0. |
 | `SqlSearchOptions` | `interface`, `options.search`: `{ term, columns, mode }`. Since 3.3.1. |
 | `SqlSearchMode` | `'ilike' \| 'fullText'`. Since 3.3.1. |
 | `BulkOperationResult` | `interface`, `{ success, data?, errors? }`. Since 3.3.1. |
@@ -76,10 +92,17 @@ All exceptions extend `@nestjs/common`'s `HttpException`, so Nest's default exce
 | `ColumnFilter`, `FilterScalar` | what one column accepts. Since 3.4.0. |
 | `CursorPaginationOptions` | the second argument of `findByCursor`. Since 3.4.0. |
 | `CursorPage` | `{ data, limit, nextCursor, total? }`. Since 3.4.0. |
-| `CrudAllowlists` | the six allowlist keys of `SqlCrudConfig`. Since 3.4.0. |
+| `CrudAllowlists` | the allowlist keys of `SqlCrudConfig`. Since 3.4.0; `writableRelations` since 3.5.0. |
 | `UpsertOptions` | `{ conflictTarget?, update? }`. Since 3.4.0. |
 | `BulkMode` | `'set' \| 'perItem'`. Since 3.4.0. |
 | `ParseCrudQueryOptions`, `ParsedCrudQuery` | input and output of `parseCrudQuery`. Since 3.4.0. |
+| `CollectionFilter`, `CollectionQuantifier` | `{ some?, none?, every? }` on a collection filter, and its keys. Since 3.5.0. |
+| `CrudPage`, `UncountedCrudPage` | the `findAll` envelope; with `withCount: false`, `total: null` and `hasMore`. Since 3.5.0. |
+| `RelationCounts` | `string[] \| Record<string, true \| CrudFilter>`, `options.counts`. Since 3.5.0. |
+| `CountByRow` | `{ value, count }`, one group of `countBy`. Since 3.5.0. |
+| `CrudScope`, `CrudScopeValues`, `CrudContextValue` | the `scope` config, its `column: value` pairs, and the context it reads. Since 3.5.0. |
+| `CrudEvent`, `CrudEventPhase`, `CrudSubscriber`, `CrudWriteOperation` | write events and their subscribers. Since 3.5.0. |
+| `CrudControllerOptions`, `CrudControllerInstance`, `CrudRouteName`, `CrudRouteOptions` | the controller factory's options and result. Since 3.5.0. |
 
 ## Re-exported Drizzle helpers
 

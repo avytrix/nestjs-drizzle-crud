@@ -43,8 +43,11 @@ interface DrizzleCrudConfig {
     enableFullTextSearch?: boolean;
   };
 
-  /** @deprecated Has no effect: there are no global hooks. */
-  hooks?: { enableGlobalHooks?: boolean };
+  /** Module-level write events. See /docs/events. */
+  hooks?: {
+    enableGlobalHooks?: boolean;   // default false
+    subscribers?: Array<Record<string, unknown>>; // CrudSubscriber[]
+  };
 }
 ```
 
@@ -64,7 +67,7 @@ sql: {
 }
 ```
 
-`sql.jsonSupport`, `sql.enableFullTextSearch`, `hooks.enableGlobalHooks` and `primaryKeyType` are deprecated. Nothing reads them, so they have no effect. They are still accepted so existing configs compile, and will be removed in the next major version.
+`sql.jsonSupport`, `sql.enableFullTextSearch` and `primaryKeyType` are deprecated. Nothing reads them, so they have no effect. They are still accepted so existing configs compile, and will be removed in the next major version. `hooks.enableGlobalHooks` was deprecated in 3.3.1 and does something again since 3.5.0: it turns on [write events](/docs/events).
 
 ## `SqlCrudConfig`
 
@@ -136,12 +139,24 @@ interface SqlCrudConfig {
   sortableColumns?: string[];     // columns and 'belongsTo.column'
   selectableColumns?: string[];   // columns and dotted paths
   searchableColumns?: string[];
-  loadableRelations?: string[];   // relation paths
+  loadableRelations?: string[];   // relation paths, also for counts
   writableColumns?: string[];     // create, update, upsert
+  writableRelations?: string[];   // nested create, attach, detach, sync
+
+  // ---- Tenant scope: ANDed into every read and write, set on create ----
+  scope?:
+    | Record<string, unknown>
+    | ((ctx: Record<string, unknown>) => Record<string, unknown> | null);
+
+  // ---- Optimistic locking: integer column, +1 on every write ----
+  versionColumn?: string;
+
+  // ---- Event bus, set by the module when hooks.enableGlobalHooks is on ----
+  events?: { emit(event: unknown): Promise<void> }; // a CrudEventBus
 }
 ```
 
-The allowlists are described in [Allowlists](/docs/allowlists). Arrays replace, they do not merge, across the config layers.
+The allowlists are described in [Allowlists](/docs/allowlists). Arrays replace, they do not merge, across the config layers. `scope` is on [Multi-tenancy](/docs/multi-tenancy), `versionColumn` on [Optimistic locking](/docs/optimistic-locking) and `events` on [Global hooks and write events](/docs/events). A `versionColumn` or a fixed `scope` key that is not a column fails at startup.
 
 ## `RelationConfig`, `RelationsConfig` and `RelationType`
 
@@ -250,6 +265,62 @@ interface CursorPage<T> { data: T[]; limit: number; nextCursor: string | null; t
 interface UpsertOptions { conflictTarget?: string | string[]; update?: string[] }
 type BulkMode = 'set' | 'perItem';
 ```
+
+## 3.5.0 types
+
+See [Relation filters](/docs/relation-filters), [Aggregates](/docs/aggregates), [Pagination](/docs/pagination-sorting#how-do-i-skip-the-count-query), [Multi-tenancy](/docs/multi-tenancy), [Global hooks and write events](/docs/events) and [CRUD controller factory](/docs/controller-factory).
+
+```ts
+interface CollectionFilter { some?: CrudFilter; none?: CrudFilter; every?: CrudFilter }
+type CollectionQuantifier = keyof CollectionFilter;
+
+interface CrudPage<T, Total extends number | null = number> {
+  data: T[]; total: Total; page: number; limit: number; hasMore?: boolean;
+}
+interface UncountedCrudPage<T> extends CrudPage<T, null> { hasMore: boolean }
+
+type RelationCounts = string[] | Record<string, true | CrudFilter>;
+interface CountByRow<V = unknown> { value: V; count: number }
+
+type CrudContextValue = Record<string, unknown>;
+type CrudScopeValues = Record<string, unknown>;
+type CrudScope = CrudScopeValues | ((context: CrudContextValue) => CrudScopeValues | null);
+
+type CrudWriteOperation = 'create' | 'update' | 'upsert' | 'softDelete' | 'restore'
+  | 'delete' | 'attach' | 'detach' | 'sync';
+type CrudEventPhase = 'before' | 'after';
+interface CrudEvent<T = any> {
+  entity: string; operation: CrudWriteOperation; phase: CrudEventPhase; bulk: boolean;
+  ids: unknown[]; input?: unknown; rows: T[]; transaction?: unknown; context?: CrudContextValue;
+}
+interface CrudSubscriber<T = any> {
+  entities?: string[];
+  beforeWrite?(e: CrudEvent<T>): void | Promise<void>;
+  afterWrite?(e: CrudEvent<T>): void | Promise<void>;
+  // plus before/after for Create, Update, Upsert, SoftDelete, Restore,
+  // Delete, Attach, Detach and Sync: beforeCreate, afterCreate, ...
+}
+
+type CrudRouteName = 'list' | 'trash' | 'get' | 'create' | 'update' | 'delete'
+  | 'softDelete' | 'restore' | 'bulkCreate' | 'bulkUpdate' | 'bulkDelete' | 'bulkRestore';
+interface CrudRouteOptions { enabled?: boolean; decorators?: MethodDecorator[] }
+interface CrudControllerOptions {
+  path?: string;
+  idType?: 'int' | 'uuid' | 'string';
+  dto?: { create?: Type<unknown>; update?: Type<unknown> };
+  query?: ParseCrudQueryOptions;
+  routes?: Partial<Record<CrudRouteName, boolean | CrudRouteOptions>>;
+  decorators?: MethodDecorator[];
+  classDecorators?: ClassDecorator[];
+  deleteMode?: 'hard' | 'soft';
+  openapi?: true | ApiCrudSource;
+}
+
+type ApiCrudSource = (ParseCrudQueryOptions & { table: any }) | (abstract new (...args: any[]) => unknown);
+interface ApiCrudQueryOptions { cursor?: boolean; trash?: boolean }
+```
+
+`PaginationOptions` gains `withCount?: boolean`, and `ParsedCrudQuery` gains `pagination.withCount` and `counts`.
 
 `ParseCrudQueryOptions` and `ParsedCrudQuery` are on [Parse query strings into filters](/docs/query-parsing#what-does-it-return).
 

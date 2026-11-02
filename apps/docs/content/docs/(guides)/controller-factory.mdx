@@ -1,0 +1,123 @@
+---
+title: CRUD controller factory
+description: "createCrudController builds a NestJS controller with list, cursor, get, create, update, delete, soft delete, restore, trash and bulk routes from a service, with the right id pipe."
+---
+
+`createCrudController(Service, options)` returns a NestJS controller class whose routes call the service: list (offset and cursor), get, create, update, delete, soft delete, restore, trash and four bulk routes. It picks the id pipe from the primary key column, so you no longer copy the same controller for every entity.
+
+```ts accent=nest title="projects.controller.ts"
+import { Controller } from '@nestjs/common';
+import { createCrudController } from 'nestjs-drizzle-crud';
+import { CreateProjectDto } from './dto/create-project.dto';
+import { UpdateProjectDto } from './dto/update-project.dto';
+import { ProjectsService } from './projects.service';
+
+@Controller('projects')
+export class ProjectsController extends createCrudController(ProjectsService, {
+  dto: { create: CreateProjectDto, update: UpdateProjectDto },
+  deleteMode: 'soft',
+  routes: { bulkCreate: true, bulkDelete: true },
+}) {}
+```
+
+Every route goes through the service, so [allowlists](/docs/allowlists), [scope](/docs/multi-tenancy), soft delete, [optimistic locking](/docs/optimistic-locking) and [events](/docs/events) apply exactly as they do in code.
+
+## Which routes does it register?
+
+| Route | Method and path | Calls | Default |
+| --- | --- | --- | --- |
+| `list` | `GET /` | `findAll`, or `findByCursor` when `?cursor=` is present | on |
+| `trash` | `GET /trash` | `findAll` with `onlyDeleted` | on |
+| `get` | `GET /:id` | `find`, 404 when missing | on |
+| `create` | `POST /` | `create` | on |
+| `update` | `PATCH /:id` | `update` | on |
+| `delete` | `DELETE /:id` | `delete`, or `softDelete` with `deleteMode: 'soft'` | on |
+| `softDelete` | `POST /:id/soft-delete` | `softDelete` | on |
+| `restore` | `POST /:id/restore` | `restore` | on |
+| `bulkCreate` | `POST /bulk` | `massCreate`, body is an array | off |
+| `bulkUpdate` | `PATCH /bulk` | `massUpdate`, body is `{ ids, data }` | off |
+| `bulkDelete` | `POST /bulk-delete` | `massDelete`, or `massSoftDelete` with `deleteMode: 'soft'`, body is `{ ids }` | off |
+| `bulkRestore` | `POST /bulk-restore` | `massRestore`, body is `{ ids }` | off |
+
+The list route runs the whole query string through [`parseQuery`](/docs/query-parsing), so filters, `sortBy`, `fields`, `with`, `counts`, `withCount` and `cursor` all work. `get`, `create`, `update`, `restore` and the bulk writes read `?with=`, `?fields=` and `?counts=` and ignore the rest of the query. On an entity without soft delete, `trash`, `softDelete`, `restore` and `bulkRestore` answer 404. Static paths (`/trash`, `/bulk`) are registered before `/:id`, so they never match as an id.
+
+## How is the id parsed?
+
+From the primary key column at request time, the way the matching Nest pipe would:
+
+| Primary key column | Parsing | Bad input |
+| --- | --- | --- |
+| integer, serial | `ParseIntPipe` | 400 `Validation failed (numeric string is expected)` |
+| uuid | `ParseUUIDPipe` | 400 |
+| bigint in bigint mode | digits only, then `BigInt` | 400 |
+| anything else | the string as is | none |
+
+The service exposes this as `service.parseId(raw)` and `service.idKind()`, which you can use in your own controllers. Set `idType: 'int' | 'uuid' | 'string'` to fix the pipe when the class is built instead; it then shows on the route as a normal `@Param('id', ParseIntPipe)`.
+
+## How do I validate request bodies?
+
+Pass the DTO classes in `dto`. They become the parameter types of `create` and `update`, so a global `ValidationPipe` validates them as usual, and `bulkCreate` validates each element with `ParseArrayPipe({ items: dto.create })`:
+
+```ts accent=nest title="main.ts"
+app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+```
+
+Without `dto`, bodies reach the service unvalidated; [`writableColumns`](/docs/allowlists) still applies.
+
+## How do I turn routes on or off?
+
+```ts
+createCrudController(TagsService, {
+  routes: {
+    delete: false,              // no DELETE /:id
+    bulkDelete: true,           // POST /bulk-delete
+    update: { decorators: [Roles('admin')] },
+  },
+});
+```
+
+`true` or `false` switches a route; an object can also carry decorators for that route alone.
+
+## How do I add guards, interceptors or Swagger tags?
+
+`decorators` applies method decorators to every route, before the per-route ones. `classDecorators` decorates the generated class. Or decorate your subclass directly:
+
+```ts accent=nest
+@ApiTags('projects')
+@UseGuards(AuthGuard)
+@Controller('projects')
+export class ProjectsController extends createCrudController(ProjectsService, {
+  decorators: [UseInterceptors(AuditInterceptor)],
+}) {}
+```
+
+## Which other options are there?
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `path` | none | Applies `@Controller(path)` to the generated class. Leave it out to decorate a subclass. |
+| `deleteMode` | `'hard'` | `'soft'` makes `DELETE /:id` and `POST /bulk-delete` move rows to the trash. |
+| `query` | `{}` | Options for `parseQuery` on `list` and `trash`, such as `allowTrash` or `ignore`. |
+| `openapi` | none | Documents `list` and `trash` with [`ApiCrudList`](/docs/openapi). Pass the entity config with its `table`, or `true` for a service decorated with `@CrudService`. |
+
+## Can I add my own routes?
+
+Yes. The factory returns a class, so extend it and add methods. The service is on `this.service`:
+
+```ts accent=nest
+@Controller('projects')
+export class ProjectsController extends createCrudController(ProjectsService) {
+  @Get('stats/by-name')
+  stats() {
+    return this.service.countBy('name');
+  }
+}
+```
+
+To replace a generated route, turn it off in `routes` and declare your own with the same path. Do not override a generated method by name: the route metadata sits on the generated handler, so the override would not be routed.
+
+## Next
+
+- → [OpenAPI docs for list queries](/docs/openapi)
+- → [Multi-tenancy: scope every query to a tenant](/docs/multi-tenancy)
+- → [Parse query strings into filters](/docs/query-parsing)

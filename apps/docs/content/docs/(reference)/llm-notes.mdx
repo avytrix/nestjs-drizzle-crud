@@ -8,9 +8,9 @@ This page is a tight, fact-only summary designed to be read by code-generation t
 ## Package
 
 - **Name:** `nestjs-drizzle-crud`
-- **Version:** `3.4.0`
+- **Version:** `3.5.0`
 - **License:** MIT
-- **Peers:** `@nestjs/common`, `@nestjs/core`, `drizzle-orm` (`>=0.28.0 <1.0.0`), `reflect-metadata`. Optional: `postgres` (PG) / `mysql2` (MySQL).
+- **Peers:** `@nestjs/common`, `@nestjs/core`, `drizzle-orm` (`>=0.28.0 <1.0.0`), `reflect-metadata`. Optional: `postgres` (PG) / `mysql2` (MySQL), `@nestjs/swagger` (only for `ApiCrudQuery` / `ApiCrudList`).
 
 ## Setup is two steps and no per-service connection wiring
 
@@ -30,7 +30,7 @@ class XService extends SqlBaseCrudService<X, CreateXDto, UpdateXDto, XFilterDto>
 - The table is passed in `forFeature`, **not** in the service.
 - If tables lack timestamp / soft-delete columns, set `defaults: { softDelete: false, timestamps: false }`. `softDelete.column` and `timestamps.createdAt` / `updatedAt` name the **key** in the Drizzle table object (`deletedAt` for `deletedAt: timestamp('deleted_at')`); a key the table lacks makes the service throw at startup with the key to use.
 - `softDelete`, `timestamps`, `pagination` and `sql` merge one level deep across forRoot, `@CrudService` and `forFeature`: `pagination: { defaultLimit: 5 }` keeps `maxLimit`.
-- `findAll` returns `{ data, total, page, limit }`. Not a bare array.
+- `findAll` returns `{ data, total, page, limit }`. Not a bare array. With `{ withCount: false }` (or `?withCount=false`) it skips `COUNT(*)`: `total` is `null` and `hasMore` is a boolean.
 - Filter operators live inside an object value: `{ age: { gte: 18 } }`. Operators: `eq gt gte lt lte neq like ilike in notIn between isNull isNotNull startsWith endsWith contains iStartsWith iEndsWith iContains arrayContains arrayOverlaps jsonContains`. `startsWith` / `endsWith` / `contains` escape the value and follow `caseSensitive`; the `i` forms are always case-insensitive; the array and JSON operators are PostgreSQL only.
 - Groups: `{ or: [filterA, filterB], and: [...], not: filter }`, nestable, each member a full filter (columns, relations, collections), also in `count`. `like` / `ilike` require caller-supplied `%` wildcards (`ilike` is `LIKE` on MySQL); a bare string is an exact match, case-insensitive on text columns when `caseSensitive === false`, and `%` / `_` / `\` in the value are literal data, never wildcards. `{ isNull: false }` means `IS NOT NULL`, and `"true"` / `"false"` strings work.
 - String filter values are fine on integer, uuid and enum columns (plain `=`), and date strings are parsed for date columns. An unknown filter key, an unknown operator or an invalid date is a 400; `null` / `undefined` values are skipped.
@@ -48,7 +48,7 @@ class XService extends SqlBaseCrudService<X, CreateXDto, UpdateXDto, XFilterDto>
   - `{ table, type: 'manyToMany', through, throughLocalKey, throughForeignKey, references?, parentKey?, orderBy? }` resolves to an array; the join-table key never appears in the result.
   - Nested relations go in a `relations` map on the relation itself.
   - **Every collection and every nested level costs exactly ONE extra query for the whole result set, never one per row.** A page of 50 countries with their states and each state's cities is 4 queries: data, count, states, cities.
-- A collection is never joined. Filter via `findAll({ relName: { col: value } })` with the same operators: belongs-to uses the join, has-many and many-to-many compile to `parentKey IN (SELECT ... WHERE ...)`, so `total` and pagination stay correct. Filters are one level deep; go through the intermediate table's own columns, e.g. `state.country_id`.
+- A collection is never joined. Filter via `findAll({ relName: { col: value } })` with the same operators: belongs-to uses the join, has-many and many-to-many compile to `parentKey IN (SELECT ... WHERE ...)`, so `total` and pagination stay correct. A relation filter can nest through the related table's own `relations` at any depth (`{ state: { country: { code: 'IN' } } }`, `?state[country][code]=IN`); only the top-level belongs-to is joined, deeper levels are `EXISTS`. A collection value may be `{ some }`, `{ none }` or `{ every }` (`NOT EXISTS`; `every` is true for a parent with no rows; `some: {}` = has any, `none: {}` = has none). `filterableColumns` takes the full dotted path.
 - A relation missing its required keys throws when the service is constructed (nested included, with the full path in the message).
 - `options.select` narrows the projection and accepts dotted relation paths at any depth: `['id', 'name', 'region.code', 'states.cities.name']`. Unknown names are ignored. When every entry is dotted the base row is returned in full. The parent key, the child foreign key and any key a nested level needs are re-added automatically, because the grouping needs them.
 - The package ships an MCP server, `npx nestjs-drizzle-crud-mcp` (stdio), with `list_docs`, `get_doc` and `search_docs` over `AGENT.md` / `README.md` / `CHANGELOG.md`. Rules templates for every agent: `AGENTS.template.md` and `CLAUDE.template.md`.
@@ -187,3 +187,13 @@ When in doubt, prefer:
 4. The [Changelog](/docs/changelog). Release-by-release behavior changes since 3.0.0.
 
 This page summarizes (1) and (2) and may lag minor patch releases. If a generated snippet disagrees with the TypeScript types, **trust the types**.
+
+## 3.5.0 rules
+
+- **Controllers:** prefer `class XController extends createCrudController(XService, { dto: { create, update } })` under `@Controller('x')` over hand-writing CRUD routes. Bulk routes are off until enabled in `routes`. The id is parsed from the primary key column (`ParseIntPipe` / `ParseUUIDPipe`); do not add your own pipe unless you set `idType`. Do not override a generated method by name; disable the route and add your own.
+- **OpenAPI:** `@ApiCrudList({ table, ...entityConfig })` on a list route. Keep the entity config in one constant shared with `forFeature`. Needs `@nestjs/swagger` installed.
+- **Tenancy:** set `scope: (ctx) => ({ tenant_id: ctx.tenantId })` on the entity and provide the context with `CrudContext.middleware(req => ({ tenantId }))` in a module's `configure`, `CrudContext.run(ctx, fn)`, or `options.context`. Never add a manual `tenant_id` filter or set it in the body: the scope is ANDed into every read and write and written on create. Another tenant's id is a 404; a missing context value is a 403 (`MissingScopeException`). `skipScope: true` only for trusted jobs. Scoped upsert is PostgreSQL only.
+- **Events:** `hooks: { enableGlobalHooks: true }` in `forRoot`, then inject `CrudEventBus` and `subscribe({ afterWrite(e) {...} })`. One event per mass call (`bulk: true`). Use `e.transaction` to write audit rows atomically. `options.skipEvents` skips them; `hooks.skipBefore/skipAfter` do not.
+- **Optimistic locking:** `versionColumn: 'version'` (integer, default 1). Clients send the version they read in the update body (or `expectedVersion`); a stale one is a 409 `StaleVersionException`. Never write the version yourself. Bulk: `expectedVersions: { [String(id)]: version }`.
+- **Relations on writes:** `create(dto, { relations: ['author'] })` returns the row with relations loaded (also update, upsert, restore, mass writes). Nested create needs `writableRelations: ['posts']`; has-many takes an array, belongs-to an object, many-to-many ids or objects; one transaction, PostgreSQL. Use `attach(id, 'tags', ids)`, `detach(id, 'tags', ids?)`, `sync(id, 'tags', ids)` for links, never raw inserts into the join table.
+- **Aggregates:** `options.counts: ['posts']` adds `_count: { posts: n }` with one grouped query per relation (collections only); `?counts=posts` from a query string. `countBy('status', filters)` returns `[{ value, count }]`; the column must be filterable.
