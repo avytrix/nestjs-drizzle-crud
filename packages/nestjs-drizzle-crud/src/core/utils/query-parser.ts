@@ -18,7 +18,8 @@ import { isPlainObject } from "./merge-config";
 //
 //   ?status=active&age[gte]=18&region[name]=Asia&or[0][role]=admin
 //    &sortBy=-created_at,name&page=2&limit=20&fields=id,name&with=region
-//    &search=jo
+//    &search=jo&withCount=false&counts=posts
+//    &state[country][code]=IN&posts[none][status]=draft
 //
 // Values are coerced by the Drizzle column type (numbers, bigints, booleans,
 // dates), and anything the table does not have is a 400, as in the service.
@@ -37,9 +38,12 @@ const PARAMS = new Set([
 	"cursor",
 	"after",
 	"count",
+	"withCount",
+	"counts",
 ]);
 const TRASH_PARAMS = new Set(["withDeleted", "onlyDeleted"]);
 const GROUP_KEYS = new Set(["and", "or", "not"]);
+const QUANTIFIERS = new Set(["some", "none", "every"]);
 const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 // Operators and the shape of their operand in a query string.
@@ -104,6 +108,9 @@ export function parseCrudQuery(
 	if (params.count !== undefined) {
 		pagination.count = flag(params.count, "count");
 	}
+	if (params.withCount !== undefined) {
+		pagination.withCount = flag(params.withCount, "withCount");
+	}
 
 	const operation: SqlOperationOptions = {};
 	const select = list(params.fields, "fields");
@@ -115,6 +122,11 @@ export function parseCrudQuery(
 	if (relations) {
 		for (const path of relations) checkRelationPath(path, context);
 		operation.relations = relations;
+	}
+	const counts = list(params.counts, "counts");
+	if (counts) {
+		for (const name of counts) checkCountPath(name, context);
+		operation.counts = counts;
 	}
 	const term = single(params.search, "search")?.trim();
 	if (term) {
@@ -131,7 +143,10 @@ export function parseCrudQuery(
 		operation.onlyDeleted = flag(params.onlyDeleted, "onlyDeleted");
 	}
 
-	const filters = parseFilter(tree, context, { table });
+	const filters = parseFilter(tree, context, {
+		table,
+		relations: relationsOf(context),
+	});
 	return {
 		filters,
 		pagination,
@@ -139,6 +154,7 @@ export function parseCrudQuery(
 		select: operation.select,
 		relations: operation.relations,
 		search: operation.search,
+		counts,
 		options: operation,
 		isCursor,
 	};
@@ -324,6 +340,18 @@ function checkRelationPath(path: string, context: Context) {
 	allow(context, "loadableRelations", path, "Loading the relation");
 }
 
+function checkCountPath(name: string, context: Context) {
+	const relations = relationsOf(context);
+	const relation = Object.hasOwn(relations, name) ? relations[name] : undefined;
+	if (!relation) throw bad(`Unknown relation to count: ${name}`);
+	if (relation.type !== "hasMany" && relation.type !== "manyToMany") {
+		throw bad(
+			`Cannot count "${name}": only a has-many or many-to-many relation has a count`,
+		);
+	}
+	allow(context, "loadableRelations", name, "Loading the relation");
+}
+
 function checkSelectPath(path: string, context: Context) {
 	const segments = path.split(".");
 	const table = walkRelations(segments.slice(0, -1), context, path);
@@ -388,7 +416,9 @@ function checkSortPath(path: string, context: Context) {
 
 interface Scope {
 	table: any;
-	// The relation name when the filter is on a related table.
+	// The relations of `table`, so a filter can go on through them.
+	relations: RelationsConfig;
+	// The dotted relation path when the filter is on a related table.
 	prefix?: string;
 }
 
@@ -401,13 +431,11 @@ function parseFilter(
 		throw bad("Each member of a filter group must be an object of filters");
 	}
 	const out: CrudFilter = {};
-	const relations = relationsOf(context);
+	const relations = scope.relations;
 	for (const [key, raw] of Object.entries(node)) {
 		const column = columnOf(scope.table, key);
 		const relation =
-			!scope.prefix && !column && Object.hasOwn(relations, key)
-				? relations[key]
-				: undefined;
+			!column && Object.hasOwn(relations, key) ? relations[key] : undefined;
 
 		if (!column && !relation && GROUP_KEYS.has(key)) {
 			if (key === "not") {
@@ -422,15 +450,37 @@ function parseFilter(
 		}
 
 		if (relation) {
+			const path = scope.prefix ? `${scope.prefix}.${key}` : key;
 			if (!isPlainObject(raw)) {
 				throw bad(
-					`Filter on relation "${key}" needs a column, as in ${key}[column]=value`,
+					`Filter on relation "${path}" needs a column, as in ${key}[column]=value`,
 				);
 			}
-			out[key] = parseFilter(raw, context, {
+			const inner: Scope = {
 				table: relation.table,
-				prefix: key,
-			});
+				relations: relation.relations ?? {},
+				prefix: path,
+			};
+			const collection =
+				relation.type === "hasMany" || relation.type === "manyToMany";
+			const keys = Object.keys(raw);
+			if (
+				collection &&
+				keys.length > 0 &&
+				keys.every(
+					(name) => QUANTIFIERS.has(name) && !columnOf(relation.table, name),
+				)
+			) {
+				const quantified: Record<string, CrudFilter> = {};
+				for (const [quantifier, member] of Object.entries(raw)) {
+					// `?posts[some]` with no column means "has at least one".
+					quantified[quantifier] =
+						member === "" ? {} : parseFilter(member, context, inner);
+				}
+				out[key] = quantified;
+			} else {
+				out[key] = parseFilter(raw, context, inner);
+			}
 			continue;
 		}
 

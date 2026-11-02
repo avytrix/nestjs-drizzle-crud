@@ -1,4 +1,4 @@
-import type { SortInput } from "./query.interface";
+import type { CrudPage, SortInput, UncountedCrudPage } from "./query.interface";
 
 export interface PaginationOptions {
 	page?: number;
@@ -6,6 +6,8 @@ export interface PaginationOptions {
 	// One column, or a list: ["region.name", "-name"] or [{ column, order }].
 	sortBy?: SortInput;
 	sortOrder?: "asc" | "desc";
+	// false skips the COUNT(*): `total` is then null and `hasMore` is set.
+	withCount?: boolean;
 }
 
 export interface BulkOperationResult<T> {
@@ -34,10 +36,20 @@ export interface ICrudService<T, CreateDto, UpdateDto, FilterDto = any> {
 	find(id: any, options?: OperationOptions): Promise<T | null>;
 	findOne(where: Partial<T>, options?: OperationOptions): Promise<T | null>;
 	findAll(
+		filters: FilterDto | undefined,
+		pagination: PaginationOptions & { withCount: false },
+		options?: OperationOptions,
+	): Promise<UncountedCrudPage<T>>;
+	findAll(
+		filters?: FilterDto,
+		pagination?: PaginationOptions & { withCount?: true },
+		options?: OperationOptions,
+	): Promise<CrudPage<T>>;
+	findAll(
 		filters?: FilterDto,
 		pagination?: PaginationOptions,
 		options?: OperationOptions,
-	): Promise<{ data: T[]; total: number; page: number; limit: number }>;
+	): Promise<CrudPage<T, number | null>>;
 
 	create(data: CreateDto, options?: OperationOptions): Promise<T>;
 	update(id: any, data: UpdateDto, options?: OperationOptions): Promise<T>;

@@ -65,11 +65,26 @@ export interface FilterGroup {
 }
 
 // The filter object `findAll`, `findByCursor` and `count` take. A key is a
-// column, a relation (whose value filters the related table's columns) or a
-// group key.
+// column, a relation (whose value filters the related table's columns, and
+// may name the related table's own relations: `{ state: { country: { code:
+// "IN" } } }`) or a group key.
 export type CrudFilter = FilterGroup & {
-	[key: string]: ColumnFilter | CrudFilter | CrudFilter[];
+	[key: string]: ColumnFilter | CrudFilter | CrudFilter[] | CollectionFilter;
 };
+
+// How a filter on a collection (has-many or many-to-many) relation counts the
+// related rows. A plain filter object means `some`. Each one compiles to a
+// subquery, never a join, so parent rows are not multiplied.
+//   some:  at least one related row matches (`{ some: {} }`: has any)
+//   none:  no related row matches (`{ none: {} }`: has none at all)
+//   every: every related row matches; true for a parent with no rows
+export interface CollectionFilter {
+	some?: CrudFilter;
+	none?: CrudFilter;
+	every?: CrudFilter;
+}
+
+export type CollectionQuantifier = keyof CollectionFilter;
 
 // A caller sort: one column, a list of columns, or a list of SortColumn. In a
 // list, a `-` prefix sorts that column descending and anything else ascending.
@@ -89,6 +104,34 @@ export interface CursorPaginationOptions {
 	sortOrder?: SortOrder;
 	/** Also run the count query and return `total`. Off by default. */
 	count?: boolean;
+}
+
+// The envelope of `findAll`. `total` is the number of matching rows, or
+// `null` when the call passed `withCount: false`; `hasMore` is only present
+// then, and says whether another page follows.
+export interface CrudPage<T, Total extends number | null = number> {
+	data: T[];
+	total: Total;
+	page: number;
+	limit: number;
+	hasMore?: boolean;
+}
+
+// What `findAll` returns with `withCount: false`: no COUNT(*), and `hasMore`
+// from fetching one row past the page.
+export interface UncountedCrudPage<T> extends CrudPage<T, null> {
+	hasMore: boolean;
+}
+
+// Relation counts to put on each row under `_count`. A list counts every live
+// related row; an object can narrow each count with a filter on the related
+// table: `{ posts: { status: "published" }, tags: true }`.
+export type RelationCounts = string[] | Record<string, true | CrudFilter>;
+
+// One group of `countBy`: a value of the column and how many rows have it.
+export interface CountByRow<V = unknown> {
+	value: V;
+	count: number;
 }
 
 export interface CursorPage<T> {
@@ -113,8 +156,15 @@ export interface CrudAllowlists {
 	selectableColumns?: string[];
 	/** Columns `search` and `fullTextSearch` may search. */
 	searchableColumns?: string[];
-	/** Relation paths `relations` may load. "states.cities" also allows "states". */
+	/** Relation paths `relations` may load. "states.cities" also allows "states". Also governs `counts`. */
 	loadableRelations?: string[];
+	/**
+	 * Relations a create body may write (nested create), and that `attach`,
+	 * `detach` and `sync` may change. Unset, nested writes are off (a relation
+	 * key in a body is ignored, as before 3.5) and attach / detach / sync work
+	 * on any many-to-many relation.
+	 */
+	writableRelations?: string[];
 	/**
 	 * Columns create, update and upsert may write. Unset, the package ignores
 	 * the columns it manages itself (see the docs); set, any other column is a
@@ -156,12 +206,16 @@ export interface ParsedCrudQuery {
 		sortBy?: SortColumn[];
 		cursor?: string | null;
 		count?: boolean;
+		/** `?withCount=false`: skip the COUNT(*) of an offset list. */
+		withCount?: boolean;
 	};
 	sort: SortColumn[];
 	select?: string[];
 	relations?: string[];
 	search?: SqlSearchOptions;
-	/** `select`, `relations`, `search`, `withDeleted` and `onlyDeleted`, ready to pass. */
+	/** Relation counts from `?counts=posts,tags`. */
+	counts?: string[];
+	/** `select`, `relations`, `counts`, `search`, `withDeleted` and `onlyDeleted`, ready to pass. */
 	options: SqlOperationOptions;
 	/** True when the query asked for keyset pagination (`cursor` or `after`). */
 	isCursor: boolean;
