@@ -1,4 +1,5 @@
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
+import { siteConfig } from "@/lib/seo";
 
 const githubUrl = "https://github.com/avytrix/nestjs-drizzle-crud";
 const npmUrl = "https://www.npmjs.com/package/nestjs-drizzle-crud";
@@ -9,10 +10,9 @@ export function baseOptions(): BaseLayoutProps {
 		nav: {
 			title: (
 				<span className="inline-flex items-center gap-2 font-semibold">
-					<span className="flex size-6 items-center justify-center rounded-md bg-[var(--color-fd-primary)] text-fd-background text-xs">
-						n
-					</span>
-					nestjs-drizzle-crud
+					{/* biome-ignore lint/performance/noImgElement: static export, a 24px mark needs no optimizer */}
+					<img src={siteConfig.logo} alt="" width={24} height={24} className="size-6" />
+					{siteConfig.displayName}
 				</span>
 			),
 			children: (

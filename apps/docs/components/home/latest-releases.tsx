@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 
-const RELEASES = [
+// Newest first; the top banner announces RELEASES[0].
+export const RELEASES = [
 	{
 		version: "3.3.0",
 		date: "Aug 10, 2026",

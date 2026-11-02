@@ -1,6 +1,6 @@
 # nestjs-drizzle-crud docs
 
-<img src="/logo.svg" width="120" alt="nestjs-drizzle-crud" />
+<img src="./public/avytrix-icon.png" width="80" alt="Avytrix Technologies" />
 
 Documentation site for the [nestjs-drizzle-crud](https://www.npmjs.com/package/nestjs-drizzle-crud) npm package — currently documenting **v3.1.0**.
 

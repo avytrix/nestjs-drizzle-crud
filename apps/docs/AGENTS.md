@@ -140,7 +140,7 @@ d3f8c6b doc(3.0.3): update docs for 3.0.3 + 3.0.x deltas
 | Release history | `content/docs/(reference)/changelog.mdx` |
 | Latest releases shown on home | `components/home/latest-releases.tsx` |
 | Color tokens | `app/global.css:6-29` |
-| Package mark (SVG) | `public/logo.svg` |
+| Avytrix Technologies mark (header, favicon source, sharing card) | `public/avytrix-icon.png`; favicons in `app/icon.png`, `app/apple-icon.png` |
 
 ## What this site does NOT do
 

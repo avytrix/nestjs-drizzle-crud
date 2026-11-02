@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 
 export const siteConfig = {
-	name: "nestjs-drizzle-crud",
+	name: "nestjs-drizzle-crud", // the npm package: structured data, llms.txt, install commands
+	displayName: "Nestjs Drizzle", // what readers see: header, tab titles, site name
+	logo: "/avytrix-icon.png", // Avytrix Technologies mark
 	version: "3.3.0",
 	tagline: "Type-safe CRUD for Drizzle ORM in NestJS",
 	description:
@@ -40,7 +42,7 @@ export const siteConfig = {
 
 export type SiteConfig = typeof siteConfig;
 
-const ogTitle = `${siteConfig.name}: ${siteConfig.tagline}`;
+const ogTitle = `${siteConfig.displayName}: ${siteConfig.tagline}`;
 
 /**
  * Per-page metadata factory. Returns Next.js `Metadata` with a canonical URL,
@@ -58,7 +60,7 @@ export function createMetadata(params?: {
 	const description = params?.description ?? siteConfig.description;
 	const path = params?.path ?? "/";
 	const url = new URL(path, siteConfig.url).toString();
-	const heading = params?.title ? `${params.title} · ${siteConfig.name}` : ogTitle;
+	const heading = params?.title ? `${params.title} · ${siteConfig.displayName}` : ogTitle;
 
 	return {
 		title: params?.title,
@@ -68,7 +70,7 @@ export function createMetadata(params?: {
 		openGraph: {
 			type: params?.ogType ?? "website",
 			url,
-			siteName: siteConfig.name,
+			siteName: siteConfig.displayName,
 			title: heading,
 			description,
 			locale: "en_US",

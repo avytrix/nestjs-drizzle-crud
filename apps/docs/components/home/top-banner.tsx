@@ -3,8 +3,11 @@
 import Link from "next/link";
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { RELEASES } from "./latest-releases";
 
-const STORAGE_KEY = "docs-banner-dismissed-v322";
+// Keyed by version, so each new release shows the banner again
+const latest = RELEASES[0];
+const STORAGE_KEY = `docs-banner-dismissed-v${latest.version}`;
 
 export function TopBanner() {
 	const [visible, setVisible] = useState(false);
@@ -24,10 +27,10 @@ export function TopBanner() {
 					href="/docs/changelog"
 					className="flex-1 truncate text-center text-fd-muted-foreground transition-colors hover:text-fd-foreground"
 				>
-					<span className="font-semibold text-fd-foreground">v3.2.2 released</span>
+					<span className="font-semibold text-fd-foreground">v{latest.version} released</span>
 					<span className="mx-2 hidden sm:inline">·</span>
 					<span className="hidden sm:inline">
-						Foreign-key violations map to 400 and 409 again →
+						{latest.title} →
 					</span>
 					<span className="sm:hidden">· Changelog →</span>
 				</Link>

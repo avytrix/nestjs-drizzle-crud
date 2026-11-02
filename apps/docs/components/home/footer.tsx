@@ -1,5 +1,6 @@
 import { Github, Heart, Package } from "lucide-react";
 import Link from "next/link";
+import { siteConfig } from "@/lib/seo";
 
 export function Footer() {
 	return (
@@ -8,10 +9,10 @@ export function Footer() {
 				<div className="flex flex-col items-start justify-between gap-6 sm:flex-row sm:items-center">
 					<div>
 						<div className="text-sm font-semibold text-fd-foreground">
-							nestjs-drizzle-crud
+							{siteConfig.displayName}
 						</div>
 						<div className="mt-1 text-xs text-fd-muted-foreground">
-							MIT · v3.2.2
+							MIT · v{siteConfig.version}
 						</div>
 					</div>
 					<div className="flex flex-wrap items-center gap-1 text-sm">
