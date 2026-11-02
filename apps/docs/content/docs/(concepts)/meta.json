@@ -1,0 +1,10 @@
+{
+	"title": "Core concepts",
+	"pages": [
+		"defining-services",
+		"relations",
+		"soft-delete",
+		"timestamps",
+		"primary-keys"
+	]
+}

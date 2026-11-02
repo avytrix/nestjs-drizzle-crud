@@ -1,0 +1,9 @@
+{
+	"title": "Compare",
+	"pages": [
+		"vs-nestjsx-crud",
+		"migrate-from-nestjsx-crud",
+		"vs-nestjs-paginate",
+		"drizzle-vs-typeorm-prisma"
+	]
+}

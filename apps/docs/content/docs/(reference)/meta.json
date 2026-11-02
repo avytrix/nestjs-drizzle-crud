@@ -1,7 +1,4 @@
 {
 	"title": "Reference",
-	"description": "API surface, type definitions, and condensed facts for code generation",
-	"icon": "Library",
-	"defaultOpen": true,
 	"pages": ["api", "config-types", "exports", "llm-notes"]
 }

@@ -1,7 +1,10 @@
 {
-	"title": "Support",
-	"description": "Get help, report a bug, and fund the work",
-	"icon": "LifeBuoy",
-	"defaultOpen": true,
-	"pages": ["getting-help", "sponsor"]
+	"title": "Ship it",
+	"pages": [
+		"changelog",
+		"getting-help",
+		"commercial-support",
+		"built-by-avytrix",
+		"sponsor"
+	]
 }

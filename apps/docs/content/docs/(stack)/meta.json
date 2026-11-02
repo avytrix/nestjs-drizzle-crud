@@ -1,0 +1,12 @@
+{
+	"title": "Put it in your stack",
+	"pages": [
+		"controller-factory",
+		"openapi",
+		"for-root",
+		"for-root-async",
+		"for-feature",
+		"testing",
+		"ai-agents"
+	]
+}

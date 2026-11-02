@@ -1,0 +1,10 @@
+{
+	"title": "Securing it",
+	"pages": [
+		"allowlists",
+		"multi-tenancy",
+		"hooks-validation",
+		"events",
+		"errors"
+	]
+}

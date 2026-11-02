@@ -1,0 +1,13 @@
+{
+	"title": "Querying",
+	"pages": [
+		"filtering",
+		"relation-filters",
+		"query-parsing",
+		"pagination-sorting",
+		"cursor-pagination",
+		"column-selection",
+		"full-text-search",
+		"aggregates"
+	]
+}

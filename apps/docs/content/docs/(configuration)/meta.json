@@ -1,7 +1,0 @@
-{
-	"title": "Configuration",
-	"description": "Configure the database connection and per-entity overrides",
-	"icon": "Settings2",
-	"defaultOpen": true,
-	"pages": ["for-root", "for-root-async", "for-feature"]
-}
