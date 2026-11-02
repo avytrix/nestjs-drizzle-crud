@@ -28,7 +28,7 @@ export function Footer() {
 							Changelog
 						</Link>
 						<a
-							href="https://github.com/myviliha/viliha-drizzle-crud"
+							href="https://github.com/avytrix/nestjs-drizzle-crud"
 							target="_blank"
 							rel="noreferrer noopener"
 							className="inline-flex items-center gap-1.5 -mx-2 rounded-[2px] px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
@@ -37,13 +37,21 @@ export function Footer() {
 							GitHub
 						</a>
 						<a
-							href="https://github.com/sponsors/myviliha"
+							href="https://github.com/sponsors/avytrix"
 							target="_blank"
 							rel="noreferrer noopener"
 							className="inline-flex items-center gap-1.5 -mx-2 rounded-[2px] px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
 						>
 							<Heart className="size-4" />
 							Sponsor
+						</a>
+						<a
+							href="https://avytrix.dev"
+							target="_blank"
+							rel="noreferrer noopener"
+							className="inline-flex items-center -mx-2 rounded-[2px] px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
+						>
+							Avytrix Technologies
 						</a>
 						<a
 							href="https://www.npmjs.com/package/nestjs-drizzle-crud"

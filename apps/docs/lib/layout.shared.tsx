@@ -1,6 +1,6 @@
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
 
-const githubUrl = "https://github.com/myviliha/viliha-drizzle-crud";
+const githubUrl = "https://github.com/avytrix/nestjs-drizzle-crud";
 const npmUrl = "https://www.npmjs.com/package/nestjs-drizzle-crud";
 
 export function baseOptions(): BaseLayoutProps {

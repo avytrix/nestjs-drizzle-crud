@@ -3,7 +3,7 @@
 Documentation site for [`nestjs-drizzle-crud@3.3.0`](https://www.npmjs.com/package/nestjs-drizzle-crud).
 Next.js 16 + Fumadocs, **static-exported** (`output: "export"`) and deployed to
 **GitHub Pages** via `.github/workflows/deploy-docs.yml` on push to `main`.
-Lives at `apps/docs/` in the `viliha-drizzle` monorepo (pnpm workspace + Turborepo).
+Lives at `apps/docs/` in the `nestjs-drizzle-crud` monorepo (pnpm workspace + Turborepo).
 
 Repo-wide rules are in the root [`AGENTS.md`](../../AGENTS.md), including the
 mandatory changelog, humanize, and SEO/AEO passes that apply to every page here.

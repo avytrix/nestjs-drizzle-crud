@@ -1,5 +1,5 @@
 {
-	"name": "viliha-drizzle",
+	"name": "nestjs-drizzle-crud-monorepo",
 	"version": "0.0.0",
 	"private": true,
 	"description": "Monorepo for nestjs-drizzle-crud — the published library, its documentation site, and an example NestJS app used as the e2e testbed.",

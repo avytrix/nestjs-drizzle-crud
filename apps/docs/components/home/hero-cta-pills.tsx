@@ -20,7 +20,7 @@ export function HeroCtaPills() {
 				<ArrowRight className="size-4" />
 			</Link>
 			<a
-				href="https://github.com/myviliha/viliha-drizzle-crud"
+				href="https://github.com/avytrix/nestjs-drizzle-crud"
 				target="_blank"
 				rel="noreferrer noopener"
 				className="inline-flex h-9 items-center gap-2 rounded-[8px] border border-[var(--fd-border-muted)] bg-[var(--fd-pill-bg)] px-4 text-sm font-semibold text-fd-foreground transition-colors hover:border-[var(--fd-border-hover)] hover:bg-fd-accent/40"

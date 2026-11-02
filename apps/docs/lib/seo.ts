@@ -7,9 +7,9 @@ export const siteConfig = {
 	description:
 		"Type-safe CRUD for Drizzle ORM in NestJS. Configure the connection once, and every entity gets full CRUD: find, create, update, soft-delete, bulk ops, pagination, filtering, relations and full-text search.",
 	url: process.env.NEXT_PUBLIC_SITE_URL ?? "https://crud.avytrix.dev",
-	github: "https://github.com/myviliha/viliha-drizzle-crud",
+	github: "https://github.com/avytrix/nestjs-drizzle-crud",
 	npm: "https://www.npmjs.com/package/nestjs-drizzle-crud",
-	sponsor: "https://github.com/sponsors/myviliha",
+	sponsor: "https://github.com/sponsors/avytrix",
 	author: "Suman Bonakurthi",
 	license: "MIT",
 	repoPath: "blob/main/content/docs",
