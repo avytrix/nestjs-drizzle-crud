@@ -2600,9 +2600,9 @@ describe("re-audit R-01: relations stay inside the tenant", () => {
 
 	it("does not match a filter on another tenant's belongs-to row", async () => {
 		const { notes } = await seeded();
-		expect((await notes.findAll({ doc: { title: "Four" } }, {}, t1)).total).toBe(
-			0,
-		);
+		expect(
+			(await notes.findAll({ doc: { title: "Four" } }, {}, t1)).total,
+		).toBe(0);
 		expect(await notes.count({ doc: { title: "Four" } }, t1)).toBe(0);
 	});
 
@@ -2621,5 +2621,26 @@ describe("re-audit R-01: relations stay inside the tenant", () => {
 			t1,
 		);
 		expect(some.total).toBe(0);
+	});
+});
+
+describe("re-audit R-02: deep filters are a 400", () => {
+	const deep = (levels: number) => {
+		let filter: any = { name: "x" };
+		for (let i = 0; i < levels; i++) filter = { not: filter };
+		return filter;
+	};
+
+	it("rejects a thousand-level not, from a query string or from code", async () => {
+		const svc = itemsService(await sharedDb());
+		const key = `not${"[not]".repeat(999)}[name]`;
+		expect(() => svc.parseQuery({ [key]: "x" })).toThrow(/nested too deeply/);
+		expect(() => svc.parseQuery(deep(1000))).toThrow(/nested too deeply/);
+		await expect400(svc.findAll(deep(1000)));
+	});
+
+	it("still accepts a reasonably nested filter", async () => {
+		const svc = itemsService(await sharedDb());
+		await expect(svc.findAll(deep(20))).resolves.toHaveProperty("total");
 	});
 });

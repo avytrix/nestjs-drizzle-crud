@@ -74,6 +74,32 @@ const OPERATORS: Record<string, "value" | "list" | "flag" | "text" | "json"> = {
 
 const bad = (message: string) => new BadRequestException(message);
 
+// The deepest filter accepted, counted in nested objects. Real filters stay
+// well under ten; a thousand `not[not]...` levels would overflow the stack in
+// the recursive compilers and answer with a 500.
+export const MAX_FILTER_DEPTH = 32;
+
+// Throws a 400 when `filters` nests deeper than MAX_FILTER_DEPTH. Iterative, so
+// the check itself cannot overflow.
+export function assertFilterDepth(filters: unknown): void {
+	const stack: Array<[unknown, number]> = [[filters, 0]];
+	while (stack.length > 0) {
+		const [node, depth] = stack.pop()!;
+		const children = Array.isArray(node)
+			? node.map((item): [unknown, number] => [item, depth])
+			: isPlainObject(node)
+				? Object.values(node).map((item): [unknown, number] => [
+						item,
+						depth + 1,
+					])
+				: [];
+		if (depth > MAX_FILTER_DEPTH) {
+			throw bad(`Filter is nested too deeply (max ${MAX_FILTER_DEPTH} levels)`);
+		}
+		stack.push(...children);
+	}
+}
+
 export function parseCrudQuery(
 	query: Record<string, unknown> | null | undefined,
 	table: any,
@@ -176,6 +202,7 @@ function normalizeQuery(
 	const root: Record<string, any> = {};
 	if (query === null || query === undefined) return root;
 	if (typeof query !== "object") throw bad("The query must be an object");
+	assertFilterDepth(query);
 	for (const [key, value] of Object.entries(query)) {
 		if (value === undefined) continue;
 		assign(root, splitKey(key), value);
@@ -192,6 +219,9 @@ function splitKey(key: string): string[] {
 		(m) => m[1]!,
 	);
 	const path = [...head, ...brackets];
+	if (path.length > MAX_FILTER_DEPTH) {
+		throw bad(`Filter is nested too deeply (max ${MAX_FILTER_DEPTH} levels)`);
+	}
 	for (const segment of path) {
 		if (UNSAFE_KEYS.has(segment)) {
 			throw bad(`Malformed query parameter: ${key}`);

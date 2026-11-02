@@ -74,7 +74,7 @@ import type {
 import type { SortColumn, SortOrder } from "../types/sql.types";
 import { decodeCursor, encodeCursor } from "../utils/cursor";
 import { isPlainObject, mergeCrudConfig } from "../utils/merge-config";
-import { parseCrudQuery } from "../utils/query-parser";
+import { assertFilterDepth, parseCrudQuery } from "../utils/query-parser";
 
 // Alias a many-to-many row carries its join-table key under while it is being
 // grouped. Prefixed so it cannot collide with a real column name.
@@ -4188,6 +4188,7 @@ export abstract class SqlBaseCrudService<
 		conditions: any[];
 		relations: string[];
 	} {
+		assertFilterDepth(filters);
 		const joins = new Set<string>();
 		const conditions = this.compileFilterAt(
 			this.rootHost(),
