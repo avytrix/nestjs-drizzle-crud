@@ -166,7 +166,8 @@ real connection string is for `pnpm dev:api` only.
   Settings → Pages → Source = GitHub Actions.
 - **Release** (`release.yml`): on a `v*` tag, re-runs the verify set and publishes
   [`nestjs-drizzle-crud`](https://www.npmjs.com/package/nestjs-drizzle-crud) to npm
-  with provenance (needs the `NPM_TOKEN` secret).
+  with provenance through npm trusted publishing (no token: npm trusts this
+  repo's `release.yml`).
 - **Security**: CodeQL, Semgrep, Gitleaks and a production `pnpm audit` on every
   push and PR. Every action is pinned to a commit SHA and bumped by Dependabot.
 

@@ -3,8 +3,10 @@ name: Release
 # Publishes only packages/nestjs-drizzle-crud to npm when a v* tag is pushed.
 # The apps (docs, api) are private and never published.
 #
-# Requires an npm automation token stored as the NPM_TOKEN repo secret
-# (Settings → Secrets and variables → Actions). Automation tokens bypass 2FA.
+# npm trusted publishing (OIDC): no token. npm trusts this workflow file in
+# avytrix/nestjs-drizzle-crud (npmjs.com → package → Settings → Trusted Publisher),
+# so the job's GitHub identity token is exchanged for a one-off publish credential.
+# Needs npm >= 11.5.1 and package.json repository.url matching this repo.
 #
 #   pnpm version-bump, commit, then:  git tag v3.2.2 && git push origin v3.2.2
 on:
@@ -25,14 +27,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # npm provenance
+      id-token: write # npm trusted publishing (OIDC) and provenance
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
+          # No registry-url: it writes an _authToken placeholder that would shadow OIDC
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # Gate the release on the same checks as local "done".
@@ -40,15 +42,8 @@ jobs:
       - run: pnpm --filter nestjs-drizzle-crud typecheck
       - run: pnpm --filter nestjs-drizzle-crud build
       - run: pnpm --filter nestjs-drizzle-crud test
-      # Write the token to ~/.npmrc explicitly: pnpm publish doesn't reliably
-      # read setup-node's NODE_AUTH_TOKEN indirection. Fails fast if unset.
-      - name: Configure npm auth
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "$NPM_TOKEN" ]; then
-            echo "::error::NPM_TOKEN secret is not set (Settings → Secrets and variables → Actions)."
-            exit 1
-          fi
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> "$HOME/.npmrc"
-      - run: pnpm --filter nestjs-drizzle-crud publish --provenance --access public --no-git-checks
+      # Trusted publishing needs npm >= 11.5.1; Node 24 bundles npm 11, this pins the floor
+      - run: npm install -g npm@^11.5.1 && npm --version
+      # npm (not pnpm) publishes: it performs the OIDC exchange. The package has no workspace: deps.
+      - run: npm publish --provenance --access public
+        working-directory: packages/nestjs-drizzle-crud

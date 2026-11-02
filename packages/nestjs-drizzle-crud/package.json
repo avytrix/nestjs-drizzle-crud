@@ -49,11 +49,11 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/myviliha/viliha-drizzle-crud",
+		"url": "git+https://github.com/avytrix/nestjs-drizzle-crud.git",
 		"directory": "packages/nestjs-drizzle-crud"
 	},
 	"bugs": {
-		"url": "https://github.com/myviliha/viliha-drizzle-crud/issues"
+		"url": "https://github.com/avytrix/nestjs-drizzle-crud/issues"
 	},
 	"homepage": "https://crud.viliha.com",
 	"funding": {
