@@ -19,7 +19,7 @@ export const RELEASES = [
 		version: "3.2.1",
 		date: "Jul 17, 2026",
 		title: "Docs site and packaging",
-		body: "The package homepage now points at crud.viliha.com, and the READMEs link the docs, npm, and GitHub. No runtime change, and the foreign-key regression it carried is fixed in 3.2.2.",
+		body: "The package homepage now points at this docs site, and the READMEs link the docs, npm, and GitHub. No runtime change, and the foreign-key regression it carried is fixed in 3.2.2.",
 	},
 ];
 
