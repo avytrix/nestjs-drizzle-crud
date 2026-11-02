@@ -1,9 +1,10 @@
 # nestjs-drizzle-crud docs
 
-Documentation site for [`nestjs-drizzle-crud@3.5.0`](https://www.npmjs.com/package/nestjs-drizzle-crud).
-Next.js 16 + Fumadocs, **static-exported** (`output: "export"`) and deployed to
-**GitHub Pages** via `.github/workflows/deploy-docs.yml` on push to `main`.
-Lives at `apps/docs/` in the `nestjs-drizzle-crud` monorepo (pnpm workspace + Turborepo).
+Documentation site for [`nestjs-drizzle-crud`](https://www.npmjs.com/package/nestjs-drizzle-crud)
+(version: `lib/seo.ts::siteConfig.version`). Next.js 16 + Fumadocs, **static-exported**
+(`output: "export"`) and deployed to **GitHub Pages** via `.github/workflows/deploy-docs.yml`
+on push to `main`. Lives at `apps/docs/` in the `nestjs-drizzle-crud` monorepo (pnpm workspace +
+Turborepo).
 
 Repo-wide rules are in the root [`AGENTS.md`](../../AGENTS.md), including the
 mandatory changelog, humanize, and SEO/AEO passes that apply to every page here.
@@ -13,22 +14,61 @@ This file adds the rules specific to the docs site.
 
 ```
 app/                       App Router (Next.js 16)
-  layout.tsx               RootProvider + Inter
-  (home)/                  Marketing home, wrapped in <HomeLayout {...baseOptions()}>
-  docs/                    /docs/[[...slug]] via DocsLayout
-  api/search/              Orama server route
-  sitemap.ts, robots.ts    metadata routes
-  icon.tsx, opengraph-image.tsx  next/og ImageResponse
-  global.css               tokens, fence accents, iOS safe-area, nav overrides
-components/home/           8 home components (banner, hero chips/ctas, prerequisites,
-                           feature grid, compatible-with, latest-releases, footer)
-content/docs/              4 route-group sections: (getting-started), (configuration),
-                           (guides), (reference). Add a page = .mdx + meta.json entry.
-lib/                       source.ts (loader), layout.shared.tsx (baseOptions),
-                           seo.ts (siteConfig: version + URLs)
-source.config.ts           defineDocs + Shiki + custom `accent-meta` transformer
-next.config.mjs            createMDX() + serverExternalPackages: [typescript, twoslash]
+  layout.tsx               Geist fonts + <Provider> (RootProvider with the custom search dialog)
+  (home)/                  Home page, wrapped in <HomeLayout {...baseOptions()}> + home JSON-LD
+  docs/                    /docs/[[...slug]] inside <DocsShell> (notebook layout, nav mode "top")
+  api/search/              Static Orama index for Cmd+K
+  llms.txt, llms-full.txt  Answer-engine map, and every page as Markdown in one file
+  llms.mdx/docs/           One page as Markdown: /llms.mdx/docs/<slug>/content.md
+  og/docs/                 Per-page sharing card: /og/docs/<slug>/image.png
+  opengraph-image.tsx      Site-wide sharing card (same renderer, lib/og.tsx)
+  not-found.tsx            The 404 GitHub Pages serves
+  sitemap.ts, robots.ts    Metadata routes; sitemap lastmod comes from git
+  global.css               The theme (tokens, prose rhythm, dark code blocks, assistant motion)
+components/
+  docs-shell.tsx           Notebook DocsLayout + sponsor card + assistant panel
+  docs-sidebar.tsx         Sidebar slot with the icon rail shown when collapsed
+  search.tsx, provider.tsx Cmd+K dialog (useStaticSearch) and the root provider
+  mdx.tsx                  The MDX component registry (see below)
+  assistant/               "Ask the docs" panel and its state hook
+  home/                    Home page sections
+lib/
+  seo.ts                   siteConfig (version, URLs, brand, git paths) + createMetadata
+  source.ts                Loader, lucide icon resolver, llms helpers, markdown/OG URL builders
+  structured-data.ts       One JSON-LD @graph per page (Organization, WebSite, SoftwareSourceCode,
+                           WebPage, TechArticle, BreadcrumbList)
+  page-tree.ts             firstUrl / pageUrls / folderPath helpers
+  doc-history.ts           Last-modified dates and recent doc commits from git
+  og.tsx                   Sharing card renderer (Avytrix mark + "Nestjs Drizzle")
+  assistant/               Retrieval, answer composition, small talk, session, Web Worker
+scripts/                   Search index build / verify / eval (chunk.mjs is shared)
+public/search-index.json   Committed embedding index for the assistant
+content/docs/              Route-group sections. Add a page = .mdx + meta.json entry.
 ```
+
+## MDX components
+
+Everything below is registered in `components/mdx.tsx` and usable from any page without an import:
+
+| Component | Use |
+| --- | --- |
+| `Tabs` / `Tab` | `<Tabs items={["a","b"]}><Tab value="a">…</Tab></Tabs>`. Also what ```` ```npm ```` fences compile to. |
+| `Callout` | `<Callout type="info\|warn\|error" title="…">…</Callout>` |
+| `Cards` / `Card` | `<Card icon={<Rocket />} title="…" href="/docs/…">…</Card>` |
+| `Steps` / `Step` | Wrap each step (heading + body) in `<Step>`; the number comes from `Step`. |
+| `Accordions` / `Accordion` | `<Accordion title="…">…</Accordion>`. Content stays in the HTML. |
+| `PropsTable` | `props={{ name: { type, required, default, description } }}`, flat, no disclosure. |
+| `Banner` | Fumadocs banner. |
+| `InstallTabs` | `<InstallTabs pkg="postgres" dev />`; `pkg` defaults to this package. pnpm/npm/yarn/bun. |
+| `RunTabs` | `<RunTabs command="nestjs-drizzle-crud-mcp" />` (dlx / npx / bunx). |
+| `DocsChangelog` | Recent commits to `content/docs`, from git. Used on the changelog page. |
+| `Ext` / `Url` | `<Ext to="npm">…</Ext>`, `<Url to="github" />`. Keys: docs, github, issues, npm, sponsor, avytrix. |
+| `Version` | The documented version from `siteConfig.version`. Never hardcode a version in prose. |
+| Lucide icons | `Rocket`, `Database`, `Layers`, `Shield`, … (the list in `mdx.tsx`). Add a name there to use a new one. |
+
+Frontmatter `icon: <LucideName>` shows in the sidebar and next to the page title; `meta.json`
+takes `icon` for a section and `"---Label---"` entries for sidebar separators. An unknown icon
+name fails the build.
 
 ## Content policy
 
@@ -39,6 +79,8 @@ next.config.mjs            createMDX() + serverExternalPackages: [typescript, tw
 2. **Feature pages describe current behavior only.** Historical record lives in
    `/docs/changelog`.
 3. **Cross-link instead of duplicating.**
+4. **Refresh the search index after content changes** (`search:index`, see README). The build
+   warns when it is stale and still deploys.
 
 ## Code-fence accent convention
 
@@ -50,100 +92,94 @@ Append `accent=nest` or `accent=drizzle` to ```ts fence meta:
 | `accent=drizzle` | Drizzle schema definitions, raw SQL |
 | (untagged) | Library API, mixed code, npm/shell, no accent |
 
-The tag lands on the rendered `<figure>` wrapper (not `<pre>`. Fumadocs wraps
-Shiki in a `<figure>`). CSS in `app/global.css:35-40` turns `data-accent` into
-a 3 px inset box-shadow on the left edge.
+The `accent-meta` transformer in `source.config.ts` puts `data-accent` on the rendered
+`<figure>`, and `app/global.css` turns it into a 3 px inset bar on the left edge.
 
-## Design language (Drizzle-style, non-negotiable)
+## Design language
 
-- Default corner radius: `rounded-[2px]` everywhere.
-- **Two 8 px exceptions only:** `hero-cta-pills` and `latest-releases` cards.
-- Hairline borders: `1px solid var(--fd-border-muted)`.
-- Heading tracking: `-0.48px` on h1 and section h2s.
-- Primary red (`--color-fd-primary` = `#E0234E`) for links, accents, NestJS fences.
-- Secondary green (`--color-fd-drizzle` = `#C5F74F`) sparingly. Pill CTAs, OG accent.
-
-Do not add `rounded-md/lg/xl` outside the two allowed exceptions.
+- Tokens live in `app/global.css`: primary `#2552FF` (lifted in dark mode), cool black
+  `#0B0D12` dark background, muted text darkened to clear WCAG AA on tinted surfaces.
+- Geist for text, Geist Mono for code and data.
+- Prose rhythm: body leading 1.7, headings 1.25, a 72ch measure, extra space above h2/h3.
+- Code blocks are dark in both themes.
+- Fumadocs' own radii (`rounded-lg` / `rounded-xl`); no hand-rolled corner scale.
+- The home page reads `--fd-surface-muted`, `--fd-border-muted`, `--fd-heading-color`,
+  `--fd-pill-bg`, which alias the Fumadocs tokens. Use the Fumadocs tokens in new code.
 
 ## Nav structure
 
-`app/(home)/layout.tsx` wraps the home in `<HomeLayout {...baseOptions()}>`, which
-auto-injects `<header id="nd-nav">` (logo + Documentation + Changelog + GitHub +
-Cmd+K search + theme toggle + mobile drawer). **Never add a second `<header>`.**
-Customize via `lib/layout.shared.tsx::baseOptions()` (`links`, `nav`, `githubUrl`).
+`lib/layout.shared.tsx::baseOptions()` is the single header config for both layouts: logo
+(Avytrix mark + `siteConfig.displayName`), Documentation, Changelog, npm, and icon links for
+Sponsor and Avytrix Technologies, plus GitHub. **Never add a second `<header>`.** The docs use
+the notebook layout with `nav.mode: "top"`; spread `baseOptions()` first, then override `nav`,
+or the mode is silently lost.
 
-Auto-injected search chip and theme toggle default to `rounded-full`. Override
-to 2 px in `app/global.css:45-50`:
+## Search
 
-```css
-#nd-nav nav [data-search-full] { border-radius: 2px; }
-#nd-nav nav button[aria-label="Toggle Theme"] { border-radius: 2px; }
-```
+- **Cmd+K**: Fumadocs static search over `/api/search` (Orama index generated at build).
+- **Ask the docs**: `components/assistant/` + `lib/assistant/`. A Web Worker loads
+  `@huggingface/transformers` 4.3.1 from jsDelivr (pinned, `TRANSFORMERS_URL` in `worker.ts`),
+  downloads `Xenova/all-MiniLM-L6-v2` from the Hugging Face hub on the first question, and ranks
+  the sections in `public/search-index.json`. No server, no key. Answers are quoted from the
+  docs, never generated.
+- `@huggingface/transformers` is **not** a workspace dependency: adding it makes pnpm re-check
+  `semver@6.3.1`, which the workspace `trustPolicy` refuses. Do not loosen the policy to add it.
 
 ## Scripts & deploy
 
 ```bash
 pnpm --filter nestjs-drizzle-crud-docs typecheck   # runs fumadocs-mdx first
-pnpm --filter nestjs-drizzle-crud-docs build       # next build → static export in out/
+pnpm --filter nestjs-drizzle-crud-docs build       # verify search index, next build --webpack, out/
+pnpm --filter nestjs-drizzle-crud-docs search:index  # needs TRANSFORMERS_MODULE, see README
 pnpm dev                                          # :3000 (root `dev` runs this app)
 ```
 
-Deploy is automatic: pushing to `main` runs `.github/workflows/deploy-docs.yml`,
-which builds the library first (Twoslash needs its types), exports the site, and
-publishes `apps/docs/out` to GitHub Pages. There is no manual deploy command and
-no Vercel project. The workflow copies the root `CNAME` into the output and adds
-`.nojekyll`, so the site serves at [crud.avytrix.dev](https://crud.avytrix.dev).
+The build uses webpack, not Turbopack: Turbopack emits the assistant's `new Worker(new URL(...))`
+as a raw `.ts` asset instead of compiling it.
 
-Env: `NEXT_PUBLIC_SITE_URL` (consumed by `lib/seo.ts`, `app/sitemap.ts`,
-`app/robots.ts`, `app/layout.tsx`); the workflow sets it from `CNAME`.
-`NEXT_PUBLIC_BASE_PATH` stays empty because the custom domain serves at root;
-set it to the repo name only if the site moves to a `github.io/<repo>/` URL.
+Deploy is automatic: pushing to `main` runs `.github/workflows/deploy-docs.yml`, which checks out
+full history (page dates and the docs changelog come from git), builds the library first
+(Twoslash needs its types), exports the site, and publishes `apps/docs/out` to GitHub Pages. The
+workflow copies the root `CNAME` into the output and adds `.nojekyll`, so the site serves at
+[crud.avytrix.dev](https://crud.avytrix.dev).
+
+Env: `NEXT_PUBLIC_SITE_URL` (consumed by `lib/seo.ts` and everything built on `siteConfig.url`);
+the workflow sets it from `CNAME`. `NEXT_PUBLIC_BASE_PATH` stays empty because the custom domain
+serves at root.
 
 ## Gotchas
 
-1. `lib/source.ts:1` uses **relative** `../.source/server` import, not `@/.source/server`. Turbopack quirk.
-2. `useTheme` lives at `fumadocs-ui/provider/base`, NOT `fumadocs-core/utils/use-theme`.
-3. `.source/` is auto-generated, gitignored. Never edit.
-4. `NEXT_PUBLIC_SITE_URL` must be set at build time for absolute sitemap/robots URLs; the deploy workflow derives it from `CNAME`.
+1. `lib/source.ts` uses a **relative** `../.source/server` import, not `@/.source/server`.
+2. `fumadocs-ui` is the `@fumadocs/base-ui` build, aliased. Import paths stay `fumadocs-ui/...`.
+3. lucide-react 1.x has no brand icons; GitHub is `components/github-mark.tsx`.
+4. `.source/` is auto-generated, gitignored. Never edit.
 5. `serverExternalPackages: ["typescript", "twoslash"]` is required for Twoslash bundling.
 6. Tailwind v4 reads `--color-fd-*` / `--fd-*` via inline `var(...)`. No `tailwind.config.*` file exists.
-7. The `accent-meta` Shiki transformer is structurally typed (no `@shikijs/types` import. Transitive dep).
+7. `public/search-index.json` is excluded from Biome so a format run does not pretty-print it.
+8. Scripts under `scripts/` are plain `.mjs` because `next build` runs the verify step on Node 20,
+   which cannot strip TypeScript types.
 
 ## Responsive
 
-Mobile-first. Tap targets ≥ 44 px on `<md` (WCAG AA AAA). iOS safe-area-inset
-already wired on `<body>` (`app/global.css:60-62`). Grids collapse at `md:` / `lg:`.
-Banner uses `truncate` for narrow viewports. Hide secondary nav links on `<md`;
-hero CTAs carry mobile navigation.
-
-## Commit style
-
-One commit per logical change. `<type>(<scope>): <imperative summary>`.
-Observed types: `feat(home)`, `style`, `doc(<version>)`, `chore`.
-
-```
-3637e9a feat(home): Drizzle-style redesign — sharp corners, top banner, anchor cards
-82246a0 chore: drop 'by Suman Bonakurthi' attribution from footer
-ddfa298 style: responsive polish — hero, footer tap targets, tablet grids
-d3f8c6b doc(3.0.3): update docs for 3.0.3 + 3.0.x deltas
-4f37988 Re-brand: NestJS red primary, Drizzle green secondary
-7b79ff8 Initial commit: nestjs-drizzle-crud docs site
-```
+Mobile-first. Tap targets ≥ 44 px on `<md`. iOS safe-area insets are on `<body>` in
+`app/global.css`. Grids collapse at `md:` / `lg:`. The assistant opens as a full-height sheet
+below `sm` and never opens by itself there.
 
 ## Single sources of truth
 
 | Value | File |
 |-------|------|
 | Documented package version | `lib/seo.ts::siteConfig.version` |
-| Site / GitHub / npm URLs | `lib/seo.ts::siteConfig` |
+| Site / GitHub / npm / org URLs, git paths | `lib/seo.ts::siteConfig` |
 | Nav structure | `lib/layout.shared.tsx::baseOptions()` |
 | Release history | `content/docs/(reference)/changelog.mdx` |
 | Latest releases shown on home | `components/home/latest-releases.tsx` |
-| Color tokens | `app/global.css:6-29` |
-| Avytrix Technologies mark (header, favicon source, sharing card) | `public/avytrix-icon.png`; favicons in `app/icon.png`, `app/apple-icon.png` |
+| Color and type tokens | `app/global.css` |
+| MDX components | `components/mdx.tsx` |
+| Avytrix Technologies mark (header, favicon source, sharing cards) | `public/avytrix-icon.png`; favicons in `app/icon.png`, `app/apple-icon.png` |
 
 ## What this site does NOT do
 
-No auth · no DB · no API beyond `/api/search` · no test suite · no i18n. CI does
-cover this app: the root Biome lint includes its files, and `pnpm typecheck` and
-`pnpm build` run it through Turbo. What it has no job for is tests.
+No auth · no DB · no server (static export) · no test suite · no i18n. CI does cover this app:
+the root Biome lint includes its files, and `pnpm typecheck` and `pnpm build` run it through
+Turbo.
