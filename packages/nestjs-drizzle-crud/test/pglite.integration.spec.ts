@@ -2564,3 +2564,202 @@ describe("3.5.2 fixes", () => {
 		expect(res.data.map((d: any) => d._count.notes)).toEqual([1, 0, 0]);
 	});
 });
+
+describe("re-audit R-01: relations stay inside the tenant", () => {
+	// Tenant 1's note pointing at doc 4, which belongs to tenant 2, and tenant
+	// 2's note on doc 1, which belongs to tenant 1. A plain foreign key allows
+	// both; the scope must still keep each tenant's reads to its own rows.
+	const seeded = async () => {
+		const db = await freshDb();
+		await db.insert(docNotes).values([
+			{ doc_id: 4, tenant_id: 1, body: "points at b" },
+			{ doc_id: 1, tenant_id: 2, body: "from b" },
+		]);
+		const notes = new Svc({
+			...base(db, docNotes),
+			softDelete: { enabled: false, column: "deleted_at" },
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: { doc: { table: docs, localKey: "doc_id" } },
+		});
+		return { notes, docs: docsService(db) };
+	};
+	const t1 = asTenant(1);
+
+	it("loads a belongs-to of another tenant as null, joined or batched", async () => {
+		const { notes } = await seeded();
+		const res = await notes.findAll(
+			{},
+			{ sortBy: "id" },
+			{ ...t1, relations: ["doc"] },
+		);
+		const crossed = res.data.find((n: any) => n.body === "points at b");
+		expect(crossed.doc).toBeNull();
+		expect(res.data.find((n: any) => n.body === "n1").doc.title).toBe("One");
+	});
+
+	it("does not match a filter on another tenant's belongs-to row", async () => {
+		const { notes } = await seeded();
+		expect(
+			(await notes.findAll({ doc: { title: "Four" } }, {}, t1)).total,
+		).toBe(0);
+		expect(await notes.count({ doc: { title: "Four" } }, t1)).toBe(0);
+	});
+
+	it("leaves another tenant's rows out of has-many loads, filters and counts", async () => {
+		const { docs: svc } = await seeded();
+		const one = await svc.find(1, {
+			...t1,
+			relations: ["notes"],
+			counts: ["notes"],
+		});
+		expect(one.notes.map((n: any) => n.body)).toEqual(["n1"]);
+		expect(one._count.notes).toBe(1);
+		const some = await svc.findAll(
+			{ notes: { some: { body: "from b" } } },
+			{},
+			t1,
+		);
+		expect(some.total).toBe(0);
+	});
+});
+
+describe("re-audit R-02: deep filters are a 400", () => {
+	const deep = (levels: number) => {
+		let filter: any = { name: "x" };
+		for (let i = 0; i < levels; i++) filter = { not: filter };
+		return filter;
+	};
+
+	it("rejects a thousand-level not, from a query string or from code", async () => {
+		const svc = itemsService(await sharedDb());
+		const key = `not${"[not]".repeat(999)}[name]`;
+		expect(() => svc.parseQuery({ [key]: "x" })).toThrow(/nested too deeply/);
+		expect(() => svc.parseQuery(deep(1000))).toThrow(/nested too deeply/);
+		await expect400(svc.findAll(deep(1000)));
+	});
+
+	it("still accepts a reasonably nested filter", async () => {
+		const svc = itemsService(await sharedDb());
+		await expect(svc.findAll(deep(20))).resolves.toHaveProperty("total");
+	});
+});
+
+describe("re-audit: writes", () => {
+	const status = async (promise: Promise<unknown>) =>
+		(await caught(promise)).getStatus();
+
+	it("R-05: upsert onto a trashed row writes nothing and is a 404", async () => {
+		const db = await freshDb();
+		const svc = new Svc(base(db, authors));
+		await svc.softDelete(3);
+		expect(
+			await status(
+				svc.upsert(
+					{ name: "Cy2", email: "cy@x.io", role: "writer" },
+					{ conflictTarget: "email" },
+				),
+			),
+		).toBe(404);
+		const trashed = await svc.find(3, { withDeleted: true });
+		expect(trashed).toMatchObject({ name: "Cy" });
+		expect(trashed?.deleted_at).not.toBeNull();
+	});
+
+	it("R-07: a missing required value is a 400 that names the column", async () => {
+		const svc = postsService(await freshDb());
+		const error = await caught(
+			svc.create({
+				title: null,
+				author_id: 1,
+				status: "draft",
+				views: 0,
+			} as any),
+		);
+		expect(error.getStatus()).toBe(400);
+		expect(JSON.stringify(error.getResponse())).toContain("title");
+	});
+
+	it("R-08: MySQL duplicate and foreign key errors map to 409 and 400", () => {
+		const svc: any = new Svc(base({} as any, authors));
+		const dup = svc.toClientError({
+			code: "ER_DUP_ENTRY",
+			errno: 1062,
+			message: "Duplicate entry 'ann@x.io' for key 'authors.email'",
+		});
+		expect(dup.getStatus()).toBe(409);
+		expect(JSON.stringify(dup.getResponse())).toContain("email");
+		expect(svc.toClientError({ errno: 1452 }).getStatus()).toBe(400);
+		expect(svc.toClientError({ errno: 1451 }, "delete").getStatus()).toBe(409);
+	});
+
+	it("R-09: a scoped upsert without RETURNING never reads back another tenant's row", async () => {
+		const db = await freshDb();
+		const svc = docsService(db, {
+			sql: { ...base(db, docs).sql!, useReturning: false },
+		});
+		expect(
+			await status(
+				svc.upsert(
+					{ title: "mine", slug: "four" },
+					{ conflictTarget: "slug" },
+					asTenant(1),
+				),
+			),
+		).toBe(404);
+		expect((await svc.find(4, asTenant(2)))?.title).toBe("Four");
+	});
+
+	it("R-10: restore on a live row is a 404 and leaves it alone", async () => {
+		const db = await freshDb();
+		const svc = new Svc(base(db, authors));
+		const before = await svc.find(1);
+		expect(await status(svc.restore(1))).toBe(404);
+		expect((await svc.find(1))?.updated_at).toEqual(before?.updated_at);
+		await svc.softDelete(1);
+		await expect(svc.restore(1)).resolves.toMatchObject({ deleted_at: null });
+	});
+});
+
+describe("re-audit: allowlists and nested rows", () => {
+	it("R-13: an existence filter needs the relation to be filterable", async () => {
+		const svc = new Svc({
+			...base(await sharedDb(), authors),
+			filterableColumns: ["name"],
+			relations: {
+				posts: { table: posts, type: "hasMany", foreignKey: "author_id" },
+			},
+		});
+		expect(() => svc.parseQuery({ "posts[none]": "" })).toThrow(/not allowed/);
+	});
+
+	it("R-14: a nested child cannot pick its own generated primary key", async () => {
+		const svc = docsService(await freshDb(), { writableRelations: ["notes"] });
+		const doc = await svc.create(
+			{ title: "Mine", slug: "mine", notes: [{ id: 99999, body: "child" }] },
+			{ ...asTenant(1), relations: ["notes"] },
+		);
+		expect(doc.notes[0].id).not.toBe(99999);
+	});
+});
+
+describe("re-audit R-06: batches past the parameter limit are a 400", () => {
+	it("refuses a huge insert, id list or IN filter with a 400 that names the limit", async () => {
+		const svc = new Svc(base(await sharedDb(), authors));
+		const rows = Array.from({ length: 14_000 }, (_, i) => ({
+			name: `n${i}`,
+			email: `n${i}@x.io`,
+			role: "writer",
+		}));
+		const many = Array.from({ length: 70_000 }, (_, i) => i + 1);
+		for (const call of [
+			svc.massCreate(rows as any),
+			svc.massUpdate(many, { name: "x" } as any),
+			svc.findAll({ id: many }),
+			svc.findAll({ id: { in: many } }),
+		]) {
+			const error = await expect400(call);
+			expect(JSON.stringify(error.getResponse())).toContain("60000");
+		}
+	});
+});

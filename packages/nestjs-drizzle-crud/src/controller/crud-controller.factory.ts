@@ -12,9 +12,12 @@ import {
 	ParseIntPipe,
 	ParseUUIDPipe,
 	Patch,
+	type PipeTransform,
 	Post,
 	Query,
 	type Type,
+	ValidationPipe,
+	type ValidationPipeOptions,
 } from "@nestjs/common";
 import type { SqlBaseCrudService } from "../core/abstract/sql-base-crud.service";
 import type { ParseCrudQueryOptions } from "../core/interfaces/query.interface";
@@ -71,6 +74,12 @@ export interface CrudControllerOptions {
 	idType?: "int" | "uuid" | "string";
 	/** DTO classes, so a global ValidationPipe validates the bodies. */
 	dto?: { create?: Type<unknown>; update?: Type<unknown> };
+	/**
+	 * Validator options for the bulk bodies, which a global ValidationPipe
+	 * cannot see into (an array, and `data` inside `{ ids, data }`). Pass the
+	 * same options as your global pipe, such as `{ whitelist: true }`.
+	 */
+	validation?: ValidationPipeOptions;
 	/** Options for parseQuery on list and trash (allowTrash, ignore, ...). */
 	query?: ParseCrudQueryOptions;
 	/** Turn routes on or off, or give one its own decorators. */
@@ -108,12 +117,39 @@ interface IdsBody {
 	ids?: unknown;
 }
 
-function idsOf(body: IdsBody | undefined): unknown[] {
+// Validates `data` of a `{ ids, data }` bulk update body against the update
+// DTO, the check a single PATCH gets from the global ValidationPipe.
+class BulkUpdateBodyPipe implements PipeTransform {
+	private readonly pipe: ValidationPipe;
+
+	constructor(
+		private readonly dto: Type<unknown>,
+		options?: ValidationPipeOptions,
+	) {
+		this.pipe = new ValidationPipe(options);
+	}
+
+	async transform(body: { ids?: unknown; data?: unknown } | undefined) {
+		if (!body?.data || typeof body.data !== "object") return body;
+		const data = await this.pipe.transform(body.data, {
+			type: "body",
+			metatype: this.dto,
+		});
+		return { ...body, data };
+	}
+}
+
+// The ids of a bulk body, each parsed like a `:id` param, so a bad one is a
+// 400 before any statement runs instead of a failed batch that is replayed.
+async function idsOf(
+	service: { parseId(raw: unknown): Promise<unknown> },
+	body: IdsBody | undefined,
+): Promise<unknown[]> {
 	const ids = body?.ids;
 	if (!Array.isArray(ids) || ids.length === 0) {
 		throw new BadRequestException("ids must be a non-empty array");
 	}
-	return ids;
+	return Promise.all(ids.map((id) => service.parseId(id)));
 }
 
 // Build a CRUD controller for a service. Use it as a base class, so you can
@@ -205,7 +241,7 @@ export function createCrudController<
 			return this.service.massCreate(body, readOptions(this.service, query));
 		}
 
-		bulkUpdate(
+		async bulkUpdate(
 			body: { ids?: unknown; data?: unknown },
 			query: Record<string, unknown>,
 		) {
@@ -213,23 +249,23 @@ export function createCrudController<
 				throw new BadRequestException("data must be an object");
 			}
 			return this.service.massUpdate(
-				idsOf(body),
+				await idsOf(this.service, body),
 				body.data,
 				readOptions(this.service, query),
 			);
 		}
 
-		bulkDelete(body: IdsBody) {
-			const ids = idsOf(body);
+		async bulkDelete(body: IdsBody) {
+			const ids = await idsOf(this.service, body);
 			return options.deleteMode === "soft"
 				? this.service.massSoftDelete(ids)
 				: this.service.massDelete(ids);
 		}
 
-		bulkRestore(body: IdsBody, query: Record<string, unknown>) {
+		async bulkRestore(body: IdsBody, query: Record<string, unknown>) {
 			softDeleteOn(this.service);
 			return this.service.massRestore(
-				idsOf(body),
+				await idsOf(this.service, body),
 				readOptions(this.service, query),
 			);
 		}
@@ -321,7 +357,12 @@ export function createCrudController<
 			http: Post("bulk"),
 			params: [
 				options.dto?.create
-					? Body(new ParseArrayPipe({ items: options.dto.create }))
+					? Body(
+							new ParseArrayPipe({
+								...options.validation,
+								items: options.dto.create,
+							}),
+						)
 					: Body(),
 				Query(),
 			],
@@ -330,7 +371,12 @@ export function createCrudController<
 		{
 			name: "bulkUpdate",
 			http: Patch("bulk"),
-			params: [Body(), Query()],
+			params: [
+				options.dto?.update
+					? Body(new BulkUpdateBodyPipe(options.dto.update, options.validation))
+					: Body(),
+				Query(),
+			],
 			types: [Object, Object],
 			extra: [HttpCode(200)],
 		},
@@ -403,19 +449,30 @@ export function createCrudController<
 			configurable: true,
 			enumerable: false,
 		});
-		const descriptor = Object.getOwnPropertyDescriptor(proto, route.name)!;
+		let descriptor = Object.getOwnPropertyDescriptor(proto, route.name)!;
 		route.params.forEach((decorate, index) => {
 			decorate(proto, route.name, index);
 		});
 		Reflect.defineMetadata("design:paramtypes", route.types, proto, route.name);
-		for (const decorate of [
+		// Applied the way TypeScript applies stacked decorators: last first, each
+		// one seeing the descriptor the previous returned. A decorator that wraps
+		// the handler then really wraps it, and the route decorators, applied
+		// last, tag the final function.
+		const decorators = [
 			route.http,
 			...(route.extra ?? []),
-			...(options.decorators ?? []),
 			...(settings.decorators ?? []),
-		]) {
-			decorate(proto, route.name, descriptor);
+			...(options.decorators ?? []),
+		];
+		// Reversed, so the shared decorators still run before the per-route ones
+		// (guard order) and the route's own HTTP decorator runs last.
+		for (const decorate of decorators.reverse()) {
+			descriptor =
+				(decorate(proto, route.name, descriptor) as
+					| PropertyDescriptor
+					| undefined) ?? descriptor;
 		}
+		Object.defineProperty(proto, route.name, descriptor);
 	}
 
 	for (const decorate of options.classDecorators ?? []) {

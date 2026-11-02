@@ -133,6 +133,7 @@ How the groups behave:
 - Groups nest, work inside a relation filter (`{ organization: { or: [{ name: "Acme" }, { name: "Globex" }] } }`) and apply to `count` too.
 - An `or` with an empty member matches every row, so the whole group adds nothing. An empty `and` member is skipped.
 - A table column (or relation) named `and`, `or` or `not` wins over the group key.
+- A filter may nest at most 32 objects deep. A deeper one is a 400, from a query string or from code.
 
 <Callout title="NOT and a missing parent">
   A belongs-to filter inside `not` compares against a `LEFT JOIN`. A row whose parent is missing

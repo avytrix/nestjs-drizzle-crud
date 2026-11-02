@@ -101,6 +101,31 @@ describe("createCrudController", () => {
 		const idArg = Object.values<any>(args).find((arg) => arg.data === "id");
 		expect(idArg.pipes).toEqual([ParseIntPipe]);
 	});
+
+	it("runs a route decorator that wraps the handler, and keeps the route", async () => {
+		const calls: string[] = [];
+		const wrap: MethodDecorator = (_target, _key, descriptor: any) => {
+			const original = descriptor.value;
+			return {
+				...descriptor,
+				value(...args: unknown[]) {
+					calls.push("wrapper");
+					return original.apply(this, args);
+				},
+			};
+		};
+		const Ctrl = createCrudController(PeopleService, {
+			path: "people",
+			routes: { delete: { decorators: [wrap] } },
+		});
+		expect(routesOf(Ctrl)).toContain("DELETE :id delete");
+		const instance: any = new (Ctrl as any)({
+			parseId: (id: unknown) => id,
+			delete: async () => true,
+		});
+		await instance.delete(1);
+		expect(calls).toEqual(["wrapper"]);
+	});
 });
 
 describe("ApiCrudQuery / ApiCrudList", () => {

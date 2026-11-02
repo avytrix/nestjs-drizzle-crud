@@ -1,6 +1,6 @@
 {
 	"name": "@avytrix/nestjs-drizzle-crud",
-	"version": "3.5.2",
+	"version": "3.6.0",
 	"description": "NestJS + Drizzle ORM CRUD: type-safe services with filtering, pagination, cursor pagination, relations, soft delete, upsert, multi-tenancy and OpenAPI for PostgreSQL and MySQL.",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",

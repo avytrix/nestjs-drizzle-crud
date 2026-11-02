@@ -140,7 +140,9 @@ With [nested create](/docs/relations-on-writes), child rows get the scope values
 
 ## Are related tables scoped?
 
-Relation counts are: `counts` only counts related rows that match the scope, when the related table has the scope column. A relation loaded with `relations` follows its foreign key. That is safe when related rows always share the parent's tenant, which a foreign key usually guarantees. Give a related table its own service with its own scope when it is queried on its own.
+Yes, when the related table has the scope columns. Loaded relations, joins, relation filters (`some`, `none`, `every` and nested columns) and `counts` only see related rows of the caller's tenant. A belongs-to row of another tenant loads as `null`, and a filter on it matches nothing. A related table without the scope column is treated as shared and left unscoped.
+
+A plain foreign key only checks that the parent row exists, not that it is in the same tenant. A composite foreign key such as `(tenant_id, author_id)` makes the database refuse a cross-tenant reference at write time.
 
 ## Common questions
 

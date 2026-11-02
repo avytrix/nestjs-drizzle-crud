@@ -4,6 +4,12 @@ import { ArrowRight } from "lucide-react";
 // Newest first; the top banner announces RELEASES[0].
 export const RELEASES = [
 	{
+		version: "3.6.0",
+		date: "Nov 2, 2026",
+		title: "Relations follow the tenant scope",
+		body: "Loaded relations, joins, relation filters and counts only see rows of the caller's tenant. Bulk routes validate their bodies against the DTOs, route decorators that wrap the handler run, and deep filters, huge batches, missing values and MySQL duplicates are 400s and 409s instead of 500s.",
+	},
+	{
 		version: "3.5.2",
 		date: "Nov 2, 2026",
 		title: "Sort default, 400s and scoped counts",

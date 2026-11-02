@@ -8,6 +8,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Scope note: the 3.0.x line is PostgreSQL-first. MySQL-specific paths (non-`RETURNING`
 restore, `ER_DUP_ENTRY` mapping, dialect locking) are tracked separately and unchanged here.
 
+## [3.6.0] - 2026-11-02
+
+Fixes from the second audit. The first one is a security fix: upgrade if you use `scope`.
+
+### Security
+
+- Related tables now follow the tenant scope. Loaded relations, the joins behind relation columns,
+  relation filters (`some`, `none`, `every` and nested columns) and `counts` only see related rows
+  of the caller's tenant when the related table has the scope columns. Before, a row pointing at
+  another tenant's row (a plain foreign key allows it) loaded that row, and a filter on it
+  answered questions about it.
+
+### Added
+
+- `createCrudController` takes `validation`, the validator options for the bulk bodies. Pass the
+  same options as your global `ValidationPipe`.
+
+### Fixed
+
+- `PATCH /bulk` validates `data` against `dto.update`, the check a single `PATCH` already had.
+- Route decorators that wrap the handler now run. Before, the factory dropped the wrapped handler.
+- Bulk ids are parsed like `:id`, so a bad id is a 400 before any statement runs.
+- A filter nested deeper than 32 objects is a 400. A thousand nested `not` groups used to
+  overflow the stack and answer with a 500.
+- A batch past the bound-parameter limit (60,000 values: rows times columns for `massCreate` and
+  `massUpsert`, ids for the id based methods, values in an `IN` filter) is a 400 that names the
+  limit, instead of a driver protocol error and a 500.
+- A missing required value (`23502`) is a 400 that names the column.
+- MySQL `ER_DUP_ENTRY` is a 409, and foreign key errors are a 400 on a write and a 409 on a delete.
+- `upsert` no longer updates a row in the trash: the conflict writes nothing and is a 404.
+- With `useReturning: false`, a scoped `upsert` no longer reads back another tenant's row.
+- `restore` on a live row is a 404 before any hook or event runs. It used to succeed and bump
+  `updated_at` and the version.
+- `?relation[some]=` and `[none]=` with no column need the relation, or one of its columns, in
+  `filterableColumns`.
+- A nested child row cannot set its own generated primary key.
+
 ## [3.5.2] - 2026-11-02
 
 ### Fixed

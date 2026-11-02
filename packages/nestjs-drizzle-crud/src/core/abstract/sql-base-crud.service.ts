@@ -74,7 +74,7 @@ import type {
 import type { SortColumn, SortOrder } from "../types/sql.types";
 import { decodeCursor, encodeCursor } from "../utils/cursor";
 import { isPlainObject, mergeCrudConfig } from "../utils/merge-config";
-import { parseCrudQuery } from "../utils/query-parser";
+import { assertFilterDepth, parseCrudQuery } from "../utils/query-parser";
 
 // Alias a many-to-many row carries its join-table key under while it is being
 // grouped. Prefixed so it cannot collide with a real column name.
@@ -364,6 +364,17 @@ export abstract class SqlBaseCrudService<
 		return Object.entries(values).map(([key, value]) =>
 			value === null ? isNull(table[key]) : eq(table[key], value),
 		);
+	}
+
+	// Every predicate a row of a related table must pass for this call: not
+	// soft deleted, and inside the tenant scope when the table has the scope
+	// columns. Loaders, joins, relation filters and counts all go through here,
+	// so a relation can never read another tenant's rows.
+	protected relatedRowScope(target: any, options?: SqlOperationOptions): any[] {
+		const out = this.relatedScopeConditions(target, options);
+		const softDeleted = this.softDeleteCondition(target);
+		if (softDeleted) out.push(softDeleted);
+		return out;
 	}
 
 	// The tenant scope on a related table: one condition per scope column that
@@ -813,6 +824,7 @@ export abstract class SqlBaseCrudService<
 		nodes: RelationNode[],
 		select: SelectTree = { base: [], relations: {} },
 		hostTable: any = this.config.table,
+		options?: SqlOperationOptions,
 	): Promise<void> {
 		if (!nodes.length || !Array.isArray(hosts)) return;
 		const rows = hosts.filter((row) => row && typeof row === "object");
@@ -824,13 +836,27 @@ export abstract class SqlBaseCrudService<
 				if (!node.joined) {
 					switch (this.relationType(node.config)) {
 						case "hasMany":
-							await this.loadHasMany(db, rows, node, childSelect, hostTable);
+							await this.loadHasMany(
+								db,
+								rows,
+								node,
+								childSelect,
+								hostTable,
+								options,
+							);
 							break;
 						case "manyToMany":
-							await this.loadManyToMany(db, rows, node, childSelect, hostTable);
+							await this.loadManyToMany(
+								db,
+								rows,
+								node,
+								childSelect,
+								hostTable,
+								options,
+							);
 							break;
 						default:
-							await this.loadBelongsTo(db, rows, node, childSelect);
+							await this.loadBelongsTo(db, rows, node, childSelect, options);
 					}
 				}
 				if (node.children.length === 0) return;
@@ -845,6 +871,7 @@ export abstract class SqlBaseCrudService<
 					node.children,
 					childSelect,
 					node.config.table,
+					options,
 				);
 			}),
 		);
@@ -856,6 +883,7 @@ export abstract class SqlBaseCrudService<
 		hosts: any[],
 		node: RelationNode,
 		select: SelectTree,
+		options?: SqlOperationOptions,
 	): Promise<void> {
 		const { localKey, references } = node.config;
 		if (!localKey) return;
@@ -877,8 +905,7 @@ export abstract class SqlBaseCrudService<
 			...this.keysForChildren(node.children, target),
 		]);
 		const conditions = [inArray(referenced, ids)];
-		const softDeleted = this.softDeleteCondition(target);
-		if (softDeleted) conditions.push(softDeleted);
+		conditions.push(...this.relatedRowScope(target, options));
 
 		const related = await (fields ? db.select(fields) : db.select())
 			.from(target)
@@ -898,6 +925,7 @@ export abstract class SqlBaseCrudService<
 		node: RelationNode,
 		select: SelectTree,
 		hostTable: any = this.config.table,
+		options?: SqlOperationOptions,
 	): Promise<void> {
 		const { foreignKey } = node.config;
 		if (!foreignKey) return;
@@ -921,8 +949,7 @@ export abstract class SqlBaseCrudService<
 			...this.keysForChildren(node.children, target),
 		]);
 		const conditions = [inArray(foreign, ids)];
-		const softDeleted = this.softDeleteCondition(target);
-		if (softDeleted) conditions.push(softDeleted);
+		conditions.push(...this.relatedRowScope(target, options));
 
 		let query = (fields ? db.select(fields) : db.select())
 			.from(target)
@@ -942,6 +969,7 @@ export abstract class SqlBaseCrudService<
 		node: RelationNode,
 		select: SelectTree,
 		hostTable: any = this.config.table,
+		options?: SqlOperationOptions,
 	): Promise<void> {
 		const { through, throughLocalKey, throughForeignKey, references } =
 			node.config;
@@ -976,8 +1004,7 @@ export abstract class SqlBaseCrudService<
 		}
 
 		const conditions = [inArray(joinLocal, ids)];
-		const softDeleted = this.softDeleteCondition(target);
-		if (softDeleted) conditions.push(softDeleted);
+		conditions.push(...this.relatedRowScope(target, options));
 
 		let query = db
 			.select(fields)
@@ -1019,21 +1046,28 @@ export abstract class SqlBaseCrudService<
 	// LEFT JOIN each belongs-to relation onto the query. Collections are never
 	// joined: one parent row would become one row per child, which breaks `total`
 	// and pagination. They are loaded by loadRelations instead.
-	protected applyJoins(query: any, relationNames: string[]): any {
+	protected applyJoins(
+		query: any,
+		relationNames: string[],
+		options?: SqlOperationOptions,
+	): any {
 		const configured = this.config.relations || {};
 		let q = query;
 		for (const name of relationNames) {
 			const rel = configured[name];
 			if (!rel?.localKey || this.isCollection(rel)) continue;
-			// The soft-delete predicate sits in the ON clause, not the WHERE: a
-			// deleted parent then reads as "no match" (null), and the child row
-			// still comes back, as with any LEFT JOIN miss.
+			// The soft delete and tenant predicates sit in the ON clause, not the
+			// WHERE: a deleted parent, or one of another tenant, then reads as
+			// "no match" (null), and the child row still comes back, as with any
+			// LEFT JOIN miss.
 			const on = eq(
 				this.config.table[rel.localKey],
 				rel.table[rel.references ?? "id"],
 			);
-			const softDeleted = this.softDeleteCondition(rel.table);
-			q = q.leftJoin(rel.table, softDeleted ? and(on, softDeleted) : on);
+			q = q.leftJoin(
+				rel.table,
+				and(on, ...this.relatedRowScope(rel.table, options)),
+			);
 		}
 		return q;
 	}
@@ -1219,11 +1253,13 @@ export abstract class SqlBaseCrudService<
 		};
 	}
 
-	// Detect a Postgres unique-constraint violation across driver shapes:
-	// postgres-js sets `.code` on the error; Drizzle wraps it under `.cause`.
+	// Detect a unique-constraint violation across driver shapes: postgres-js
+	// sets `.code` on the error, Drizzle wraps it under `.cause`, and mysql2
+	// reports ER_DUP_ENTRY (errno 1062).
 	protected isUniqueViolation(error: any): boolean {
 		const code = error?.code ?? error?.cause?.code;
-		return code === "23505"; // Postgres unique_violation
+		const errno = error?.errno ?? error?.cause?.errno;
+		return code === "23505" || code === "ER_DUP_ENTRY" || errno === 1062;
 	}
 
 	// Turn a Postgres unique violation into a typed 409 exception, parsing the
@@ -1231,7 +1267,14 @@ export abstract class SqlBaseCrudService<
 	// (e.g. "Key (code)=(EU) already exists.").
 	protected toDuplicateException(error: any): DuplicateEntityException {
 		const detail: string = error?.detail ?? error?.cause?.detail ?? "";
-		const m = detail.match(/Key \((?<field>.+?)\)=\((?<value>.+?)\)/);
+		const message: string = error?.cause?.message ?? error?.message ?? "";
+		// Postgres: "Key (code)=(EU) already exists."; MySQL: "Duplicate entry
+		// 'EU' for key 'countries.code'".
+		const m =
+			detail.match(/Key \((?<field>.+?)\)=\((?<value>.+?)\)/) ??
+			message.match(
+				/Duplicate entry '(?<value>.*)' for key '(?:[^']*\.)?(?<field>[^']+)'/,
+			);
 		return new DuplicateEntityException(
 			this.getEntityName(),
 			m?.groups?.field ?? "unique field",
@@ -1243,12 +1286,13 @@ export abstract class SqlBaseCrudService<
 	// server fault: value too long (22001), failed CHECK (23514), numeric out of
 	// range (22003), a value the column type cannot parse such as "abc" for an
 	// integer or an unknown enum label (22P02), and a malformed or out of range
-	// date (22007, 22008). These otherwise surface as a raw 500; map them to 400
-	// so the caller sees a client error (mirrors the unique-violation -> 409
-	// mapping). (NOT-NULL violations are intentionally left to bubble: they
-	// usually indicate a programming/config error, not a recoverable bad value.
-	// FK violations are handled separately below.)
+	// date (22007, 22008), and a missing required value (23502), which nested
+	// creates and the controller factory make client input. These otherwise
+	// surface as a raw 500; map them to 400 so the caller sees a client error
+	// (mirrors the unique-violation -> 409 mapping). FK violations are handled
+	// separately below.
 	private static readonly DATA_ERRORS: Record<string, string> = {
+		"23502": "a required value is missing",
 		"22001": "a value is too long for its column",
 		"23514": "a value violates a column check constraint",
 		"22003": "a numeric value is out of range",
@@ -1265,8 +1309,16 @@ export abstract class SqlBaseCrudService<
 
 	protected toDataException(error: any): ValidationFailedException {
 		const code = error?.code ?? error?.cause?.code;
+		const message = SqlBaseCrudService.DATA_ERRORS[code] ?? "invalid value";
+		// node-postgres and PGlite name it `column`, postgres-js `column_name`.
+		const cause = error?.cause ?? error;
+		const column =
+			error?.column ??
+			cause?.column ??
+			error?.column_name ??
+			cause?.column_name;
 		return new ValidationFailedException(
-			SqlBaseCrudService.DATA_ERRORS[code] ?? "invalid value",
+			column ? `${message}: ${column}` : message,
 		);
 	}
 
@@ -1300,9 +1352,12 @@ export abstract class SqlBaseCrudService<
 	// Postgres foreign-key violation (23503). The direction decides the status:
 	// on create/update the caller referenced a parent row that does not exist
 	// (400), on delete other rows still reference this one (409).
+	// MySQL: ER_NO_REFERENCED_ROW_2 (1452) on a write, ER_ROW_IS_REFERENCED_2
+	// (1451) on a delete.
 	protected isForeignKeyViolation(error: any): boolean {
 		const code = error?.code ?? error?.cause?.code;
-		return code === "23503";
+		const errno = error?.errno ?? error?.cause?.errno;
+		return code === "23503" || errno === 1451 || errno === 1452;
 	}
 
 	protected toForeignKeyException(error: any): ForeignKeyViolationException {
@@ -1542,6 +1597,7 @@ export abstract class SqlBaseCrudService<
 		query = this.applyJoins(
 			query,
 			joined.map((node) => node.name),
+			options,
 		)
 			.where(and(...conditions))
 			.limit(1);
@@ -1553,7 +1609,7 @@ export abstract class SqlBaseCrudService<
 			joined.map((node) => node.name),
 		);
 		await Promise.all([
-			this.loadRelations(db, rows, nodes, selection),
+			this.loadRelations(db, rows, nodes, selection, undefined, options),
 			this.loadCounts(db, rows, options?.counts, options),
 		]);
 		return rows[0] || null;
@@ -1626,11 +1682,12 @@ export abstract class SqlBaseCrudService<
 		db: any,
 		conditions: any[],
 		filterRelations: string[],
+		options?: SqlOperationOptions,
 	): any {
 		let query = db
 			.select({ count: sql<number>`count(*)` })
 			.from(this.config.table);
-		query = this.applyJoins(query, filterRelations);
+		query = this.applyJoins(query, filterRelations, options);
 		if (conditions.length > 0) query = query.where(and(...conditions));
 		return query;
 	}
@@ -1673,7 +1730,7 @@ export abstract class SqlBaseCrudService<
 			plan.joinRelations.length > 0,
 			plan.selection,
 		);
-		dataQuery = this.applyJoins(dataQuery, plan.joinRelations);
+		dataQuery = this.applyJoins(dataQuery, plan.joinRelations, options);
 		if (plan.conditions.length > 0) {
 			dataQuery = dataQuery.where(and(...plan.conditions));
 		}
@@ -1688,7 +1745,12 @@ export abstract class SqlBaseCrudService<
 		dataQuery = this.applyLock(dataQuery, options);
 
 		const countQuery = withCount
-			? this.buildCountQuery(plan.db, plan.conditions, plan.filterRelations)
+			? this.buildCountQuery(
+					plan.db,
+					plan.conditions,
+					plan.filterRelations,
+					options,
+				)
 			: Promise.resolve(undefined);
 		const [fetched, totalResult] = await this.runRead(
 			Promise.all([dataQuery, countQuery]),
@@ -1701,7 +1763,14 @@ export abstract class SqlBaseCrudService<
 			plan.joined.map((node) => node.name),
 		);
 		await Promise.all([
-			this.loadRelations(plan.db, rows, plan.nodes, plan.selection),
+			this.loadRelations(
+				plan.db,
+				rows,
+				plan.nodes,
+				plan.selection,
+				undefined,
+				options,
+			),
 			this.loadCounts(plan.db, rows, options?.counts, options),
 		]);
 
@@ -1760,7 +1829,7 @@ export abstract class SqlBaseCrudService<
 			fields[`${CURSOR_KEY}${i}`] = this.cursorField(spec.column);
 		});
 		let dataQuery = plan.db.select(fields).from(this.config.table);
-		dataQuery = this.applyJoins(dataQuery, plan.joinRelations);
+		dataQuery = this.applyJoins(dataQuery, plan.joinRelations, options);
 		if (conditions.length > 0) dataQuery = dataQuery.where(and(...conditions));
 		dataQuery = dataQuery
 			.orderBy(...plan.sort.map((spec) => this.orderOf(spec)))
@@ -1772,7 +1841,12 @@ export abstract class SqlBaseCrudService<
 			Promise.all([
 				dataQuery,
 				count
-					? this.buildCountQuery(plan.db, plan.conditions, plan.filterRelations)
+					? this.buildCountQuery(
+							plan.db,
+							plan.conditions,
+							plan.filterRelations,
+							options,
+						)
 					: Promise.resolve(undefined),
 			]),
 		);
@@ -1796,7 +1870,14 @@ export abstract class SqlBaseCrudService<
 			plan.joined.map((node) => node.name),
 		);
 		await Promise.all([
-			this.loadRelations(plan.db, rows, plan.nodes, plan.selection),
+			this.loadRelations(
+				plan.db,
+				rows,
+				plan.nodes,
+				plan.selection,
+				undefined,
+				options,
+			),
 			this.loadCounts(plan.db, rows, options?.counts, options),
 		]);
 
@@ -1915,7 +1996,7 @@ export abstract class SqlBaseCrudService<
 		}
 		const hosts = rows.filter(Boolean);
 		await Promise.all([
-			this.loadRelations(db, hosts, nodes),
+			this.loadRelations(db, hosts, nodes, undefined, undefined, options),
 			this.loadCounts(db, hosts, options?.counts, options),
 		]);
 	}
@@ -2150,7 +2231,7 @@ export abstract class SqlBaseCrudService<
 	}
 
 	// A row for a related table from a nested body: only its own columns,
-	// never its soft delete column, with its timestamps and the tenant scope
+	// never a generated primary key or its soft delete column, with its timestamps and the tenant scope
 	// set when the table has those columns.
 	private relatedRow(
 		table: any,
@@ -2159,7 +2240,17 @@ export abstract class SqlBaseCrudService<
 	): Record<string, any> {
 		const out: Record<string, any> = {};
 		for (const [key, item] of Object.entries(value)) {
-			if (item !== undefined && this.columnOf(table, key)) out[key] = item;
+			const column = this.columnOf(table, key);
+			// A generated primary key is the database's to pick: a body that
+			// names one could claim, or collide with, any id.
+			if (
+				item === undefined ||
+				!column ||
+				(column.primary && column.hasDefault)
+			) {
+				continue;
+			}
+			out[key] = item;
 		}
 		const softDelete = this.config.softDelete;
 		if (softDelete?.enabled) delete out[softDelete.column];
@@ -2201,9 +2292,7 @@ export abstract class SqlBaseCrudService<
 		const foreign = through[relation.throughForeignKey!];
 
 		const conditions = [inArray(referenced, wanted)];
-		const softDeleted = this.softDeleteCondition(target);
-		if (softDeleted) conditions.push(softDeleted);
-		conditions.push(...this.relatedScopeConditions(target, options));
+		conditions.push(...this.relatedRowScope(target, options));
 		const found: any[] = await tx
 			.select({ id: referenced })
 			.from(target)
@@ -2590,15 +2679,14 @@ export abstract class SqlBaseCrudService<
 		}
 
 		const { transaction, hooks = {} } = options || {};
-		if (options?.expectedVersion != null && this.config.versionColumn) {
-			const existing = await this.findForGuard(id, {
-				...options,
-				withDeleted: true,
-				onlyDeleted: false,
-			});
-			if (!existing)
-				throw new EntityNotFoundException(this.getEntityName(), id);
-		}
+		// Only a row in the trash can be restored. A live row is a 404, before
+		// any hook or event runs, rather than a write that changes nothing.
+		const existing = await this.findForGuard(id, {
+			...options,
+			withDeleted: false,
+			onlyDeleted: true,
+		});
+		if (!existing) throw new EntityNotFoundException(this.getEntityName(), id);
 		if (!hooks.skipBefore) await this.beforeRestore(id);
 		await this.emitEvent(
 			"before",
@@ -2739,6 +2827,7 @@ export abstract class SqlBaseCrudService<
 		options?: SqlOperationOptions,
 	): Promise<T[]> {
 		this.checkReadOptions(options);
+		this.assertBatchSize(this.insertParameters(data));
 		const message = "Mass upsert errors";
 		return this.executeSqlTransaction(async (tx) => {
 			const opts = { ...options, transaction: tx };
@@ -2913,13 +3002,19 @@ export abstract class SqlBaseCrudService<
 			}
 			statement = insert.onDuplicateKeyUpdate({ set });
 		} else {
-			const scoped = this.scopeConditions(options);
+			// Only a live row of the caller's tenant is updated. A conflict with a
+			// trashed row, or another tenant's, writes nothing and comes back as
+			// missing (404), the same as update() on that row.
+			const guard = [
+				...this.scopeConditions(options),
+				...[this.softDeleteCondition(table)].filter(Boolean),
+			];
 			statement = insert.onConflictDoUpdate({
 				target: targets.length === 1 ? targets[0] : targets,
 				set,
 				// `where` renders after the SET (DO UPDATE SET ... WHERE), the same
 				// as `setWhere`, and every Drizzle version in the peer range has it.
-				...(scoped.length > 0 && { where: and(...scoped) }),
+				...(guard.length > 0 && { where: and(...guard) }),
 			});
 		}
 		if (!readBack) return statement.returning();
@@ -2927,10 +3022,19 @@ export abstract class SqlBaseCrudService<
 		const match = rows.map((row) =>
 			and(...targetKeys.map((key, i) => eq(targets[i], row[key]))),
 		);
+		// The same guard on the read-back, so a skipped conflict never hands back
+		// another tenant's row or a trashed one.
+		const softDeleted = this.softDeleteCondition(table);
 		return db
 			.select()
 			.from(table)
-			.where(match.length === 1 ? match[0] : or(...match));
+			.where(
+				and(
+					match.length === 1 ? match[0] : or(...match),
+					...this.scopeConditions(options),
+					...(softDeleted ? [softDeleted] : []),
+				),
+			);
 	}
 
 	// The value a row would have had: excluded.col on Postgres, VALUES(col) on
@@ -2961,6 +3065,7 @@ export abstract class SqlBaseCrudService<
 			return this.massCreatePerItem(data, options);
 		}
 		this.checkReadOptions(options);
+		this.assertBatchSize(this.insertParameters(data));
 		return this.executeSqlTransaction(async (tx) => {
 			const opts = { ...options, transaction: tx };
 			const rows = await this.eachItem(
@@ -3070,6 +3175,7 @@ export abstract class SqlBaseCrudService<
 		if (options?.bulkMode === "perItem") {
 			return this.massUpdatePerItem(ids, data, options);
 		}
+		this.assertBatchSize(Array.isArray(ids) ? ids.length : 0);
 		this.checkReadOptions(options);
 		const message = "Mass update errors";
 		return this.executeSqlTransaction(async (tx) => {
@@ -3178,6 +3284,7 @@ export abstract class SqlBaseCrudService<
 		if (options?.bulkMode === "perItem") {
 			return this.massSoftDeletePerItem(ids, options);
 		}
+		this.assertBatchSize(Array.isArray(ids) ? ids.length : 0);
 		const message = "Mass soft delete errors";
 		return this.executeSqlTransaction(async (tx) => {
 			const opts = {
@@ -3246,6 +3353,7 @@ export abstract class SqlBaseCrudService<
 		if (options?.bulkMode === "perItem") {
 			return this.massRestorePerItem(ids, options);
 		}
+		this.assertBatchSize(Array.isArray(ids) ? ids.length : 0);
 		this.checkReadOptions(options);
 		const message = "Mass restore errors";
 		return this.executeSqlTransaction(async (tx) => {
@@ -3306,6 +3414,7 @@ export abstract class SqlBaseCrudService<
 		if (options?.bulkMode === "perItem") {
 			return this.massDeletePerItem(ids, options);
 		}
+		this.assertBatchSize(Array.isArray(ids) ? ids.length : 0);
 		const message = "Mass delete errors";
 		return this.executeSqlTransaction(async (tx) => {
 			const opts = { ...options, transaction: tx };
@@ -3667,7 +3776,7 @@ export abstract class SqlBaseCrudService<
 		);
 
 		const result = await this.runRead<any[]>(
-			this.buildCountQuery(db, conditions, filterRelations),
+			this.buildCountQuery(db, conditions, filterRelations, options),
 		);
 		return parseInt(result[0]?.count?.toString() || "0", 10);
 	}
@@ -3696,7 +3805,7 @@ export abstract class SqlBaseCrudService<
 		let query = db
 			.select({ value: spec.column, count: total })
 			.from(this.config.table);
-		query = this.applyJoins(query, joins);
+		query = this.applyJoins(query, joins, options);
 		if (conditions.length > 0) query = query.where(and(...conditions));
 		query = query.groupBy(spec.column).orderBy(desc(total), asc(spec.column));
 		const rows = await this.runRead<any[]>(query);
@@ -3848,9 +3957,7 @@ export abstract class SqlBaseCrudService<
 				),
 			);
 		}
-		const softDeleted = this.softDeleteCondition(target);
-		if (softDeleted) conditions.push(softDeleted);
-		conditions.push(...this.relatedScopeConditions(target, options));
+		conditions.push(...this.relatedRowScope(target, options));
 		const total = sql<number>`count(*)`;
 		if (this.relationType(relation) === "manyToMany") {
 			const joinLocal = relation.through[relation.throughLocalKey!];
@@ -3887,6 +3994,7 @@ export abstract class SqlBaseCrudService<
 		caseInsensitive = this.config.sql?.caseSensitive === false,
 	): void {
 		if (Array.isArray(value)) {
+			this.assertBatchSize(value.length);
 			conditions.push(
 				inArray(
 					column,
@@ -3942,6 +4050,7 @@ export abstract class SqlBaseCrudService<
 			targetConditions,
 			db,
 			this.rootHost(),
+			options,
 		);
 	}
 
@@ -3951,6 +4060,7 @@ export abstract class SqlBaseCrudService<
 		targetConditions: any[],
 		db: any,
 		host: FilterHost,
+		options?: SqlOperationOptions,
 	): any | undefined {
 		const target = relation.table;
 		const manyToMany = this.relationType(relation) === "manyToMany";
@@ -3961,8 +4071,7 @@ export abstract class SqlBaseCrudService<
 		if (!key) return undefined;
 
 		const conditions = [...targetConditions];
-		const softDeleted = this.softDeleteCondition(target);
-		if (softDeleted) conditions.push(softDeleted);
+		conditions.push(...this.relatedRowScope(target, options));
 
 		let subquery: any;
 		if (manyToMany) {
@@ -4008,8 +4117,7 @@ export abstract class SqlBaseCrudService<
 		if (quantifier === "every" && compiled.length === 0) return undefined;
 		const parentKey = this.parentKeyOf(relation, host.source);
 		const conditions: any[] = [];
-		const softDeleted = this.softDeleteCondition(target);
-		if (softDeleted) conditions.push(softDeleted);
+		conditions.push(...this.relatedRowScope(target, options));
 		if (compiled.length > 0) {
 			const matched = and(...compiled);
 			conditions.push(
@@ -4071,7 +4179,6 @@ export abstract class SqlBaseCrudService<
 			options,
 		);
 		if (compiled.length === 0) return undefined;
-		const softDeleted = this.softDeleteCondition(target);
 		return exists(
 			db
 				.select({ one: sql`1` })
@@ -4083,7 +4190,7 @@ export abstract class SqlBaseCrudService<
 							host.table[relation.localKey!],
 						),
 						...compiled,
-						...(softDeleted ? [softDeleted] : []),
+						...this.relatedRowScope(target, options),
 					),
 				),
 		);
@@ -4133,6 +4240,7 @@ export abstract class SqlBaseCrudService<
 		conditions: any[];
 		relations: string[];
 	} {
+		assertFilterDepth(filters);
 		const joins = new Set<string>();
 		const conditions = this.compileFilterAt(
 			this.rootHost(),
@@ -4272,6 +4380,7 @@ export abstract class SqlBaseCrudService<
 					compiled,
 					db,
 					host,
+					options,
 				);
 				if (condition) parts.push(condition);
 			} else {
@@ -4348,7 +4457,36 @@ export abstract class SqlBaseCrudService<
 		if (!Array.isArray(raw)) {
 			throw new BadRequestException(`Filter operator "${op}" expects an array`);
 		}
+		this.assertBatchSize(raw.length);
 		return raw;
+	}
+
+	// Postgres accepts at most 65,535 bound parameters per statement, and MySQL
+	// about the same. Past that the driver fails with a confusing protocol error
+	// (08P01) and a 500. A batch that would come near it is a 400 that names the
+	// limit instead, so the caller can split it.
+	// ponytail: refuses instead of chunking; chunk inside the transaction if
+	// single calls over this size become a real need.
+	static readonly MAX_BATCH_PARAMETERS = 60_000;
+
+	protected assertBatchSize(parameters: number): void {
+		const max = SqlBaseCrudService.MAX_BATCH_PARAMETERS;
+		if (parameters > max) {
+			throw new BadRequestException(
+				`Too many values in one call (${parameters}); the limit is ${max}. Split the batch.`,
+			);
+		}
+	}
+
+	// Values a multi-row INSERT binds: rows times the widest row, plus the
+	// columns the service adds (timestamps, scope, version).
+	protected insertParameters(rows: unknown[]): number {
+		let widest = 0;
+		for (const row of rows) {
+			if (isPlainObject(row))
+				widest = Math.max(widest, Object.keys(row).length);
+		}
+		return rows.length * (widest + 4);
 	}
 
 	private requirePostgres(op: string): void {
