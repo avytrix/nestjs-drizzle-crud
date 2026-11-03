@@ -3771,3 +3771,66 @@ describe("3.8.0 P-05 / F5: one UPDATE per distinct SET in massUpdate", () => {
 		expect((await svc.find(3))?.title).toBe("Post 3");
 	});
 });
+
+describe("3.8.0 F2: relation loaders chunk their IN lists", () => {
+	// Four parent keys per batched relation query instead of tens of
+	// thousands, so the spec stays far under PGlite's 32,767 bound values.
+	class Chunked extends Svc {
+		protected override relationChunkSize(): number {
+			return 4;
+		}
+	}
+	const config = (db: any): SqlCrudConfig => ({
+		...base(db, authors),
+		relations: {
+			posts: {
+				table: posts,
+				type: "hasMany",
+				foreignKey: "author_id",
+				orderBy: [{ column: "id", order: "desc" }],
+				relations: {
+					tags: postTagsRelation,
+					author: { table: authors, localKey: "author_id" },
+				},
+			},
+		},
+	});
+
+	it("loads a nested level of 30 parents in ceil(30 / 4) queries, grouped as one query would", async () => {
+		const { db, reset, statements } = await countingDb();
+		const relations = ["posts", "posts.tags", "posts.author"];
+		const whole = await new Svc(config(db)).findAll({}, {}, { relations });
+		reset();
+		const chunked = await new Chunked(config(db)).findAll(
+			{},
+			{},
+			{ relations },
+		);
+		expect(chunked.data).toEqual(whole.data);
+		// data + count, posts (3 author ids: 1), tags over 30 post ids (8),
+		// author over 3 author ids (1).
+		expect(statements()).toHaveLength(2 + 1 + 8 + 1);
+		const ann = chunked.data[0] as any;
+		expect(ann.posts.map((p: any) => p.id)).toEqual([
+			28, 25, 22, 19, 16, 13, 10, 7, 4, 1,
+		]);
+		expect(ann.posts.at(-1).tags.map((t: any) => t.name)).toEqual([
+			"news",
+			"tech",
+		]);
+	});
+
+	it("counts in chunks too", async () => {
+		const { db, reset, statements } = await countingDb();
+		const svc = new Chunked({
+			...base(db, posts),
+			relations: { tags: postTagsRelation },
+		});
+		reset();
+		const page = await svc.findAll({}, { limit: 30 }, { counts: ["tags"] });
+		expect(statements()).toHaveLength(2 + 8);
+		expect(page.data.slice(0, 3).map((p: any) => p._count.tags)).toEqual([
+			2, 1, 0,
+		]);
+	});
+});

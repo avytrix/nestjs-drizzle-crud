@@ -65,6 +65,12 @@ same order, with the same errors; the SQL behind it is cheaper.
   `SELECT ... WHERE id IN (...)` instead of one per row. The inserts stay one per row: MySQL only
   reports the first id of a multi-row `INSERT`, and InnoDB does not promise the others are
   consecutive.
+- Relation loaders and relation counts split a parent key list that would not fit in one
+  statement. `loadBelongsTo`, `loadHasMany`, `loadManyToMany` and `loadCounts` send the keys in
+  chunks of 64,535 on PostgreSQL and MySQL, 31,766 on SQLite and 90 on Cloudflare D1, one query per
+  chunk, so a nested page whose level holds 70,000 keys loads in two queries instead of failing
+  with a 400 (3.7.2) or a 500 (before). Below that, it is one query per relation as before. The
+  chunk size is the new protected `relationChunkSize(db)`.
 
 ## [3.7.2] - 2026-11-03
 

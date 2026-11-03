@@ -1017,15 +1017,15 @@ export abstract class SqlBaseCrudService<
 			referencedName,
 			...this.keysForChildren(node.children, target),
 		]);
-		const conditions = [inArray(referenced, ids)];
-		conditions.push(...this.relatedRowScope(target, options));
-
-		const related = await (fields ? db.select(fields) : db.select())
-			.from(target)
-			.where(and(...conditions));
+		const scope = this.relatedRowScope(target, options);
+		const related = await this.inChunks(db, ids, (chunk) =>
+			(fields ? db.select(fields) : db.select())
+				.from(target)
+				.where(and(inArray(referenced, chunk), ...scope)),
+		);
 
 		const byKey = new Map<any, any>();
-		for (const row of related ?? []) byKey.set(row?.[referencedName], row);
+		for (const row of related) byKey.set(row?.[referencedName], row);
 		for (const host of hosts) {
 			host[node.name] = byKey.get(host[localKey]) ?? null;
 		}
@@ -1061,16 +1061,16 @@ export abstract class SqlBaseCrudService<
 			foreignKey,
 			...this.keysForChildren(node.children, target),
 		]);
-		const conditions = [inArray(foreign, ids)];
-		conditions.push(...this.relatedRowScope(target, options));
-
-		let query = (fields ? db.select(fields) : db.select())
-			.from(target)
-			.where(and(...conditions));
+		const scope = this.relatedRowScope(target, options);
 		const orderBy = this.collectionOrderBy(node.config);
-		if (orderBy.length > 0) query = query.orderBy(...orderBy);
-
-		const children = await query;
+		// Every child of a parent comes from the chunk that holds the parent's
+		// key, so the per-chunk ORDER BY orders each collection completely.
+		const children = await this.inChunks(db, ids, (chunk) => {
+			const query = (fields ? db.select(fields) : db.select())
+				.from(target)
+				.where(and(inArray(foreign, chunk), ...scope));
+			return orderBy.length > 0 ? query.orderBy(...orderBy) : query;
+		});
 		this.groupCollection(hosts, node.name, parentKey, children, foreignKey);
 	}
 
@@ -1116,19 +1116,44 @@ export abstract class SqlBaseCrudService<
 			if (columns[name]) fields[name] = columns[name];
 		}
 
-		const conditions = [inArray(joinLocal, ids)];
-		conditions.push(...this.relatedRowScope(target, options));
-
-		let query = db
-			.select(fields)
-			.from(through)
-			.innerJoin(target, eq(joinForeign, referenced))
-			.where(and(...conditions));
+		const scope = this.relatedRowScope(target, options);
 		const orderBy = this.collectionOrderBy(node.config);
-		if (orderBy.length > 0) query = query.orderBy(...orderBy);
-
-		const rows = await query;
+		const rows = await this.inChunks(db, ids, (chunk) => {
+			const query = db
+				.select(fields)
+				.from(through)
+				.innerJoin(target, eq(joinForeign, referenced))
+				.where(and(inArray(joinLocal, chunk), ...scope));
+			return orderBy.length > 0 ? query.orderBy(...orderBy) : query;
+		});
 		this.groupCollection(hosts, node.name, parentKey, rows, JOIN_KEY, true);
+	}
+
+	// How many parent keys one batched relation query binds: the bind limit of
+	// `db`, less headroom for the scope and filter values the same query
+	// binds. Override it to load in smaller pieces.
+	protected relationChunkSize(db: any): number {
+		const { limit } = this.bindLimit(db);
+		return Math.max(1, limit - Math.min(1_000, Math.floor(limit / 10)));
+	}
+
+	// Run a batched relation query once per chunk of `ids` that fits in one
+	// statement (one query when they all fit, as before) and concatenate the
+	// rows. Keys are never split across chunks, so grouping is unaffected.
+	private async inChunks(
+		db: any,
+		ids: unknown[],
+		query: (chunk: unknown[]) => PromiseLike<any[]>,
+	): Promise<any[]> {
+		const size = this.relationChunkSize(db);
+		if (ids.length <= size) return (await query(ids)) ?? [];
+		const out: any[] = [];
+		for (let start = 0; start < ids.length; start += size) {
+			for (const row of (await query(ids.slice(start, start + size))) ?? []) {
+				out.push(row);
+			}
+		}
+		return out;
 	}
 
 	// Group loaded rows onto their hosts by key, defaulting to an empty array so
@@ -4592,8 +4617,10 @@ export abstract class SqlBaseCrudService<
 				);
 				const totals = new Map<string, number>();
 				if (ids.length > 0) {
-					const result = await this.runRead<any[]>(
-						this.countQuery(db, relation, ids, name, filter, options),
+					const result = await this.inChunks(db, ids, (chunk) =>
+						this.runRead<any[]>(
+							this.countQuery(db, relation, chunk, name, filter, options),
+						),
 					);
 					for (const row of result) {
 						totals.set(String(row[COUNT_KEY]), Number(row.count));
