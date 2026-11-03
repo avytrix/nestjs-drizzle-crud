@@ -11,6 +11,22 @@ restore, `ER_DUP_ENTRY` mapping, dialect locking) are tracked separately and unc
 3.3.1, 3.4.0, 3.5.0 and 3.5.2 were tagged but never published to npm. Their changes reached npm
 in 3.5.1 (3.3.1 to 3.5.0) and 3.6.0 (3.5.2). The unscoped `nestjs-drizzle-crud` stops at 3.3.0.
 
+## [3.8.0] - 2026-11-03
+
+Performance fixes from the 3.7.1 performance report. Every call returns the same rows, in the
+same order, with the same errors; the SQL behind it is cheaper.
+
+### Fixed
+
+- Keyset pages seek instead of filtering. `findByCursor` adds a bound on the first sort column
+  (`col <= $1` descending, `col >= $1` ascending) ahead of the OR expansion, drops the `IS NULL`
+  branch for NOT NULL and primary key columns (nullable and relation columns keep it), and on
+  PostgreSQL compares `(a, id) > ($1, $2)` as one row value when every column is NOT NULL and
+  sorts the same way. With an index on the sort columns and the primary key, page 9,000 of
+  200,000 rows went from 24.4 ms to 0.6 ms (`created_at` descending) and from 50.3 ms to 0.5 ms
+  (`views` ascending) on PGlite. A sort column the row already carries is no longer selected a
+  second time for the cursor. Pages, their order and cursors are unchanged.
+
 ## [3.7.2] - 2026-11-03
 
 Fixes from the 3.7.1 audit. The batch limit now counts the statement the database receives.
@@ -335,7 +351,8 @@ app.
   only operator on MySQL is a 400.
 - **Keyset pagination.** `findByCursor(filters, { cursor, limit, sortBy, count }, options)` returns
   `{ data, limit, nextCursor, total? }`. The cursor is base64url JSON of the last row's sort values
-  plus the primary key, so pages stay stable under inserts and deep pages cost the same as the
+  plus the primary key, so pages stay stable under inserts and, with an index on the sort columns
+  (since 3.8.0), deep pages cost the same as the
   first. It works with every sort, filter, relation and `select`, keeps timestamp microseconds and
   follows the database's NULL ordering. The count only runs with `count: true`. A cursor that is not
   valid, or was made for another sort, is a 400.

@@ -1,10 +1,10 @@
 ---
 title: Cursor pagination with Drizzle
-description: "Drizzle cursor pagination with findByCursor: pass each nextCursor back for the next page. Deep pages cost the same as page 1 and stay stable under inserts."
+description: "Drizzle cursor pagination with findByCursor: pass each nextCursor back for the next page. With an index on the sort columns, page 500 is as fast as page 1."
 icon: ListOrdered
 ---
 
-For Drizzle cursor pagination, call `findByCursor(filters, { limit, sortBy, cursor })`. It returns `{ data, limit, nextCursor }`; pass `nextCursor` back as `cursor` to get the next page, until it is `null`. Each page is a `WHERE` on the sort columns of the last row instead of an `OFFSET`, so page 500 costs the same as page 1, and a row inserted on an earlier page does not shift the next one. This is also called keyset pagination.
+For Drizzle cursor pagination, call `findByCursor(filters, { limit, sortBy, cursor })`. It returns `{ data, limit, nextCursor }`; pass `nextCursor` back as `cursor` to get the next page, until it is `null`. Each page is a `WHERE` on the sort columns of the last row instead of an `OFFSET`, so with an index on the sort columns plus the primary key, page 500 costs the same as page 1, and a row inserted on an earlier page does not shift the next one. This is also called keyset pagination.
 
 <Callout title="When to pick it">
   Use `findByCursor` for infinite scroll, exports, sync jobs and lists that grow while people read them. Use [offset pagination with findAll](/docs/pagination-sorting) when the UI shows page numbers or jumps to page 7.
@@ -60,21 +60,31 @@ The second argument takes these fields, all optional.
 
 ## How does the cursor work?
 
-The cursor holds the sort values of the last row on the page, primary key last, plus the sort it was made for. The next query asks for rows that come after that position. With `sortBy: ['views']` on a not-null column:
+The cursor holds the sort values of the last row on the page, primary key last, plus the sort it was made for. The next query asks for rows that come after that position, starting with a bound on the first sort column so the database can seek to it in an index. With `sortBy: '-views'` on a not-null column:
 
-```sql title="keyset query"
-WHERE (views > $1) OR (views = $1 AND id > $2)
+```sql title="keyset query, descending"
+WHERE views <= $1
+  AND (views < $1 OR (views = $1 AND id > $2))
+ORDER BY views DESC, id ASC
+LIMIT 51
+```
+
+When every sort column is NOT NULL (or the primary key) and they all sort the same way, Postgres gets one row comparison instead, which an index on `(views, id)` answers directly:
+
+```sql title="keyset query, ascending, Postgres"
+WHERE (views, id) > ($1, $2)
 ORDER BY views ASC, id ASC
 LIMIT 51
 ```
 
-How each part keeps pages correct:
+How each part keeps pages correct and fast:
 
 | Part | Why |
 | --- | --- |
-| Primary key as the last sort column | It makes every position unique, so no row is repeated or skipped. |
+| Primary key as the last sort column | It makes every position unique, so no row is repeated or skipped. It always sorts ascending, whatever the direction of the other columns. |
+| Leading bound on the first sort column | `views <= $1` (descending) or `views >= $1` (ascending) lets the database start reading at the cursor in an index on the sort columns, instead of scanning every row before it. |
 | `LIMIT limit + 1` | The extra row says whether there is a next page. It is dropped from `data`. |
-| NULL handling | NULLs follow the database's own order: last ascending and first descending on Postgres, the other way round on MySQL and SQLite. The comparison follows the same rule. |
+| NULL handling | NULLs follow the database's own order: last ascending and first descending on Postgres, the other way round on MySQL and SQLite. The comparison follows the same rule. A NOT NULL column or the primary key gets no `IS NULL` branch; a nullable column, or a column of a joined relation, keeps it. When the NULLs of the first column come after the cursor, the leading bound is left out so they stay reachable. |
 | Timestamps read as text | A JavaScript `Date` keeps milliseconds and Postgres keeps microseconds. Reading the value as text keeps the microseconds, so a row is never shown twice. |
 | `bigint` values | JSON cannot hold a `bigint`, so it travels as `{ "$b": "123" }` and comes back as a `bigint`. |
 
@@ -124,7 +134,7 @@ When the UI shows page numbers or jumps to a given page. Keyset pages only go fo
 | | `findAll` (offset) | `findByCursor` (keyset) |
 | --- | --- | --- |
 | Jump to page N | Yes | No |
-| Cost of a deep page | Grows with the offset | Same as page 1 |
+| Cost of a deep page | Grows with the offset | Same as page 1, with an index on the sort columns and the primary key |
 | Rows inserted while paging | Can shift pages | No effect on later pages |
 | Count query | On by default (`withCount`) | Off by default (`count`) |
 

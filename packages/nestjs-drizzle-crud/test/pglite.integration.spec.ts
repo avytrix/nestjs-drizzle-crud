@@ -275,14 +275,23 @@ afterAll(async () => {
 	await Promise.all(clients.map((client) => client.close()));
 });
 
-async function freshDb(log?: string[]): Promise<any> {
+async function freshDb(log?: string[], params?: unknown[][]): Promise<any> {
 	const client = await PGlite.create();
 	clients.push(client);
 	await client.exec(DDL);
 	await client.exec(SEED);
 	return drizzle(
 		client,
-		log ? { logger: { logQuery: (query) => log.push(query) } } : {},
+		log
+			? {
+					logger: {
+						logQuery: (query, values) => {
+							log.push(query);
+							params?.push(values);
+						},
+					},
+				}
+			: {},
 	);
 }
 
@@ -3250,5 +3259,107 @@ describe("3.7.2: full-text search over a NULL column (A-14)", () => {
 		expect(log.join("\n")).toContain(
 			`to_tsvector('english', coalesce("articles"."title", '')) || to_tsvector('english', coalesce("articles"."body", ''))`,
 		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 3.8.0 performance. Statement shapes and counts come from Drizzle's logger,
+// plans from EXPLAIN on the exact statement the service sent.
+// ---------------------------------------------------------------------------
+
+describe("3.8.0 P-01: keyset pages seek instead of filtering", () => {
+	// The data statement of the second page of a walk, with its parameters.
+	async function secondPage(
+		svcOf: (db: any) => Svc,
+		pagination: any,
+		options?: any,
+	) {
+		const log: string[] = [];
+		const params: unknown[][] = [];
+		const db = await freshDb(log, params);
+		const svc = svcOf(db);
+		const first = await svc.findByCursor(
+			{},
+			{ limit: 3, ...pagination },
+			options,
+		);
+		log.length = 0;
+		params.length = 0;
+		await svc.findByCursor(
+			{},
+			{ limit: 3, ...pagination, cursor: first.nextCursor },
+			options,
+		);
+		return { db, query: log[0]!, params: params[0]! };
+	}
+
+	it("drops IS NULL for NOT NULL and primary key columns and adds a leading bound", async () => {
+		const desc = await secondPage(postsService, {
+			sortBy: "views",
+			sortOrder: "desc",
+		});
+		expect(desc.query).not.toMatch(/"views" is null/);
+		expect(desc.query).not.toMatch(/"id" is null/);
+		expect(desc.query).toMatch(/"posts"\."views" <= \$\d+ and \(/);
+
+		const asc = await secondPage(postsService, { sortBy: "views" });
+		expect(asc.query).not.toMatch(/"(views|id)" is null/);
+		// Same direction, no NULLs: one row comparison.
+		expect(asc.query).toContain('("posts"."views", "posts"."id") > ($');
+
+		const pk = await secondPage(postsService, {});
+		expect(pk.query).not.toMatch(/"id" is null/);
+	});
+
+	it("keeps the NULL branch for nullable and relation sort columns", async () => {
+		// published_at is nullable: NULLs come last ascending on Postgres, so
+		// they stay reachable and the bound is left out.
+		const asc = await secondPage(postsService, { sortBy: "published_at" });
+		expect(asc.query).toMatch(/"posts"\."published_at" is null/);
+		expect(asc.query).not.toMatch(/"published_at" >=/);
+		// Descending, the 15 NULLs came first and are behind a cursor on a
+		// date: bounded.
+		const desc = await secondPage(postsService, {
+			sortBy: "published_at",
+			sortOrder: "desc",
+			limit: 17,
+		});
+		expect(desc.query).toMatch(/"posts"\."published_at" <= \$\d+/);
+		// A LEFT JOIN can make a NOT NULL relation column NULL.
+		const relation = await secondPage(
+			postsService,
+			{ sortBy: ["author.name"] },
+			{ relations: ["author"] },
+		);
+		expect(relation.query).toMatch(/"authors"\."name" is null/);
+	});
+
+	it("reads a projected sort column from the row instead of selecting it twice", async () => {
+		const plain = await secondPage(postsService, { sortBy: "views" });
+		const projection = plain.query.slice(0, plain.query.indexOf(" from "));
+		expect(projection.match(/"views"/g)).toHaveLength(1);
+		expect(projection.match(/"id"/g)).toHaveLength(1);
+		// A date column is still hidden, cast to text for its microseconds.
+		const dated = await secondPage(postsService, { sortBy: "created_at" });
+		expect(dated.query).toContain('cast("created_at" as text)');
+	});
+
+	it("uses an index on (sort column, id) as an index condition", async () => {
+		for (const sortOrder of ["asc", "desc"] as const) {
+			const page = await secondPage(postsService, {
+				sortBy: "views",
+				sortOrder,
+			});
+			const client = page.db.$client as PGlite;
+			await client.exec(
+				"CREATE INDEX posts_views_id ON posts (views, id); SET enable_seqscan = off; SET enable_bitmapscan = off;",
+			);
+			const plan = await client.query<any>(
+				`EXPLAIN ${page.query}`,
+				page.params as any[],
+			);
+			const text = plan.rows.map((row) => row["QUERY PLAN"]).join("\n");
+			expect(text).toMatch(/Index Cond: .*views/);
+		}
 	});
 });

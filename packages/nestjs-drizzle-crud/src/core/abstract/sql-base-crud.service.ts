@@ -2087,15 +2087,25 @@ export abstract class SqlBaseCrudService<
 		}
 
 		// The sort values travel in hidden fields so the cursor can be built
-		// whatever `select` narrowed the row to. They are removed below.
+		// whatever `select` narrowed the row to. They are removed below. A
+		// column the row already carries as is is read from the row instead of
+		// being selected twice; a date column is always hidden, cast to text.
 		const fields = this.buildSelection(
 			plan.baseSelect,
 			plan.joined,
 			plan.selection,
 		);
-		plan.sort.forEach((spec, i) => {
-			fields[`${CURSOR_KEY}${i}`] = this.cursorField(spec.column);
+		const cursorKeys = plan.sort.map((spec, i) => {
+			const field = this.cursorField(spec.column);
+			const projected =
+				field === spec.column && !spec.relation
+					? Object.keys(fields).find((key) => fields[key] === spec.column)
+					: undefined;
+			if (projected) return projected;
+			fields[`${CURSOR_KEY}${i}`] = field;
+			return `${CURSOR_KEY}${i}`;
 		});
+		const hidden = cursorKeys.filter((key) => key.startsWith(CURSOR_KEY));
 		let dataQuery = plan.db.select(fields).from(this.config.table);
 		dataQuery = this.applyJoins(dataQuery, plan.joinRelations, options);
 		if (conditions.length > 0) dataQuery = dataQuery.where(and(...conditions));
@@ -2123,14 +2133,12 @@ export abstract class SqlBaseCrudService<
 		const nextCursor =
 			(data as any[]).length > limit && last
 				? encodeCursor(
-						plan.sort.map((_, i) => last[`${CURSOR_KEY}${i}`]),
+						cursorKeys.map((key) => last[key]),
 						signature,
 					)
 				: null;
 		for (const row of page) {
-			plan.sort.forEach((_, i) => {
-				delete row[`${CURSOR_KEY}${i}`];
-			});
+			for (const key of hidden) delete row[key];
 		}
 
 		const rows = this.normalizeRelations(
@@ -2171,12 +2179,18 @@ export abstract class SqlBaseCrudService<
 
 	// Compare a sort column with a cursor value. Date columns compare with the
 	// text the cursor holds, which the database casts to the column's type.
-	private compareCursor(column: any, op: ">" | "<" | "=", value: any): any {
+	private compareCursor(
+		column: any,
+		op: ">" | "<" | "=" | ">=" | "<=",
+		value: any,
+	): any {
 		if (column?.dataType === "date") {
 			return sql`${column} ${sql.raw(op)} ${value}`;
 		}
 		if (op === ">") return gt(column, value);
 		if (op === "<") return lt(column, value);
+		if (op === ">=") return gte(column, value);
+		if (op === "<=") return lte(column, value);
 		return eq(column, value);
 	}
 
@@ -2184,7 +2198,15 @@ export abstract class SqlBaseCrudService<
 	// is past the cursor value, or it ties and the next one is past, and so on.
 	// NULLs sort last ascending and first descending on Postgres, the other
 	// way round on MySQL and SQLite, and the comparison follows the same rule.
+	// A column that cannot hold NULL (NOT NULL, or the primary key) gets no
+	// IS NULL branch, and the first column is also bounded on its own
+	// (`col >= $1` ascending, `col <= $1` descending), so the database seeks
+	// to the cursor in an index on the sort columns instead of reading every
+	// row before it. When every column is non-null and sorts the same way on
+	// Postgres, the whole condition is one row comparison instead.
 	protected keysetCondition(specs: SortSpec[], values: unknown[]): any {
+		const row = this.keysetRowComparison(specs, values);
+		if (row) return row;
 		const branches: any[] = [];
 		specs.forEach((spec, i) => {
 			const after = this.afterCursor(spec, values[i]);
@@ -2198,12 +2220,81 @@ export abstract class SqlBaseCrudService<
 				);
 			branches.push(ties.length > 0 ? and(...ties, after) : after);
 		});
-		return branches.length > 0 ? or(...branches) : sql`false`;
+		if (branches.length === 0) return sql`false`;
+		const after = or(...branches);
+		const bound = this.keysetBound(specs, values);
+		return bound ? and(bound, after) : after;
+	}
+
+	// The leading bound of a keyset page: every later row has a first sort
+	// value at or past the cursor's. Left out when the cursor value is NULL,
+	// when NULLs of that column come after the cursor (they would fail the
+	// bound), and for a one-column sort, whose only branch is a bound already.
+	private keysetBound(specs: SortSpec[], values: unknown[]): any | undefined {
+		const [first] = specs;
+		if (!first || specs.length < 2 || values[0] === null) return undefined;
+		if (this.keysetNullable(first) && !this.nullsFirst(first)) {
+			return undefined;
+		}
+		return this.compareCursor(
+			first.column,
+			first.order === "asc" ? ">=" : "<=",
+			values[0],
+		);
+	}
+
+	// `(a, b, id) > ($1, $2, $3)` on Postgres, which an index on (a, b, id)
+	// answers with an index condition on every column. Only when no column
+	// can be NULL, no cursor value is NULL and every column sorts the same
+	// way: the primary key always sorts ascending, so a descending sort keeps
+	// the OR form with its leading bound.
+	private keysetRowComparison(
+		specs: SortSpec[],
+		values: unknown[],
+	): any | undefined {
+		if (this.config.dialect !== "postgresql" || specs.length < 2) {
+			return undefined;
+		}
+		const order = specs[0]!.order;
+		const fits = specs.every(
+			(spec, i) =>
+				spec.order === order &&
+				values[i] !== null &&
+				!this.keysetNullable(spec),
+		);
+		if (!fits) return undefined;
+		const columns = sql.join(
+			specs.map((spec) => spec.column),
+			sql`, `,
+		);
+		const params = sql.join(
+			specs.map((spec, i) =>
+				spec.column?.dataType === "date"
+					? sql`${values[i]}`
+					: sql.param(values[i], spec.column),
+			),
+			sql`, `,
+		);
+		return sql`(${columns}) ${sql.raw(order === "asc" ? ">" : "<")} (${params})`;
+	}
+
+	// Whether a sort column can be NULL in the result: a relation column always
+	// can (the LEFT JOIN misses), a NOT NULL column or the primary key cannot.
+	private keysetNullable(spec: SortSpec): boolean {
+		if (spec.relation) return true;
+		return !(spec.column?.notNull || spec.column?.primary);
+	}
+
+	// Where NULLs of this sort column land: first descending on Postgres,
+	// first ascending on MySQL and SQLite.
+	private nullsFirst(spec: SortSpec): boolean {
+		return this.config.dialect === "postgresql"
+			? spec.order === "desc"
+			: spec.order === "asc";
 	}
 
 	private afterCursor(spec: SortSpec, value: unknown): any | undefined {
-		const postgres = this.config.dialect === "postgresql";
-		const nullsFirst = postgres ? spec.order === "desc" : spec.order === "asc";
+		const nullsFirst = this.nullsFirst(spec);
 		if (value === null) {
 			return nullsFirst ? isNotNull(spec.column) : undefined;
 		}
@@ -2212,7 +2303,9 @@ export abstract class SqlBaseCrudService<
 			spec.order === "asc" ? ">" : "<",
 			value,
 		);
-		return nullsFirst ? past : or(past, isNull(spec.column));
+		return nullsFirst || !this.keysetNullable(spec)
+			? past
+			: or(past, isNull(spec.column));
 	}
 
 	// ---- Events, relations on writes ----
