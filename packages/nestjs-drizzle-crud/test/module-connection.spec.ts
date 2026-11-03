@@ -79,6 +79,26 @@ describe("forRootAsync", () => {
 			/useFactory, useClass or useExisting/,
 		);
 	});
+
+	// 3.7.2 (A-10): the class used to be ignored without a word.
+	it("refuses more than one of useFactory, useClass and useExisting", () => {
+		const factory = async () => ({
+			dialect: "postgresql" as const,
+			db: fakeDb,
+		});
+		expect(() =>
+			DrizzleCrudModule.forRootAsync({
+				useFactory: factory,
+				useClass: ConfigFactory,
+			}),
+		).toThrow(/exactly one of .* not useFactory and useClass/);
+		expect(() =>
+			DrizzleCrudModule.forRootAsync({
+				useClass: ConfigFactory,
+				useExisting: ConfigFactory,
+			}),
+		).toThrow(/not useClass and useExisting/);
+	});
 });
 
 describe("connection options", () => {
@@ -94,6 +114,7 @@ describe("connection options", () => {
 		expect(mysqlOptions({ poolSize: 5, idleTimeout: 20, ssl: true })).toEqual({
 			connectionLimit: 5,
 			idleTimeout: 20_000,
+			maxIdle: 4,
 			ssl: {},
 		});
 		expect(mysqlOptions({ ssl: false })).toEqual({});
@@ -134,6 +155,34 @@ describe("connection options", () => {
 		expect(pool.config.connectionConfig.database).toBe("app");
 		expect(typeof connection.db.select).toBe("function");
 		await connection.onModuleDestroy();
+	});
+
+	// 3.7.2 (A-09): mysql2 only reaps idle connections when maxIdle is below
+	// connectionLimit, and maxIdle defaults to connectionLimit.
+	it("starts mysql2's idle reaper when idleTimeout is set", async () => {
+		const build = async (connection: Record<string, unknown>) => {
+			const owner = new DrizzleConnection();
+			await owner.init({
+				dialect: "mysql",
+				connectionString: "mysql://user:secret@127.0.0.1:1/app",
+				connection,
+			});
+			return owner;
+		};
+		const timed = await build({ poolSize: 4, idleTimeout: 30 });
+		const pool = (timed as any).client.pool;
+		expect(pool.config.maxIdle).toBe(3);
+		expect(pool._removeIdleTimeoutConnectionsTimer).toBeDefined();
+		await timed.onModuleDestroy();
+
+		const sized = await build({ idleTimeout: 30 });
+		expect((sized as any).client.pool.config.maxIdle).toBe(9);
+		await sized.onModuleDestroy();
+
+		// Without idleTimeout, mysql2's own defaults stand.
+		const untimed = await build({ poolSize: 4 });
+		expect((untimed as any).client.pool.config.maxIdle).toBe(4);
+		await untimed.onModuleDestroy();
 	});
 
 	it("still refuses a connectionString for sqlite", async () => {

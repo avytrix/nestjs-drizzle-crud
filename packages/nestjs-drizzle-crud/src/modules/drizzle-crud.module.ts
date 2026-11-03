@@ -155,6 +155,15 @@ function connectionProviders(rawConfigProvider: Provider): Provider[] {
 // The provider that produces the raw config for forRootAsync: the factory
 // itself, or the create method of a useClass / useExisting class.
 function asyncConfigProvider(options: DrizzleCrudAsyncOptions): Provider {
+	// With two of them, one would win silently and the other be ignored.
+	const given = (["useFactory", "useClass", "useExisting"] as const).filter(
+		(key) => options[key] !== undefined,
+	);
+	if (given.length > 1) {
+		throw new Error(
+			`DrizzleCrudModule.forRootAsync: provide exactly one of useFactory, useClass or useExisting, not ${given.join(" and ")}.`,
+		);
+	}
 	if (options.useFactory) {
 		return {
 			provide: DRIZZLE_RAW_CONFIG,

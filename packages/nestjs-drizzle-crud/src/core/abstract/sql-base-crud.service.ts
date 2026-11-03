@@ -90,6 +90,24 @@ const CURSOR_KEY = "__crudCursor";
 // Thrown inside a savepoint to roll it back on purpose; never escapes.
 const ROLLBACK = Symbol("rollback");
 
+// The bound parameters one statement may carry. Postgres and MySQL count them
+// in a 16-bit field; SQLite stops at SQLITE_MAX_VARIABLE_NUMBER, 32,766 by
+// default; Cloudflare D1 takes 100.
+const BIND_LIMITS: Record<string, { limit: number; name: string }> = {
+	postgresql: { limit: 65_535, name: "PostgreSQL" },
+	mysql: { limit: 65_535, name: "MySQL" },
+	sqlite: { limit: 32_766, name: "SQLite" },
+	d1: { limit: 100, name: "Cloudflare D1" },
+};
+
+// A statement past the bound parameter limit. A 400 like any other, but a set
+// statement must not replay it item by item to find a culprit: no single item
+// is one.
+class BindLimitException extends BadRequestException {}
+
+// Dialects withBindLimit already checks, so a view is never wrapped twice.
+const CHECKED_DIALECTS = new WeakSet<object>();
+
 // One resolved ORDER BY entry. `key` is what the caller wrote ("name",
 // "region.name"), `relation` the belongs-to it needs joined.
 interface SortSpec {
@@ -482,6 +500,79 @@ export abstract class SqlBaseCrudService<
 	constructor(protected readonly config: SqlCrudConfig) {
 		this.config = mergeCrudConfig(this.defaultConfig, config);
 		this.validateConfiguration();
+	}
+
+	// The bound-parameter view of each db or transaction, built once.
+	private readonly boundDbs = new WeakMap<object, any>();
+
+	// The db every statement of this service is built from: the caller's
+	// transaction when there is one, the configured db otherwise, both seen
+	// through withBindLimit.
+	protected dbFor(transaction?: any): any {
+		return this.withBindLimit(transaction || this.config.db);
+	}
+
+	// A view of `db` whose dialect counts the bound parameters of each
+	// statement as Drizzle turns it into SQL to run. sqlToQuery is the one
+	// point every SELECT, INSERT, UPDATE and DELETE passes, once, so the check
+	// sees the statement actually sent (OR'd lists, version checks, nested
+	// children, link rows included) at no extra cost. Past the limit it throws
+	// a 400 that names both numbers, before anything reaches the database. The
+	// view inherits from `db` (Object.create), so transactions, the driver
+	// client and entityKind checks behave as before. Something without a
+	// Drizzle dialect, such as a test mock, comes back unchanged.
+	protected withBindLimit(db: any): any {
+		const dialect = db?.dialect;
+		if (
+			typeof dialect?.sqlToQuery !== "function" ||
+			CHECKED_DIALECTS.has(dialect)
+		) {
+			return db;
+		}
+		const cached = this.boundDbs.get(db);
+		if (cached) return cached;
+		const { limit, name } = this.bindLimit(db);
+		const checked = Object.create(dialect);
+		const tooMany = (count: string) =>
+			new BindLimitException(
+				`Too many values in one statement: ${count} bound parameters, and ${name} takes at most ${limit}. Split the batch.`,
+			);
+		checked.sqlToQuery = (...args: unknown[]) => {
+			let query: any;
+			try {
+				query = dialect.sqlToQuery(...args);
+			} catch (error) {
+				// Drizzle spreads each part's parameters into one array, which
+				// overflows the call stack somewhere past 100,000 of them, before
+				// there is a count to read. Filters are depth capped, so nothing
+				// else that small overflows here.
+				if (error instanceof RangeError) throw tooMany(`more than ${limit}`);
+				throw error;
+			}
+			const count = query?.params?.length ?? 0;
+			if (count > limit) throw tooMany(String(count));
+			return query;
+		};
+		CHECKED_DIALECTS.add(checked);
+		const view = Object.create(db, {
+			dialect: { value: checked, writable: true, configurable: true },
+		});
+		this.boundDbs.set(db, view);
+		return view;
+	}
+
+	// The most bound parameters one statement may carry on `db`: per dialect,
+	// and 100 on Cloudflare D1. Override it for a server built with another
+	// limit (SQLITE_MAX_VARIABLE_NUMBER, say).
+	protected bindLimit(db: any): { limit: number; name: string } {
+		if (this.isD1(db)) return BIND_LIMITS.d1!;
+		return BIND_LIMITS[this.config.dialect] ?? BIND_LIMITS.postgresql!;
+	}
+
+	// Cloudflare D1, as a db or a transaction, from its Drizzle entityKind.
+	protected isD1(db: any): boolean {
+		const kind = db?.constructor?.[entityKind];
+		return kind === "D1Database" || kind === "D1Transaction";
 	}
 
 	private validateConfiguration(): void {
@@ -1286,9 +1377,12 @@ export abstract class SqlBaseCrudService<
 	}
 
 	// The kind of SQLite constraint an error reports ("UNIQUE", "PRIMARYKEY",
-	// "FOREIGNKEY", "NOTNULL", "CHECK"), or undefined. libSQL and
+	// "FOREIGNKEY", "NOTNULL", "CHECK", "DATATYPE"), or undefined. libSQL and
 	// better-sqlite3 carry an extended code such as SQLITE_CONSTRAINT_UNIQUE;
 	// D1 only has the message ("UNIQUE constraint failed: posts.slug").
+	// DATATYPE is a STRICT table refusing a value of the wrong type (extended
+	// code 3091, which libSQL calls UNKNOWN_SQLITE_ERROR_3091), and MISMATCH a
+	// value that cannot be a rowid (SQLITE_MISMATCH, "datatype mismatch").
 	protected sqliteConstraint(error: any): string | undefined {
 		if (this.config.dialect !== "sqlite") return undefined;
 		for (const e of [error, error?.cause]) {
@@ -1296,8 +1390,14 @@ export abstract class SqlBaseCrudService<
 			if (typeof code === "string" && code.startsWith("SQLITE_CONSTRAINT_")) {
 				return code.slice("SQLITE_CONSTRAINT_".length);
 			}
+			if (code === "UNKNOWN_SQLITE_ERROR_3091" || e?.rawCode === 3091) {
+				return "DATATYPE";
+			}
+			if (code === "SQLITE_MISMATCH") return "MISMATCH";
 		}
 		const message = `${error?.cause?.message ?? ""} ${error?.message ?? ""}`;
+		if (/cannot store \S+ value in \S+ column/.test(message)) return "DATATYPE";
+		if (/datatype mismatch/.test(message)) return "MISMATCH";
 		const m = message.match(
 			/(UNIQUE|PRIMARY KEY|FOREIGN KEY|NOT NULL|CHECK) constraint failed/,
 		);
@@ -1364,6 +1464,8 @@ export abstract class SqlBaseCrudService<
 	private static readonly SQLITE_DATA_ERRORS: Record<string, string> = {
 		NOTNULL: "a required value is missing",
 		CHECK: "a value violates a column check constraint",
+		DATATYPE: "a value does not match its column type",
+		MISMATCH: "a value does not match its column type",
 	};
 
 	// The 400 message for a data error, or undefined when it is not one.
@@ -1403,7 +1505,9 @@ export abstract class SqlBaseCrudService<
 				? text.match(/column '([^']+)'/i)?.[1]
 				: undefined) ??
 			(this.config.dialect === "sqlite"
-				? text.match(/NOT NULL constraint failed: (?:[^.\s]+\.)?(\S+)/)?.[1]
+				? text.match(
+						/(?:NOT NULL constraint failed:|value in \S+ column) (?:[^.\s]+\.)?(\S+)/,
+					)?.[1]
 				: undefined);
 		return new ValidationFailedException(
 			column ? `${message}: ${column}` : message,
@@ -1739,7 +1843,7 @@ export abstract class SqlBaseCrudService<
 		options?: SqlOperationOptions,
 	): Promise<T | null> {
 		const { transaction, relations = [], select = [] } = options || {};
-		const db = transaction || this.config.db;
+		const db = this.dbFor(transaction);
 		const nodes = this.relationTree(relations);
 		const joined = this.planJoins(nodes);
 		const selection = this.parseSelect(select);
@@ -1783,7 +1887,7 @@ export abstract class SqlBaseCrudService<
 	) {
 		this.checkReadOptions(options);
 		const { transaction, relations = [], select = [] } = options || {};
-		const db = transaction || this.config.db;
+		const db = this.dbFor(transaction);
 		const nodes = this.relationTree(relations);
 		const joined = this.planJoins(nodes);
 		const selection = this.parseSelect(select);
@@ -2237,7 +2341,7 @@ export abstract class SqlBaseCrudService<
 		this.checkReadOptions(options);
 		const entityData = await this.prepareCreate(data, options);
 		const nested = this.takeNested(entityData, options);
-		const db = transaction || this.config.db;
+		const db = this.dbFor(transaction);
 		await this.emitEvent(
 			"before",
 			"create",
@@ -2246,6 +2350,12 @@ export abstract class SqlBaseCrudService<
 			options,
 		);
 		try {
+			await this.assertKeysInScope(
+				db,
+				entityData,
+				options,
+				nested.map((entry) => entry.name),
+			);
 			const createdEntity =
 				nested.length === 0
 					? await this.insertOne(db, entityData, options)
@@ -2424,6 +2534,96 @@ export abstract class SqlBaseCrudService<
 			if (this.columnOf(table, key)) out[key] = item;
 		}
 		return out;
+	}
+
+	// ---- Belongs-to keys stay inside the tenant ----
+
+	// The rows (by index) whose belongs-to key points outside the caller's
+	// tenant, the way linkTargets checks attach targets. Only relations whose
+	// table has the scope columns count; a shared table is left alone. One
+	// SELECT per relation for every row, whatever their number. A key that is
+	// not found, missing or another tenant's, gets the error a missing parent
+	// gives, so the answer never tells the two apart. `skip` names relations
+	// a nested create fills in itself.
+	private async keysOutsideScope(
+		db: any,
+		rows: Array<Record<string, any>>,
+		options?: SqlOperationOptions,
+		skip: string[] = [],
+	): Promise<Map<number, ForeignKeyViolationException>> {
+		const failures = new Map<number, ForeignKeyViolationException>();
+		if (!this.resolveScope(options)) return failures;
+		for (const [name, relation] of Object.entries(
+			this.config.relations ?? {},
+		)) {
+			const local = relation.localKey;
+			if (!local || this.isCollection(relation) || skip.includes(name)) {
+				continue;
+			}
+			const scope = this.relatedScopeConditions(relation.table, options);
+			const referenced = relation.table[relation.references ?? "id"];
+			if (scope.length === 0 || !referenced) continue;
+			const keys = this.uniqueValues(
+				rows.map((row) => row[local]).filter((value) => value != null),
+			);
+			if (keys.length === 0) continue;
+			const found: any[] = await db
+				.select({ id: referenced })
+				.from(relation.table)
+				.where(and(inArray(referenced, keys), ...scope));
+			const present = new Set(found.map((row) => this.valueKey(row.id)));
+			rows.forEach((row, index) => {
+				const value = row[local];
+				if (value == null || present.has(this.valueKey(value))) return;
+				if (!failures.has(index)) {
+					failures.set(index, this.missingParentException(local));
+				}
+			});
+		}
+		return failures;
+	}
+
+	// keysOutsideScope for a batch: a BulkOperationException naming each
+	// failing row by `refs[index]`, as a failed set statement would.
+	private async assertBatchKeysInScope(
+		db: any,
+		rows: Array<Record<string, any>>,
+		refs: Array<{ index: number } | { id: any }>,
+		message: string,
+		options?: SqlOperationOptions,
+	): Promise<void> {
+		const failures = await this.keysOutsideScope(db, rows, options);
+		if (failures.size === 0) return;
+		throw new BulkOperationException(
+			message,
+			Array.from(failures, ([index, error]) => ({ ...refs[index]!, error })),
+		);
+	}
+
+	// keysOutsideScope for one row: throws its error.
+	private async assertKeysInScope(
+		db: any,
+		row: Record<string, any>,
+		options?: SqlOperationOptions,
+		skip: string[] = [],
+	): Promise<void> {
+		const failure = (await this.keysOutsideScope(db, [row], options, skip)).get(
+			0,
+		);
+		if (failure) throw failure;
+	}
+
+	// The exception toForeignKeyException builds for a parent that does not
+	// exist: Postgres names the column (from the driver's detail), MySQL and
+	// SQLite cannot.
+	private missingParentException(
+		localKey: string,
+	): ForeignKeyViolationException {
+		const field =
+			this.config.dialect === "postgresql"
+				? (this.columnOf(this.config.table, localKey)?.name ?? localKey)
+				: "reference";
+		return new ForeignKeyViolationException(this.getEntityName(), field);
 	}
 
 	// ---- Many-to-many links: attach, detach, sync ----
@@ -2680,7 +2880,7 @@ export abstract class SqlBaseCrudService<
 			entityData[this.config.timestamps.updatedAt] = new Date();
 		}
 
-		const db = transaction || this.config.db;
+		const db = this.dbFor(transaction);
 		await this.emitEvent(
 			"before",
 			"update",
@@ -2689,6 +2889,7 @@ export abstract class SqlBaseCrudService<
 			options,
 		);
 		try {
+			await this.assertKeysInScope(db, entityData, opts);
 			const [updatedEntity] = await this.updateWhereIn(
 				db,
 				this.withVersionBump(entityData),
@@ -2791,7 +2992,7 @@ export abstract class SqlBaseCrudService<
 			options,
 		);
 
-		const db = transaction || this.config.db;
+		const db = this.dbFor(transaction);
 		let updateQuery = db
 			.update(this.config.table)
 			.set(this.softDeleteSet(new Date()))
@@ -2853,7 +3054,7 @@ export abstract class SqlBaseCrudService<
 			options,
 		);
 
-		const db = transaction || this.config.db;
+		const db = this.dbFor(transaction);
 		const [restoredEntity] = await this.runRead(
 			this.updateWhereIn(db, this.softDeleteSet(null), [id], options),
 		);
@@ -2889,7 +3090,7 @@ export abstract class SqlBaseCrudService<
 			options,
 		);
 
-		const db = transaction || this.config.db;
+		const db = this.dbFor(transaction);
 		const deleteQuery = db
 			.delete(this.config.table)
 			.where(this.writeWhere([id], options));
@@ -2941,7 +3142,7 @@ export abstract class SqlBaseCrudService<
 	): Promise<T> {
 		this.checkReadOptions(options);
 		const entityData = await this.prepareCreate(data, options);
-		const db = options?.transaction || this.config.db;
+		const db = this.dbFor(options?.transaction);
 		await this.emitEvent(
 			"before",
 			"upsert",
@@ -2951,6 +3152,7 @@ export abstract class SqlBaseCrudService<
 		);
 		let row: T | undefined;
 		try {
+			await this.assertKeysInScope(db, entityData, options);
 			[row] = await this.upsertRows(db, [entityData], upsert, options);
 		} catch (error) {
 			throw this.toClientError(error, "write");
@@ -2984,7 +3186,6 @@ export abstract class SqlBaseCrudService<
 		options?: SqlOperationOptions,
 	): Promise<T[]> {
 		this.checkReadOptions(options);
-		this.assertBatchSize(this.insertParameters(data));
 		const message = "Mass upsert errors";
 		return this.executeSqlTransaction(async (tx) => {
 			const opts = { ...options, transaction: tx };
@@ -3002,6 +3203,13 @@ export abstract class SqlBaseCrudService<
 				true,
 				{ input: data, transaction: tx },
 				options,
+			);
+			await this.assertBatchKeysInScope(
+				tx,
+				rows,
+				rows.map((_, index) => ({ index })),
+				message,
+				opts,
 			);
 			const written = await this.runSet(
 				tx,
@@ -3222,7 +3430,6 @@ export abstract class SqlBaseCrudService<
 			return this.massCreatePerItem(data, options);
 		}
 		this.checkReadOptions(options);
-		this.assertBatchSize(this.insertParameters(data));
 		return this.executeSqlTransaction(async (tx) => {
 			const opts = { ...options, transaction: tx };
 			const rows = await this.eachItem(
@@ -3239,6 +3446,13 @@ export abstract class SqlBaseCrudService<
 				true,
 				{ input: data, transaction: tx },
 				options,
+			);
+			await this.assertBatchKeysInScope(
+				tx,
+				rows,
+				rows.map((_, index) => ({ index })),
+				"Mass create errors",
+				opts,
 			);
 			const created = await this.runSet(
 				tx,
@@ -3332,7 +3546,6 @@ export abstract class SqlBaseCrudService<
 		if (options?.bulkMode === "perItem") {
 			return this.massUpdatePerItem(ids, data, options);
 		}
-		this.assertBatchSize(Array.isArray(ids) ? ids.length : 0);
 		this.checkReadOptions(options);
 		const message = "Mass update errors";
 		return this.executeSqlTransaction(async (tx) => {
@@ -3361,6 +3574,13 @@ export abstract class SqlBaseCrudService<
 				true,
 				{ ids: unique, input: data, transaction: tx },
 				options,
+			);
+			await this.assertBatchKeysInScope(
+				tx,
+				sets,
+				unique.map((id) => ({ id })),
+				message,
+				opts,
 			);
 			const now = new Date();
 			const stamp = (set: Record<string, any>) =>
@@ -3441,7 +3661,6 @@ export abstract class SqlBaseCrudService<
 		if (options?.bulkMode === "perItem") {
 			return this.massSoftDeletePerItem(ids, options);
 		}
-		this.assertBatchSize(Array.isArray(ids) ? ids.length : 0);
 		const message = "Mass soft delete errors";
 		return this.executeSqlTransaction(async (tx) => {
 			const opts = {
@@ -3510,7 +3729,6 @@ export abstract class SqlBaseCrudService<
 		if (options?.bulkMode === "perItem") {
 			return this.massRestorePerItem(ids, options);
 		}
-		this.assertBatchSize(Array.isArray(ids) ? ids.length : 0);
 		this.checkReadOptions(options);
 		const message = "Mass restore errors";
 		return this.executeSqlTransaction(async (tx) => {
@@ -3571,7 +3789,6 @@ export abstract class SqlBaseCrudService<
 		if (options?.bulkMode === "perItem") {
 			return this.massDeletePerItem(ids, options);
 		}
-		this.assertBatchSize(Array.isArray(ids) ? ids.length : 0);
 		const message = "Mass delete errors";
 		return this.executeSqlTransaction(async (tx) => {
 			const opts = { ...options, transaction: tx };
@@ -3752,6 +3969,8 @@ export abstract class SqlBaseCrudService<
 		try {
 			return await this.savepoint(tx, statement);
 		} catch (error) {
+			// Too many values is the batch's fault, not an item's: no replay.
+			if (error instanceof BindLimitException) throw error;
 			const failures = await this.diagnose(tx, items, operation);
 			if (failures.length > 0) {
 				throw new BulkOperationException(message, failures);
@@ -3907,7 +4126,7 @@ export abstract class SqlBaseCrudService<
 	// rolls everything back when any item failed.
 	protected savepoint<R>(tx: any, run: (sp: any) => Promise<R>): Promise<R> {
 		return typeof tx?.transaction === "function"
-			? tx.transaction(run)
+			? tx.transaction((sp: any) => run(this.withBindLimit(sp)))
 			: run(tx);
 	}
 
@@ -3925,7 +4144,7 @@ export abstract class SqlBaseCrudService<
 		options?: SqlOperationOptions,
 	): Promise<number> {
 		this.checkReadOptions(options);
-		const db = options?.transaction || this.config.db;
+		const db = this.dbFor(options?.transaction);
 		const { conditions, relations: filterRelations } = this.listConditions(
 			filters,
 			db,
@@ -3948,7 +4167,7 @@ export abstract class SqlBaseCrudService<
 		options?: SqlOperationOptions,
 	): Promise<CountByRow<V>[]> {
 		this.checkReadOptions(options);
-		const db = options?.transaction || this.config.db;
+		const db = this.dbFor(options?.transaction);
 		const spec = this.resolveGroupColumn(column, options);
 		const { conditions, relations: filterRelations } = this.listConditions(
 			filters,
@@ -4055,6 +4274,8 @@ export abstract class SqlBaseCrudService<
 				!Array.isArray(counts) && isPlainObject(counts?.[name])
 					? (counts?.[name] as Record<string, any>)
 					: undefined;
+			// The same depth cap as a findAll filter, before anything compiles.
+			if (filter) assertFilterDepth(filter);
 			return { name, relation, filter };
 		});
 		const hosts = rows.filter((row) => row && typeof row === "object");
@@ -4151,7 +4372,6 @@ export abstract class SqlBaseCrudService<
 		caseInsensitive = this.config.sql?.caseSensitive === false,
 	): void {
 		if (Array.isArray(value)) {
-			this.assertBatchSize(value.length);
 			conditions.push(
 				inArray(
 					column,
@@ -4614,18 +4834,21 @@ export abstract class SqlBaseCrudService<
 		if (!Array.isArray(raw)) {
 			throw new BadRequestException(`Filter operator "${op}" expects an array`);
 		}
-		this.assertBatchSize(raw.length);
 		return raw;
 	}
 
-	// Postgres accepts at most 65,535 bound parameters per statement, and MySQL
-	// about the same. Past that the driver fails with a confusing protocol error
-	// (08P01) and a 500. A batch that would come near it is a 400 that names the
-	// limit instead, so the caller can split it.
-	// ponytail: refuses instead of chunking; chunk inside the transaction if
-	// single calls over this size become a real need.
+	/**
+	 * @deprecated Since 3.7.2 the service checks the bound parameters of each
+	 * statement against the database's own limit (see `bindLimit`), and no
+	 * longer reads this. Kept for code that imported it.
+	 */
 	static readonly MAX_BATCH_PARAMETERS = 60_000;
 
+	/**
+	 * @deprecated Since 3.7.2 the service no longer calls this; every
+	 * statement is checked as it is built (see `withBindLimit`). Kept so a
+	 * subclass that called it still compiles.
+	 */
 	protected assertBatchSize(parameters: number): void {
 		const max = SqlBaseCrudService.MAX_BATCH_PARAMETERS;
 		if (parameters > max) {
@@ -4635,8 +4858,10 @@ export abstract class SqlBaseCrudService<
 		}
 	}
 
-	// Values a multi-row INSERT binds: rows times the widest row, plus the
-	// columns the service adds (timestamps, scope, version).
+	/**
+	 * @deprecated Since 3.7.2 the service no longer calls this estimate; the
+	 * real count comes from the statement itself.
+	 */
 	protected insertParameters(rows: unknown[]): number {
 		let widest = 0;
 		for (const row of rows) {
@@ -4675,9 +4900,23 @@ export abstract class SqlBaseCrudService<
 				: kind === "endsWith"
 					? `%${escaped}`
 					: `%${escaped}%`;
-		return insensitive || this.config.sql?.caseSensitive === false
-			? this.caseInsensitiveLike(column, pattern)
-			: this.likePattern(column, pattern);
+		if (insensitive || this.config.sql?.caseSensitive === false) {
+			return this.caseInsensitiveLike(column, pattern);
+		}
+		// SQLite's LIKE ignores ASCII case whatever caseSensitive says; GLOB
+		// does not. `*`, `?` and `[` become one-character classes so the value
+		// still matches literally.
+		if (this.config.dialect === "sqlite") {
+			const literal = raw.replace(/[*?[]/g, "[$&]");
+			const glob =
+				kind === "startsWith"
+					? `${literal}*`
+					: kind === "endsWith"
+						? `*${literal}`
+						: `*${literal}*`;
+			return sql`${column} glob ${glob}`;
+		}
+		return this.likePattern(column, pattern);
 	}
 
 	protected applyComplexFilter(
@@ -4802,8 +5041,11 @@ export abstract class SqlBaseCrudService<
 		existingTransaction?: any,
 	): Promise<R> {
 		this.assertTransactions(existingTransaction ?? this.config.db);
-		if (existingTransaction) return operation(existingTransaction);
-		return this.config.db.transaction(operation);
+		// A driver opens the transaction from its session, which knows nothing
+		// of the bound-parameter view, so the tx is wrapped here.
+		const run = (tx: any) => operation(this.withBindLimit(tx));
+		if (existingTransaction) return run(existingTransaction);
+		return this.config.db.transaction(run);
 	}
 
 	// Bulk writes, nested writes and link changes need an interactive async
@@ -4812,8 +5054,7 @@ export abstract class SqlBaseCrudService<
 	// resolves; D1 rejects BEGIN), so they fail here with the reason instead.
 	protected assertTransactions(db: any): void {
 		if (this.config.dialect !== "sqlite") return;
-		const kind = db?.constructor?.[entityKind];
-		if (kind === "D1Database" || kind === "D1Transaction") {
+		if (this.isD1(db)) {
 			throw new TransactionException(
 				"Cloudflare D1 has no interactive transactions, so mass writes, nested writes and attach/detach/sync are not available on it. Use the single-row methods, or db.batch() yourself.",
 			);
