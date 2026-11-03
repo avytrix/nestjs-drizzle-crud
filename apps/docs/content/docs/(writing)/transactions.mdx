@@ -83,7 +83,7 @@ Some methods open their own transaction when you do not pass one, and join yours
 
 | Method | Without `transaction` | With `transaction` |
 | --- | --- | --- |
-| `massCreate`, `massUpdate`, `massUpsert`, the other mass writes | Opens its own transaction | Joins yours, with savepoints inside it |
+| `massCreate`, `massUpdate`, `massUpsert`, the other mass writes | Opens its own transaction, with no savepoint on the happy path | Joins yours, with savepoints inside it |
 | `attach`, `detach`, `sync` | Opens its own transaction | Joins yours |
 | `create` with nested relations | Opens its own transaction | Joins yours |
 | `find`, `findAll`, `create`, `update`, `delete` and the other single-row calls | Runs on the pool, no transaction | Joins yours |

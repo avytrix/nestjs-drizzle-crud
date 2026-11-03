@@ -90,6 +90,13 @@ const CURSOR_KEY = "__crudCursor";
 // Thrown inside a savepoint to roll it back on purpose; never escapes.
 const ROLLBACK = Symbol("rollback");
 
+// Thrown out of a transaction the service opened itself when a set statement
+// in it failed. executeSqlTransaction lets the transaction roll back, then
+// calls `settle`, which names the failing items; never escapes.
+class DeferredDiagnosis {
+	constructor(readonly settle: () => Promise<never>) {}
+}
+
 // The bound parameters one statement may carry. Postgres and MySQL count them
 // in a 16-bit field; SQLite stops at SQLITE_MAX_VARIABLE_NUMBER, 32,766 by
 // default; Cloudflare D1 takes 100.
@@ -2385,6 +2392,11 @@ export abstract class SqlBaseCrudService<
 	): Promise<void> {
 		const bus = this.config.events;
 		if (!bus || options?.skipEvents) return;
+		// A subscriber may write in the transaction it is handed, so runSet
+		// must diagnose a failure inside it from here on.
+		if (payload.transaction && typeof payload.transaction === "object") {
+			this.ownedTransactions.delete(payload.transaction);
+		}
 		await bus.emit({
 			entity: this.getEntityName(),
 			operation,
@@ -4160,9 +4172,17 @@ export abstract class SqlBaseCrudService<
 		return item.index !== undefined ? { index: item.index } : { id: item.id };
 	}
 
-	// Run a set statement inside a savepoint. When it fails, find out which
-	// items fail on their own and report those; when none does alone (the
-	// failure needs two items together), report the statement's own error.
+	// Run a set statement. When it fails, find out which items fail on their
+	// own and report those; when none does alone (the failure needs two items
+	// together), report the statement's own error.
+	// In a transaction the service opened itself the statement runs as is:
+	// on failure the whole transaction rolls back, and the items are replayed
+	// in a fresh transaction that is rolled back too. That is the same
+	// database the statement saw, because a mass write sends nothing but
+	// reads before its set statement, and a transaction an event subscriber
+	// was handed is no longer counted as the service's own. In a caller's
+	// transaction the statement runs in a savepoint, since a failed statement
+	// aborts the whole transaction on Postgres, and the replay runs there too.
 	protected async runSet<R>(
 		tx: any,
 		message: string,
@@ -4174,17 +4194,56 @@ export abstract class SqlBaseCrudService<
 		}>,
 		operation: "write" | "delete",
 	): Promise<R> {
+		const owned = this.ownedTransactions.has(tx);
 		try {
-			return await this.savepoint(tx, statement);
+			return await (owned ? statement(tx) : this.savepoint(tx, statement));
 		} catch (error) {
 			// Too many values is the batch's fault, not an item's: no replay.
 			if (error instanceof BindLimitException) throw error;
+			if (owned) {
+				throw new DeferredDiagnosis(() =>
+					this.settleSet(message, error, items, operation),
+				);
+			}
 			const failures = await this.diagnose(tx, items, operation);
 			if (failures.length > 0) {
 				throw new BulkOperationException(message, failures);
 			}
 			throw this.toClientError(error, operation);
 		}
+	}
+
+	// The end of a failed set statement in a transaction the service owned,
+	// after that transaction rolled back: replay the items in a fresh one,
+	// roll it back as well, and throw what runSet would have thrown.
+	private async settleSet(
+		message: string,
+		error: unknown,
+		items: Array<{
+			index?: number;
+			id?: any;
+			run: (sp: any) => Promise<unknown>;
+		}>,
+		operation: "write" | "delete",
+	): Promise<never> {
+		let failures: Array<{ id?: any; index?: number; error: Error }> = [];
+		try {
+			await this.config.db.transaction(async (fresh: any) => {
+				failures = await this.diagnose(
+					this.withBindLimit(fresh),
+					items,
+					operation,
+				);
+				throw ROLLBACK;
+			});
+		} catch (thrown) {
+			// The rollback above is deliberate; anything else is real.
+			if (thrown !== ROLLBACK) throw thrown;
+		}
+		if (failures.length > 0) {
+			throw new BulkOperationException(message, failures);
+		}
+		throw this.toClientError(error, operation);
 	}
 
 	// Replay items one by one, each in its own savepoint, all inside an outer
@@ -5253,8 +5312,24 @@ export abstract class SqlBaseCrudService<
 		// of the bound-parameter view, so the tx is wrapped here.
 		const run = (tx: any) => operation(this.withBindLimit(tx));
 		if (existingTransaction) return run(existingTransaction);
-		return this.config.db.transaction(run);
+		try {
+			return await this.config.db.transaction((tx: any) => {
+				const view = this.withBindLimit(tx);
+				if (view && typeof view === "object") this.ownedTransactions.add(view);
+				return operation(view);
+			});
+		} catch (error) {
+			// A set statement failed in this transaction, which has now rolled
+			// back: name the failing items (runSet).
+			if (error instanceof DeferredDiagnosis) return error.settle();
+			throw error;
+		}
 	}
+
+	// The transactions executeSqlTransaction opened itself, while nothing
+	// outside the service has been handed them. runSet skips its savepoint in
+	// one of these.
+	private readonly ownedTransactions = new WeakSet<object>();
 
 	// Bulk writes, nested writes and link changes need an interactive async
 	// transaction with savepoints. Two SQLite setups cannot give one, and

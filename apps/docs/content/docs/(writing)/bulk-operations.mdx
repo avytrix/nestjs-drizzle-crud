@@ -75,7 +75,10 @@ Every bulk method takes the same `SqlOperationOptions` as its single-row counter
 
 The whole call is rolled back and throws `BulkOperationException`. Every bulk method runs in one transaction, so no partial write is ever visible to a later read.
 
-When the set statement fails, the package still needs to know which items caused it. It replays the batch one item at a time, each in its own savepoint, all inside an outer savepoint that is rolled back at the end, and reports the items that fail on their own. That replay only runs on the failure path, and it leaves nothing behind, even inside your own transaction.
+When the set statement fails, the package still needs to know which items caused it. It replays the batch one item at a time, each in its own savepoint, and reports the items that fail on their own. That replay only runs on the failure path, and it leaves nothing behind, even inside your own transaction:
+
+- **In the transaction the bulk method opened itself** (no `transaction` option), the happy path sends no savepoint at all since 3.8.0: `massUpdate` is `BEGIN`, one `SELECT`, one `UPDATE`, `COMMIT`. When the set statement fails, that transaction rolls back and the replay runs in a fresh transaction that is rolled back too. Once a before event has handed the transaction to a subscriber, which may have written in it, the replay stays inside it, as below.
+- **In your transaction**, the set statement runs in a savepoint and the replay inside an outer savepoint that is rolled back at the end, because on PostgreSQL a failed statement would otherwise abort your whole transaction. A failed bulk call leaves your transaction usable.
 
 Two cases are worth knowing:
 

@@ -49,6 +49,14 @@ same order, with the same errors; the SQL behind it is cheaper.
   hard-deletes a row that was soft-deleted meanwhile (`forceDelete` still does). Such a call is a
   404 instead of a write, a `false` return or a "Failed to update entity" error, and one whose
   row vanished with an expected version is a 404 instead of a 409.
+- Mass writes send no savepoint on the happy path when they open their own transaction:
+  `massUpdate`, `massSoftDelete`, `massRestore` and `massDelete` take 4 round trips instead of 8
+  (`BEGIN`, `SELECT`, the set statement, `COMMIT`), `massCreate` and `massUpsert` 3 instead of 5.
+  When the set statement fails, the transaction rolls back and the items are replayed in a fresh
+  transaction that is rolled back too, so `BulkOperationException` names the same items with the
+  same statuses and messages. Inside a caller's transaction, or once a before event handed the
+  transaction to a subscriber, the savepoints stay, so a failed item does not abort the caller's
+  PostgreSQL transaction.
 
 ## [3.7.2] - 2026-11-03
 

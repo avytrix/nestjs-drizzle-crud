@@ -3593,3 +3593,131 @@ describe("3.8.0 P-03 / F6: single-row writes without the read first", () => {
 		expect((await stored(db, 10)).updated_at).toEqual(trashed.updated_at);
 	});
 });
+
+describe("3.8.0 P-04 / F4: savepoints only where a failure needs them", () => {
+	const savepoints = (log: string[]) =>
+		log.filter((query) => /savepoint/i.test(query));
+	const errorsOf = (error: any) => (error.getResponse() as any).errors;
+
+	it("sends no savepoint in a transaction the service owns", async () => {
+		const log: string[] = [];
+		const db = await freshDb(log);
+		const posts = postsService(db);
+		const authors = authorsService(db);
+		const ids = [1, 2, 3];
+		const runs: Array<[string, () => Promise<unknown>, string[]]> = [
+			[
+				"massCreate",
+				() =>
+					authors.massCreate([{ name: "N", email: "n@x.io", role: "writer" }]),
+				["insert"],
+			],
+			[
+				"massUpsert",
+				() =>
+					authors.massUpsert(
+						[{ name: "Ann 2", email: "ann@x.io", role: "admin" }],
+						{ conflictTarget: "email" },
+					),
+				["insert"],
+			],
+			[
+				"massUpdate",
+				() => posts.massUpdate(ids, { title: "m" }),
+				["select", "update"],
+			],
+			["massSoftDelete", () => posts.massSoftDelete(ids), ["select", "update"]],
+			["massRestore", () => posts.massRestore(ids), ["select", "update"]],
+			["massDelete", () => posts.massDelete([28, 29]), ["select", "delete"]],
+		];
+		for (const [name, run, verbsSent] of runs) {
+			log.length = 0;
+			await run();
+			expect([name, savepoints(log)]).toEqual([name, []]);
+			expect([name, verbs(log)]).toEqual([name, verbsSent]);
+		}
+	});
+
+	it("reports the same failing items after the rollback, and writes nothing", async () => {
+		const log: string[] = [];
+		const db = await freshDb(log);
+		const authors = authorsService(db);
+		const dup = await caught(
+			authors.massCreate([
+				{ name: "New", email: "new@x.io", role: "writer" },
+				{ name: "Dup", email: "bob@x.io", role: "writer" },
+			]),
+		);
+		expect(dup).toBeInstanceOf(BulkOperationException);
+		expect(errorsOf(dup)).toEqual([
+			{ index: 1, status: 409, message: expect.any(String) },
+		]);
+		expect(await authors.findOne({ email: "new@x.io" })).toBeNull();
+		// The replay ran in its own transaction, rolled back.
+		expect(savepoints(log).length).toBeGreaterThan(0);
+
+		const posts = postsService(db);
+		const bad = await caught(
+			posts.massUpdate([1, 2], { author_id: 99 } as any),
+		);
+		expect(errorsOf(bad)).toEqual([
+			{ id: 1, status: 400, message: expect.any(String) },
+			{ id: 2, status: 400, message: expect.any(String) },
+		]);
+		expect((await posts.find(1))?.author_id).toBe(1);
+	});
+
+	it("keeps savepoints in a caller's transaction, which survives a failed item", async () => {
+		const log: string[] = [];
+		const db = await freshDb(log);
+		const posts = postsService(db);
+		await db.transaction(async (tx: any) => {
+			const error = await caught(
+				posts.massUpdate([1, 999], { title: "x" }, { transaction: tx }),
+			);
+			expect(errorsOf(error)).toEqual([
+				{ id: 999, status: 404, message: expect.any(String) },
+			]);
+			const dup = await caught(
+				authorsService(db).massCreate(
+					[{ name: "Dup", email: "ann@x.io", role: "writer" }],
+					{ transaction: tx },
+				),
+			);
+			expect(errorsOf(dup)).toEqual([
+				{ index: 0, status: 409, message: expect.any(String) },
+			]);
+			// The caller's transaction is still usable and commits.
+			await posts.update(2, { title: "after" }, { transaction: tx });
+		});
+		expect((await posts.find(2))?.title).toBe("after");
+		expect(savepoints(log).length).toBeGreaterThan(0);
+	});
+
+	it("diagnoses inside the transaction once an event subscriber was handed it", async () => {
+		const db = await freshDb();
+		const bus = new CrudEventBus();
+		bus.subscribe({
+			beforeWrite: async (event) => {
+				if (event.operation !== "create") return;
+				await (event.transaction as any)
+					.insert(authors)
+					.values({ name: "Sub", email: "sub@x.io", role: "writer" });
+			},
+		});
+		const svc = new Svc({ ...base(db, authors), events: bus });
+		// The duplicate only exists inside the transaction, written by the
+		// subscriber; a replay outside it could not name the item.
+		const error = await caught(
+			svc.massCreate([
+				{ name: "Ok", email: "ok@x.io", role: "writer" },
+				{ name: "Dup", email: "sub@x.io", role: "writer" },
+			]),
+		);
+		expect(error).toBeInstanceOf(BulkOperationException);
+		expect(errorsOf(error)).toEqual([
+			{ index: 1, status: 409, message: expect.any(String) },
+		]);
+		expect(await authorsService(db).findOne({ email: "sub@x.io" })).toBeNull();
+	});
+});

@@ -931,7 +931,9 @@ Each bulk method is one statement for the whole set (plus one `SELECT` that
 checks the ids exist), inside a single transaction: `massUpdate` over 100 ids is
 two queries. If any item fails, a `BulkOperationException` (400) is thrown and
 the transaction rolls back. The failing items are found by replaying the batch
-inside a savepoint that is rolled back, and the response body lists only them:
+in a transaction (or, inside your own transaction, a savepoint) that is rolled
+back, and the response body lists only them. The happy path sends no savepoint
+unless it runs inside your transaction:
 
 ```json
 { "statusCode": 400, "error": "Bad Request",
