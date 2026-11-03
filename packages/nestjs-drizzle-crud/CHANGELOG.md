@@ -16,6 +16,17 @@ in 3.5.1 (3.3.1 to 3.5.0) and 3.6.0 (3.5.2). The unscoped `nestjs-drizzle-crud` 
 Performance fixes from the 3.7.1 performance report. Every call returns the same rows, in the
 same order, with the same errors; the SQL behind it is cheaper.
 
+### Added
+
+- Full-text search takes a column that already is a `tsvector`, such as a generated, stored
+  column, and uses it as is instead of wrapping it in `to_tsvector`, so a GIN index on the column
+  serves `fullTextSearch()` and `search.mode: "fullText"`. Before, such a column failed with
+  `function to_tsvector(unknown, tsvector) does not exist`. Next to text columns it is
+  `coalesce(col, ''::tsvector)`; text columns keep the 3.7.2 vector, bare for one column and
+  coalesced for several. On 200,000 rows a search on the stored column with its index took
+  0.6 ms, against 600 to 900 ms computing `to_tsvector` per row without one. The full-text page
+  shows the index for each shape.
+
 ### Fixed
 
 - Keyset pages seek instead of filtering. `findByCursor` adds a bound on the first sort column

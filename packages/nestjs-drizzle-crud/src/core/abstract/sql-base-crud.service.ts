@@ -1632,16 +1632,31 @@ export abstract class SqlBaseCrudService<
 		// SQL and an injection vector).
 		// With several columns each one is coalesced: `x || NULL` is NULL, so
 		// one NULL column would hide the whole row. A single column stays bare,
-		// so an index on to_tsvector(cfg, col) keeps matching.
+		// so an index on to_tsvector(cfg, col) keeps matching. A column that
+		// already is a tsvector (a generated, stored column) is used as is, so
+		// a GIN index on that column serves the search.
 		const vector = sql.join(
-			columns.map((column) =>
-				columns.length > 1
+			columns.map((column) => {
+				if (this.isTsVector(column)) {
+					return columns.length > 1
+						? sql`coalesce(${column}, ''::tsvector)`
+						: sql`${column}`;
+				}
+				return columns.length > 1
 					? sql`to_tsvector(${config}, coalesce(${column}, ''))`
-					: sql`to_tsvector(${config}, ${column})`,
-			),
+					: sql`to_tsvector(${config}, ${column})`;
+			}),
 			sql` || `,
 		);
 		return { vector, query: sql`${parse}(${config}, ${term})` };
+	}
+
+	// A column whose SQL type is tsvector, such as a Drizzle customType over a
+	// generated column.
+	private isTsVector(column: any): boolean {
+		const type =
+			typeof column?.getSQLType === "function" ? column.getSQLType() : "";
+		return String(type).trim().toLowerCase() === "tsvector";
 	}
 
 	protected buildSearchCondition(search?: SqlOperationOptions["search"]): any {

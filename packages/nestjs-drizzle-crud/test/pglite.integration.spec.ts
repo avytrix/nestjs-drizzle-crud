@@ -14,6 +14,7 @@ import { BadRequestException, HttpException } from "@nestjs/common";
 import {
 	bigint,
 	boolean,
+	customType,
 	integer,
 	jsonb,
 	numeric,
@@ -3361,5 +3362,62 @@ describe("3.8.0 P-01: keyset pages seek instead of filtering", () => {
 			const text = plan.rows.map((row) => row["QUERY PLAN"]).join("\n");
 			expect(text).toMatch(/Index Cond: .*views/);
 		}
+	});
+});
+
+describe("3.8.0 P-06: a stored tsvector column searches as is", () => {
+	const tsvector = customType<{ data: string }>({
+		dataType: () => "tsvector",
+	});
+	const pages = pgTable("pages", {
+		id: serial("id").primaryKey(),
+		title: text("title").notNull(),
+		body: text("body"),
+		search: tsvector("search"),
+	});
+
+	it("matches through the column without wrapping it in to_tsvector", async () => {
+		const log: string[] = [];
+		const db = await freshDb(log);
+		await db.$client.exec(`
+			CREATE TABLE pages (
+				id serial PRIMARY KEY, title text NOT NULL, body text,
+				search tsvector GENERATED ALWAYS AS (
+					to_tsvector('english', coalesce(title, '') || ' ' || coalesce(body, ''))
+				) STORED
+			);
+			CREATE INDEX pages_search ON pages USING gin (search);
+			INSERT INTO pages (title, body) VALUES
+				('postgres tuning', 'a body'), ('postgres basics', NULL), ('mysql', 'x');
+		`);
+		const svc = new Svc({
+			...base(db, pages),
+			softDelete: { enabled: false, column: "deleted_at" },
+			timestamps: undefined,
+		});
+		const found = await svc.fullTextSearch("postgres", ["search"]);
+		expect(found.total).toBe(2);
+		expect(found.data.map((row: any) => row.title).sort()).toEqual([
+			"postgres basics",
+			"postgres tuning",
+		]);
+		const listed = await svc.findAll(
+			undefined,
+			{},
+			{ search: { term: "tuning", columns: ["search"], mode: "fullText" } },
+		);
+		expect(listed.data.map((row: any) => row.title)).toEqual([
+			"postgres tuning",
+		]);
+		const sent = log.join("\n");
+		expect(sent).toContain(`"pages"."search" @@ plainto_tsquery('english', $`);
+		expect(sent).not.toMatch(/to_tsvector\([^)]*"search"/);
+		// Mixed with a text column, the tsvector is coalesced, not converted.
+		log.length = 0;
+		const mixed = await svc.fullTextSearch("mysql", ["search", "title"]);
+		expect(mixed.total).toBe(1);
+		expect(log[0]).toContain(
+			`coalesce("pages"."search", ''::tsvector) || to_tsvector('english', coalesce("pages"."title", ''))`,
+		);
 	});
 });
