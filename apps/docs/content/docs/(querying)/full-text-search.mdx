@@ -155,7 +155,7 @@ export const users = pgTable("users", {
 await this.users.fullTextSearch("john doe", ["search"], { limit: 20 });
 ```
 
-On 200,000 rows on PGlite, a search on a stored column with its GIN index took 0.6 ms, against 600 to 900 ms computing `to_tsvector` per row without an index. Before 3.8.0 a `tsvector` column failed with `function to_tsvector(unknown, tsvector) does not exist`. The [Drizzle guide to full-text search](https://orm.drizzle.team/docs/guides/postgresql-full-text-search) shows both options on the schema side.
+On 200,000 rows on PGlite, a search on a stored column with its GIN index took 0.6 ms, against 600 to 900 ms computing `to_tsvector` per row without an index. Before 3.8.0 a `tsvector` column failed with `function to_tsvector(unknown, tsvector) does not exist`. The [Drizzle guide to full-text search](https://orm.drizzle.team/docs/guides/postgresql-full-text-search) shows both options on the schema side, and [Database indexes for fast Drizzle queries](/docs/indexes) covers `pg_trgm` for the default `ilike` search.
 
 ## How do I add search to a filtered list endpoint?
 
@@ -245,4 +245,5 @@ A custom query skips what the service adds for you: add `isNull(users.deletedAt)
   <Card icon={<Filter />} title="Filtering with Drizzle in NestJS" href="/docs/filtering" description="Structured filters and options.search on findAll and count." />
   <Card icon={<Boxes />} title="Defining services" href="/docs/defining-services" description="Add custom methods next to the inherited CRUD ones." />
   <Card icon={<ShieldCheck />} title="Allowlists" href="/docs/allowlists" description="Limit which columns a client may search with searchableColumns." />
+  <Card icon={<Zap />} title="Database indexes for fast Drizzle queries" href="/docs/indexes" description="GIN for full-text search, pg_trgm for contains, and the rest." />
 </Cards>

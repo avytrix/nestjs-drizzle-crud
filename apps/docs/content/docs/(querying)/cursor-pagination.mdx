@@ -69,7 +69,7 @@ ORDER BY views DESC, id ASC
 LIMIT 51
 ```
 
-When every sort column is NOT NULL (or the primary key) and they all sort the same way, Postgres gets one row comparison instead, which an index on `(views, id)` answers directly:
+Create an index on the sort columns followed by the primary key, here `(views DESC, id)`; [Database indexes for fast Drizzle queries](/docs/indexes) has one for each sort shape. On 200,000 rows, page 9,000 took 0.6 ms with it, against 24 ms before the bound existed. When every sort column is NOT NULL (or the primary key) and they all sort the same way, Postgres gets one row comparison instead, which an index on `(views, id)` answers directly:
 
 ```sql title="keyset query, ascending, Postgres"
 WHERE (views, id) > ($1, $2)
@@ -164,4 +164,5 @@ When the UI shows page numbers or jumps to a given page. Keyset pages only go fo
   <Card icon={<ListOrdered />} title="Pagination and sorting with Drizzle" href="/docs/pagination-sorting" description="Offset pages with findAll, multi-column and relation sorts." />
   <Card icon={<Terminal />} title="Parse query strings into filters" href="/docs/query-parsing" description="Read ?cursor=, ?limit= and ?sortBy= from the request." />
   <Card icon={<Filter />} title="Filtering with Drizzle in NestJS" href="/docs/filtering" description="Narrow the rows a cursor walks over." />
+  <Card icon={<Zap />} title="Database indexes for fast Drizzle queries" href="/docs/indexes" description="The (sort columns, primary key) index that makes every page seek." />
 </Cards>

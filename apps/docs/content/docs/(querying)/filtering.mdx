@@ -57,6 +57,12 @@ await this.users.findAll({ name: { contains: "doe" } }); // contains "doe"
 await this.users.findAll({ name: { ilike: "jo%n" } }); // your own pattern
 ```
 
+### Is findOne case-sensitive?
+
+Yes. `findOne` turns a string into a plain `=`, whatever `sql.caseSensitive` says, while `findAll`, `count`, `countBy` and `?column=` use `lower()` on text columns by default. With the default setting, `findOne({ email: "A@X.IO" })` can return `null` for a row that `findAll({ email: "A@X.IO" })` finds. Pass the stored case to `findOne`, or use `findAll(filters, { limit: 1 })` when case must not matter.
+
+A plain index on the column cannot serve `lower(column) = lower($1)`. Add one on `lower(column)`, or see [Database indexes for fast Drizzle queries](/docs/indexes) for the other options and the index behind every operator.
+
 ## How do I use operators like gte, between and contains?
 
 Wrap the value in an object of operator keys. Several operators on one column are ANDed.
@@ -262,4 +268,5 @@ await this.users.findAll(
   <Card icon={<Filter />} title="Filter by relation" href="/docs/relation-filters" description="Paths through relations and some, none, every on collections." />
   <Card icon={<ListOrdered />} title="Pagination and sorting" href="/docs/pagination-sorting" description="The findAll envelope, page limits and the default sort." />
   <Card icon={<ShieldCheck />} title="Allowlists" href="/docs/allowlists" description="Limit which columns a client may filter, sort, select and search." />
+  <Card icon={<Zap />} title="Database indexes for fast Drizzle queries" href="/docs/indexes" description="The index each filter, sort and search needs on PostgreSQL." />
 </Cards>

@@ -120,8 +120,8 @@
 				"anchor": "how-many-queries-does-a-bulk-call-cost"
 			},
 			{
-				"heading": "What does a bulk call options object take?",
-				"anchor": "what-does-a-bulk-call-options-object-take"
+				"heading": "How many queries does a bulk call cost?",
+				"anchor": "how-many-queries-does-a-bulk-call-cost"
 			}
 		]
 	},
@@ -130,16 +130,16 @@
 		"summary": "The nestjs-drizzle-crud changelog, every release since 3.0.0 with what was added, changed, fixed and deprecated, newest first, mirroring CHANGELOG.md.",
 		"topics": [
 			{
-				"heading": "[3.5.1] - 2026-11-02",
-				"anchor": "351---2026-11-02"
+				"heading": "[3.8.0] - 2026-11-03",
+				"anchor": "380---2026-11-03"
 			},
 			{
-				"heading": "Changed",
-				"anchor": "changed"
+				"heading": "[3.8.0] - 2026-11-03",
+				"anchor": "380---2026-11-03"
 			},
 			{
-				"heading": "[3.5.0] - 2026-11-02",
-				"anchor": "350---2026-11-02"
+				"heading": "Added",
+				"anchor": "added"
 			}
 		]
 	},
@@ -235,7 +235,7 @@
 	},
 	"/docs/cursor-pagination": {
 		"title": "Cursor pagination with Drizzle",
-		"summary": "Drizzle cursor pagination with findByCursor: pass each nextCursor back for the next page. Deep pages cost the same as page 1 and stay stable under inserts.",
+		"summary": "Drizzle cursor pagination with findByCursor: pass each nextCursor back for the next page. With an index on the sort columns, page 500 is as fast as page 1.",
 		"topics": [
 			{
 				"heading": "How do I walk a list with findByCursor?",
@@ -397,7 +397,7 @@
 	},
 	"/docs/for-root-async": {
 		"title": "Drizzle forRootAsync with ConfigService",
-		"summary": "NestJS Drizzle forRootAsync with ConfigService builds the database config at startup from env, secrets or any provider you inject into useFactory.",
+		"summary": "NestJS Drizzle forRootAsync with ConfigService builds the database config at startup, from useFactory, useClass or useExisting and any provider you inject.",
 		"topics": [
 			{
 				"heading": "What does forRootAsync take?",
@@ -415,7 +415,7 @@
 	},
 	"/docs/full-text-search": {
 		"title": "Full-text search in PostgreSQL with Drizzle",
-		"summary": "Drizzle full text search on Postgres in NestJS: fullTextSearch() matches with tsvector, orders by ts_rank, paginates and skips soft-deleted rows.",
+		"summary": "Drizzle full text search on Postgres in NestJS: fullTextSearch() ranks with ts_rank, takes filters and relations, a language and websearch queries.",
 		"topics": [
 			{
 				"heading": "How do I run a full-text search?",
@@ -426,8 +426,8 @@
 				"anchor": "what-sql-does-it-generate"
 			},
 			{
-				"heading": "Do I need to enable it or add an index?",
-				"anchor": "do-i-need-to-enable-it-or-add-an-index"
+				"heading": "What SQL does it generate?",
+				"anchor": "what-sql-does-it-generate"
 			}
 		]
 	},
@@ -467,9 +467,27 @@
 			}
 		]
 	},
+	"/docs/indexes": {
+		"title": "Database indexes for fast Drizzle queries",
+		"summary": "Which PostgreSQL indexes nestjs-drizzle-crud queries use: lower() equality, cursor pages, full-text search, pg_trgm contains, relation keys and tenants.",
+		"topics": [
+			{
+				"heading": "Which index does each query need?",
+				"anchor": "which-index-does-each-query-need"
+			},
+			{
+				"heading": "Which index does each query need?",
+				"anchor": "which-index-does-each-query-need"
+			},
+			{
+				"heading": "Which index does a case-insensitive filter need?",
+				"anchor": "which-index-does-a-case-insensitive-filter-need"
+			}
+		]
+	},
 	"/docs/installation": {
 		"title": "Install NestJS with Drizzle ORM",
-		"summary": "Set up NestJS with Drizzle ORM. Install nestjs-drizzle-crud with its four peers, then the postgres driver or your own MySQL connection.",
+		"summary": "Set up NestJS with Drizzle ORM. Install nestjs-drizzle-crud with its four peers, then the driver for PostgreSQL, MySQL or SQLite.",
 		"topics": [
 			{
 				"heading": "How do I install it?",
@@ -674,12 +692,12 @@
 				"anchor": "how-do-i-avoid-n1-queries"
 			},
 			{
-				"heading": "How do I declare a belongs-to relation?",
-				"anchor": "how-do-i-declare-a-belongs-to-relation"
+				"heading": "How do I avoid N+1 queries?",
+				"anchor": "how-do-i-avoid-n1-queries"
 			},
 			{
-				"heading": "How do I declare a has-many relation?",
-				"anchor": "how-do-i-declare-a-has-many-relation"
+				"heading": "How do I declare a belongs-to relation?",
+				"anchor": "how-do-i-declare-a-belongs-to-relation"
 			}
 		]
 	},
@@ -703,7 +721,7 @@
 	},
 	"/docs/row-locks": {
 		"title": "Row locks with SELECT FOR UPDATE",
-		"summary": "Drizzle SELECT FOR UPDATE in NestJS. Pass lock or forNoKeyUpdate to find, findOne or findAll inside a transaction to lock rows on PostgreSQL.",
+		"summary": "Drizzle SELECT FOR UPDATE in NestJS. Pass lock or forNoKeyUpdate to find, findOne or findAll inside a transaction to lock rows on PostgreSQL or MySQL.",
 		"topics": [
 			{
 				"heading": "How do I lock a row before updating it?",
@@ -752,6 +770,24 @@
 			{
 				"heading": "Pick a monthly or one-time amount",
 				"anchor": "pick-a-monthly-or-one-time-amount"
+			}
+		]
+	},
+	"/docs/sqlite": {
+		"title": "SQLite, libSQL and Cloudflare D1",
+		"summary": "Use NestJS with Drizzle on SQLite, libSQL (Turso) or Cloudflare D1. What works, what is a 400, and why D1 cannot run bulk writes or nested creates.",
+		"topics": [
+			{
+				"heading": "How do I connect to SQLite or libSQL?",
+				"anchor": "how-do-i-connect-to-sqlite-or-libsql"
+			},
+			{
+				"heading": "How should I declare the SQLite tables?",
+				"anchor": "how-should-i-declare-the-sqlite-tables"
+			},
+			{
+				"heading": "What works on SQLite, and what is a 400?",
+				"anchor": "what-works-on-sqlite-and-what-is-a-400"
 			}
 		]
 	},

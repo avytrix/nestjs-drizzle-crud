@@ -32,6 +32,16 @@ same order, with the same errors; the SQL behind it is cheaper.
   coalesced for several. On 200,000 rows a search on the stored column with its index took
   0.6 ms, against 600 to 900 ms computing `to_tsvector` per row without one. The full-text page
   shows the index for each shape.
+- A docs page, [Database indexes for fast Drizzle queries](https://crud.avytrix.dev/docs/indexes/),
+  lists the index each query shape needs: `lower(col)` (or `citext`, or `caseSensitive: true`) for
+  the default case-insensitive equality, the sort columns plus the primary key for cursor pages,
+  GIN for full-text search, `pg_trgm` for `contains` and `search`, foreign keys and both join
+  table columns for relations, partial indexes on `deleted_at IS NULL`, and the tenant column
+  first. It says when to use `withCount: false` or the cursor on a large table. The filtering
+  page now spells out that `findOne` compares strings with a plain, case-sensitive `=` while
+  `findAll` and `count` use `lower()` by default (unchanged; a default change waits for a major),
+  and the hooks page says where after hooks run: after the commit for a single write, inside
+  the transaction for a mass write.
 
 ### Fixed
 

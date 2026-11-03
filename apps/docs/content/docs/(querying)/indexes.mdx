@@ -1,0 +1,160 @@
+---
+title: Database indexes for fast Drizzle queries
+description: "Which PostgreSQL indexes nestjs-drizzle-crud queries use: lower() equality, cursor pages, full-text search, pg_trgm contains, relation keys and tenants."
+icon: Gauge
+---
+
+The package never creates indexes for you, so each query shape it sends needs one that fits. The default case-insensitive filter needs an index on `lower(column)`, cursor pages need one on the sort columns plus the primary key, full-text search needs a GIN index, `contains` needs `pg_trgm`, and relation loaders need indexes on foreign keys and join-table columns. A tenant column goes first in a composite index.
+
+<Callout title="Measured on 200,000 rows">
+  On PGlite (PostgreSQL 18 in WASM) with 200,000 posts: `findAll({ title })` took 64 ms without an index that fits and 0.3 ms with one on `lower(title)`. Cursor page 9,000 took 0.6 ms with an index on `(created_at, id)`. A list without its `COUNT(*)` took 0.6 ms instead of 23 ms. Read the numbers as ratios; a real server is faster across the board.
+</Callout>
+
+## Which index does each query need?
+
+Find the call you make, then create the index next to it. Every example is PostgreSQL; the [migration](https://orm.drizzle.team/docs/migrations) that holds them is yours.
+
+| Call | SQL the package sends | Index |
+| --- | --- | --- |
+| `findAll({ email: "A@x.io" })`, `count`, `?email=` on a text column | `lower(email) = lower($1)` | `(lower(email))`, or a `citext` column, or `caseSensitive: true` and `(email)` |
+| `findOne({ email })`, `{ email: { eq } }` | `email = $1` | `(email)` |
+| `findByCursor` with `sortBy: '-created_at'` | `created_at <= $1 AND (...)`, `ORDER BY created_at DESC, id` | `(created_at DESC, id)` |
+| `findAll` with `sortBy` and a page | `ORDER BY views, id LIMIT ... OFFSET ...` | `(views, id)` |
+| `fullTextSearch(term, ['title', 'body'])` | `to_tsvector(...) \|\| to_tsvector(...) @@ ...` | GIN on that expression, or a stored `tsvector` column |
+| `{ title: { contains: "sql" } }`, `options.search` | `title ILIKE '%sql%'` | GIN `(title gin_trgm_ops)` from `pg_trgm` |
+| `relations: ['comments']` (has-many), `counts` | `WHERE post_id IN (...)` | `(post_id)` on the child table |
+| `relations: ['tags']` (many-to-many) | join table `WHERE post_id IN (...)` | both `(post_id)` and `(tag_id)` on the join table |
+| any read with soft delete on | `... AND deleted_at IS NULL` | add `WHERE deleted_at IS NULL` to the indexes above |
+| any read on a scoped entity | `tenant_id = $1 AND ...` | put `tenant_id` first in the indexes above |
+
+## Which index does a case-insensitive filter need?
+
+An index on `lower(column)`. While `sql.caseSensitive` is `false`, the default, a bare string on a text column compiles to `lower(column) = lower($1)` in `findAll`, `count`, `countBy` and `?column=` over HTTP, and a plain index on the column cannot serve it:
+
+```sql title="migration.sql"
+CREATE INDEX users_email_lower ON users (lower(email));
+```
+
+Two other ways get the same effect:
+
+- **A `citext` column.** Declare the column as `citext` (with a Drizzle `customType`). The package only wraps `text`, `varchar` and `char` columns in `lower()`, so it sends a plain `=`, which `citext` already compares without case, and a normal index on the column works.
+- **`sql.caseSensitive: true`.** Equality is then a plain `=` everywhere and a plain index works, but `jo@x.io` no longer matches `Jo@x.io`.
+
+<Callout type="warn" title="findOne and findAll differ on case">
+  `findOne({ email: "A@X.IO" })` compiles to `email = $1` and is case-sensitive, whatever `sql.caseSensitive` says. `findAll({ email: "A@X.IO" })` compiles to `lower(email) = lower($1)` and is not. So with the default setting `findOne` can return `null` for a row that `findAll` finds. Pass the stored case to `findOne`, or use `findAll({ email }, { limit: 1 })` when case must not matter. An `eq` operator (`{ email: { eq: "A@X.IO" } }`) is a plain `=` in both. Both index shapes above are worth having if you call both.
+</Callout>
+
+## Which index makes cursor pages fast?
+
+One on the sort columns followed by the primary key, in the order of `sortBy`. Each page starts with a bound on the first sort column, so the database seeks to the cursor instead of reading every row before it:
+
+```sql title="migration.sql"
+-- findByCursor(filters, { sortBy: '-created_at' })
+CREATE INDEX posts_created_id ON posts (created_at DESC, id);
+
+-- findByCursor(filters, { sortBy: ['status', 'title'] })
+CREATE INDEX posts_status_title_id ON posts (status, title, id);
+```
+
+The primary key always comes last and always sorts ascending. An index on `(created_at, id)` serves the bound of a descending page too; `(created_at DESC, id)` also matches its `ORDER BY` exactly. The same index serves offset pages with that sort, up to the `OFFSET` itself, which still reads every skipped row. See [cursor pagination](/docs/cursor-pagination) for the query.
+
+## Which index does full-text search use?
+
+A GIN index on exactly the vector the query builds, or on a stored `tsvector` column. [Full-text search](/docs/full-text-search) shows both shapes:
+
+```sql title="migration.sql"
+-- fullTextSearch(term, ['title', 'body']): the expression, column order and config included
+CREATE INDEX posts_fts ON posts USING gin (
+  (to_tsvector('english', coalesce(title, '')) || to_tsvector('english', coalesce(body, '')))
+);
+
+-- or a generated column, searched with fullTextSearch(term, ['search'])
+ALTER TABLE posts ADD COLUMN search tsvector GENERATED ALWAYS AS (
+  to_tsvector('english', coalesce(title, '') || ' ' || coalesce(body, ''))
+) STORED;
+CREATE INDEX posts_search ON posts USING gin (search);
+```
+
+## How do I speed up contains and search?
+
+With a trigram index from the `pg_trgm` extension. `contains`, `startsWith`, `endsWith`, their `i` forms and `options.search` compile to `ILIKE '%term%'` (or `LIKE`), which a btree index cannot serve, so without one PostgreSQL reads the whole table:
+
+```sql title="migration.sql"
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX posts_title_trgm ON posts USING gin (title gin_trgm_ops);
+```
+
+One trigram index per searched column. A search over `['title', 'body']` is `title ILIKE ... OR body ILIKE ...`, which PostgreSQL answers with both indexes combined.
+
+## Which indexes do relations need?
+
+The keys the batched loaders look up. PostgreSQL indexes a primary key and a unique constraint, but not a foreign key, so add these yourself:
+
+```sql title="migration.sql"
+-- has-many: posts.comments loads comments WHERE post_id IN (...)
+CREATE INDEX comments_post_id ON comments (post_id);
+
+-- many-to-many: a primary key on (post_id, tag_id) covers post_id lookups;
+-- tags.posts, relation filters and counts from the tag side need tag_id
+CREATE INDEX post_tags_tag_id ON post_tags (tag_id);
+```
+
+A belongs-to (`posts.author`) looks up the referenced primary key, which is indexed already. A relation filter (`{ comments: { some: { ... } } }`) and `options.counts` use the same foreign key as the loader.
+
+## Should my indexes skip soft-deleted rows?
+
+Yes, when most reads leave the trash out. Every read adds `deleted_at IS NULL` while soft delete is on, so a partial index with the same predicate is smaller and still matches:
+
+```sql title="migration.sql"
+CREATE INDEX posts_live_created_id ON posts (created_at DESC, id)
+  WHERE deleted_at IS NULL;
+```
+
+A trash view (`onlyDeleted: true`) then needs its own index, or reads the table.
+
+## How do I index a multi-tenant table?
+
+Put the tenant column first. A [scoped entity](/docs/multi-tenancy) adds `tenant_id = $1` to every read, count and write, so each index above works best with the scope columns in front:
+
+```sql title="migration.sql"
+CREATE INDEX docs_tenant_created_id ON docs (tenant_id, created_at DESC, id)
+  WHERE deleted_at IS NULL;
+CREATE INDEX docs_tenant_title_lower ON docs (tenant_id, lower(title));
+```
+
+## When should I turn off the count or use the cursor?
+
+On a large table, when nobody needs the total. `findAll` runs a `COUNT(*)` next to every page, and on 200,000 rows that count was 97% of the call. Two ways out:
+
+- **`withCount: false`** (`?withCount=false`). `total` is `null` and `hasMore` says whether a next page exists. See [pagination](/docs/pagination-sorting#how-do-i-skip-the-count-query).
+- **`findByCursor`**, which skips the count unless you pass `count: true`, and whose deep pages stay as fast as the first with the index above. Use it for infinite scroll, exports and sync jobs.
+
+Keep the count for a table that shows page numbers and a total, and give its filters an index so the count can use it.
+
+## Common questions
+
+<Accordions>
+  <Accordion title="Does nestjs-drizzle-crud create indexes for me?">
+    No. Indexes live in your Drizzle schema or migrations. This page lists the ones the generated SQL can use.
+  </Accordion>
+  <Accordion title="Why is my filter on an indexed text column slow?">
+    A bare string filter on a text column compiles to `lower(column) = lower($1)` while `sql.caseSensitive` is `false`, and a plain index on the column cannot serve that. Add an index on `lower(column)`, use a `citext` column, or set `caseSensitive: true`.
+  </Accordion>
+  <Accordion title="Is findOne case-sensitive?">
+    Yes. `findOne` compiles a string to a plain `=`, while `findAll`, `count` and `?column=` use `lower()` on text columns by default. Use `findAll` with `limit: 1` when case must not matter.
+  </Accordion>
+  <Accordion title="Which index do cursor pages need?">
+    One on the sort columns followed by the primary key, such as `(created_at DESC, id)` for `sortBy: '-created_at'`. Each page then seeks to the cursor, so page 9,000 costs about the same as page 1.
+  </Accordion>
+  <Accordion title="Do I need an index for has-many relations?">
+    Yes, on the foreign key of the child table. PostgreSQL does not index foreign keys on its own, and the loader looks children up by that key.
+  </Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Filter />} title="Filtering with Drizzle in NestJS" href="/docs/filtering" description="The filters and operators behind each query shape." />
+  <Card icon={<ListOrdered />} title="Cursor pagination with Drizzle" href="/docs/cursor-pagination" description="Keyset pages that stay fast with the right index." />
+  <Card icon={<Users />} title="Multi-tenancy with Drizzle in NestJS" href="/docs/multi-tenancy" description="The tenant scope every query carries." />
+</Cards>

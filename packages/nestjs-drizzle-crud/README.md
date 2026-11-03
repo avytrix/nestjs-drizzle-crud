@@ -563,6 +563,12 @@ instead of returning an arbitrary row.
 > `like` / `ilike` operators and supply your own wildcards, or `startsWith` /
 > `endsWith` / `contains`, which escape the value for you.
 
+`findOne` is the exception: it compiles a string to a plain `=`, so it is
+case-sensitive whatever `sql.caseSensitive` says. A plain index on the column
+cannot serve `lower(column) = lower($1)`; create one on `lower(column)`. The
+[indexes page](https://crud.avytrix.dev/docs/indexes/) lists the index each
+filter, sort, search and relation needs.
+
 ---
 
 ## Query strings: parseQuery
@@ -654,7 +660,9 @@ in `forRoot` to apply a `created_at` fallback to every entity that doesn't defin
 ## Cursor pagination
 
 `findByCursor` pages with `WHERE (sort columns) > (last row)` instead of
-`OFFSET`, so deep pages stay fast and rows inserted earlier do not shift the
+`OFFSET`, starting with a bound on the first sort column, so with an index on
+the sort columns plus the primary key (`(created_at DESC, id)` below) deep
+pages stay as fast as the first, and rows inserted earlier do not shift the
 next page:
 
 ```typescript
