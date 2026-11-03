@@ -134,12 +134,12 @@
 				"anchor": "380---2026-11-03"
 			},
 			{
-				"heading": "[3.8.0] - 2026-11-03",
-				"anchor": "380---2026-11-03"
-			},
-			{
 				"heading": "Added",
 				"anchor": "added"
+			},
+			{
+				"heading": "Changed",
+				"anchor": "changed"
 			}
 		]
 	},
