@@ -19,8 +19,11 @@ in 3.5.1 (3.3.1 to 3.5.0) and 3.6.0 (3.5.2). The unscoped `nestjs-drizzle-crud` 
 
 ## [3.8.0] - 2026-11-03
 
-Performance fixes from the 3.7.1 performance report. Every call returns the same rows, in the
-same order, with the same errors; the SQL behind it is cheaper.
+Performance fixes from the 3.7.1 performance report. Calls return the same rows, in the same
+order, with the same errors, in fewer statements and shorter transactions. The one visible
+difference is under Changed: a row soft-deleted between the guard read and the write is now a 404
+instead of a write. Inside `SqlBaseCrudService` the six mass writes share one skeleton, and so
+do `softDelete`, `restore` and `delete`; no public API, override point or message changed.
 
 ### Added
 
@@ -43,6 +46,14 @@ same order, with the same errors; the SQL behind it is cheaper.
   and the hooks page says where after hooks run: after the commit for a single write, inside
   the transaction for a mass write.
 
+### Changed
+
+- A row soft-deleted between the guard read and the write is no longer written: `update` and
+  `softDelete` only touch a live row, `restore` only a row in the trash, and `delete` no longer
+  hard-deletes a row that was soft-deleted meanwhile (`forceDelete` still does). Such a call is a
+  404 instead of a write, a `false` return or a "Failed to update entity" error, and one whose
+  row vanished with an expected version is a 404 instead of a 409.
+
 ### Fixed
 
 - Keyset pages seek instead of filtering. `findByCursor` adds a bound on the first sort column
@@ -60,11 +71,6 @@ same order, with the same errors; the SQL behind it is cheaper.
   when something a caller can observe sits between it and the write (an overridden `before*`
   hook, `validateUpdate` or `mapUpdateDtoToEntity`, or a before event), so hooks and events see
   exactly what they saw before, and on MySQL. A missing row is still a 404 ahead of a bad body.
-- A row soft-deleted between the guard read and the write is no longer written: `update` and
-  `softDelete` only touch a live row, `restore` only a row in the trash, and `delete` no longer
-  hard-deletes a row that was soft-deleted meanwhile (`forceDelete` still does). Such a call is a
-  404 instead of a write, a `false` return or a "Failed to update entity" error, and one whose
-  row vanished with an expected version is a 404 instead of a 409.
 - Mass writes send no savepoint on the happy path when they open their own transaction:
   `massUpdate`, `massSoftDelete`, `massRestore` and `massDelete` take 4 round trips instead of 8
   (`BEGIN`, `SELECT`, the set statement, `COMMIT`), `massCreate` and `massUpsert` 3 instead of 5.

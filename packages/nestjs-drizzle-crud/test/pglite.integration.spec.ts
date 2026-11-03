@@ -4020,3 +4020,45 @@ describe("3.8.0 P-08 / F8 / F9 / F10: statement trims", () => {
 		}
 	});
 });
+
+describe("3.8.0: protected override points still win", () => {
+	it("routes errors and keyset conditions through a subclass's overrides", async () => {
+		const db = await freshDb();
+		const seen = new Set<string>();
+		class Custom extends Svc {
+			protected override toClientError(error: any, operation?: any) {
+				if (this.isUniqueViolation(error)) {
+					return new HttpException("taken", 418);
+				}
+				return super.toClientError(error, operation);
+			}
+			protected override isUniqueViolation(error: any): boolean {
+				seen.add("isUniqueViolation");
+				return super.isUniqueViolation(error);
+			}
+			protected override keysetCondition(specs: any[], values: unknown[]) {
+				seen.add("keysetCondition");
+				return super.keysetCondition(specs, values);
+			}
+			protected override runSet<R>(...args: Parameters<Svc["runSet"]>) {
+				seen.add("runSet");
+				return super.runSet(...args) as Promise<R>;
+			}
+		}
+		const authorsSvc = new Custom(base(db, authors));
+		const dup = { name: "Dup", email: "ann@x.io", role: "writer" };
+		expect((await caught(authorsSvc.create(dup))).getStatus()).toBe(418);
+		const bulk = await caught(authorsSvc.massCreate([dup]));
+		expect((bulk.getResponse() as any).errors).toEqual([
+			{ index: 0, status: 418, message: "taken" },
+		]);
+		const postsSvc = new Custom(base(db, posts));
+		const first = await postsSvc.findByCursor({}, { limit: 2 });
+		await postsSvc.findByCursor({}, { limit: 2, cursor: first.nextCursor });
+		expect([...seen].sort()).toEqual([
+			"isUniqueViolation",
+			"keysetCondition",
+			"runSet",
+		]);
+	});
+});
