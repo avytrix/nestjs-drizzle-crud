@@ -4,6 +4,12 @@ import { ArrowRight } from "lucide-react";
 // Newest first; the top banner announces RELEASES[0].
 export const RELEASES = [
 	{
+		version: "3.8.0",
+		date: "Nov 3, 2026",
+		title: "Faster cursor pages, fewer round trips",
+		body: "Cursor pages seek to the cursor in an index, so page 9,000 of 200,000 rows takes 0.6 ms instead of 24. Single writes are one statement, mass writes drop their savepoints, a per-id SET groups into one UPDATE per value, big nested loads are chunked, and a stored tsvector column serves full-text search. A new page lists the index each query needs.",
+	},
+	{
 		version: "3.7.2",
 		date: "Nov 3, 2026",
 		title: "Batch limits per statement, tenant-safe keys",

@@ -59,6 +59,7 @@ What that means for results:
 
 - A `NULL` column contributes nothing to the vector, so a row still matches on its other columns. Before 3.7.2 the vector was `to_tsvector(a) || to_tsvector(b)` without `coalesce`, and since `x || NULL` is `NULL`, a row with any `NULL` column never matched.
 - A single column stays `to_tsvector('english', "bio")`, without `coalesce`, so an index on that expression keeps matching.
+- A column that already is a `tsvector` (a generated, stored column) goes in as is, with no `to_tsvector` around it, since 3.8.0. Next to other columns it is `coalesce("search", ''::tsvector)`.
 - The text search configuration is `'english'` unless you pass `language`. The name is written into the SQL as a literal, not as a bound parameter, so an index on `to_tsvector('german', ...)` still matches. That is why it has to pass the identifier check first.
 - Rows are ordered by `ts_rank` descending, then by the primary key ascending, so rows with the same rank keep a stable order across pages.
 - With soft delete on, soft-deleted rows are left out of both `data` and `total`, as in `findAll` and `count`. A tenant scope applies the same way, and so do `options.filters`.
@@ -107,7 +108,11 @@ Neither mode raises a syntax error on odd input, so both are safe for a search b
 
 You do not need to enable it. `fullTextSearch()` works on any PostgreSQL entity, and the `sql.enableFullTextSearch` flag is deprecated and has no effect.
 
-An index is your call, and it matters on large tables. Without one, PostgreSQL computes `to_tsvector` for every row on every search. PostgreSQL only uses a GIN index whose expression is exactly the one in the query, so repeat the generated vector, in the same column order as your `columns` array:
+An index is your call, and it matters on large tables. Without one, PostgreSQL computes `to_tsvector` for every row on every search. There are two ways to give it one: a GIN index on the exact expression the query uses, or a stored `tsvector` column with a GIN index on the column.
+
+### Option 1: a GIN index on the expression
+
+PostgreSQL only uses an expression index whose expression is exactly the one in the query, so repeat the generated vector, in the same column order as your `columns` array:
 
 ```sql title="migration.sql"
 -- fullTextSearch(term, ["name", "email", "bio"])
@@ -119,7 +124,38 @@ CREATE INDEX users_fts ON users USING gin (
 CREATE INDEX users_bio_fts ON users USING gin (to_tsvector('english', bio));
 ```
 
-An index built on several columns before 3.7.2, without `coalesce`, no longer matches the query; recreate it as above. Pass `language` and the index needs the same configuration name. A generated `tsvector` column is the other route; the [Drizzle guide to full-text search](https://orm.drizzle.team/docs/guides/postgresql-full-text-search) shows both on the schema side.
+An index built on several columns before 3.7.2, without `coalesce`, no longer matches the query; recreate it as above. Pass `language` and the index needs the same configuration name.
+
+### Option 2: a stored tsvector column (since 3.8.0)
+
+Compute the vector once per write in a generated column, index the column, and search on it. The service sees that the column is a `tsvector` and uses it as is, so the index matches whatever the column order or configuration:
+
+```sql title="migration.sql"
+ALTER TABLE users ADD COLUMN search tsvector GENERATED ALWAYS AS (
+  to_tsvector('english', coalesce(name, '') || ' ' || coalesce(bio, ''))
+) STORED;
+CREATE INDEX users_search ON users USING gin (search);
+```
+
+```ts accent=drizzle title="schema.ts"
+import { customType, pgTable, serial, text } from "drizzle-orm/pg-core";
+
+const tsvector = customType<{ data: string }>({ dataType: () => "tsvector" });
+
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  bio: text("bio"),
+  search: tsvector("search"), // generated in the migration above
+});
+```
+
+```ts title="users.service.ts"
+// where "users"."search" @@ plainto_tsquery('english', $1)
+await this.users.fullTextSearch("john doe", ["search"], { limit: 20 });
+```
+
+On 200,000 rows on PGlite, a search on a stored column with its GIN index took 0.6 ms, against 600 to 900 ms computing `to_tsvector` per row without an index. Before 3.8.0 a `tsvector` column failed with `function to_tsvector(unknown, tsvector) does not exist`. The [Drizzle guide to full-text search](https://orm.drizzle.team/docs/guides/postgresql-full-text-search) shows both options on the schema side, and [Database indexes for fast Drizzle queries](/docs/indexes) covers `pg_trgm` for the default `ilike` search.
 
 ## How do I add search to a filtered list endpoint?
 
@@ -209,4 +245,5 @@ A custom query skips what the service adds for you: add `isNull(users.deletedAt)
   <Card icon={<Filter />} title="Filtering with Drizzle in NestJS" href="/docs/filtering" description="Structured filters and options.search on findAll and count." />
   <Card icon={<Boxes />} title="Defining services" href="/docs/defining-services" description="Add custom methods next to the inherited CRUD ones." />
   <Card icon={<ShieldCheck />} title="Allowlists" href="/docs/allowlists" description="Limit which columns a client may search with searchableColumns." />
+  <Card icon={<Zap />} title="Database indexes for fast Drizzle queries" href="/docs/indexes" description="GIN for full-text search, pg_trgm for contains, and the rest." />
 </Cards>

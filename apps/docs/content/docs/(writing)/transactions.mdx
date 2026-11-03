@@ -83,12 +83,12 @@ Some methods open their own transaction when you do not pass one, and join yours
 
 | Method | Without `transaction` | With `transaction` |
 | --- | --- | --- |
-| `massCreate`, `massUpdate`, `massUpsert`, the other mass writes | Opens its own transaction | Joins yours, with savepoints inside it |
+| `massCreate`, `massUpdate`, `massUpsert`, the other mass writes | Opens its own transaction, with no savepoint on the happy path | Joins yours, with savepoints inside it |
 | `attach`, `detach`, `sync` | Opens its own transaction | Joins yours |
 | `create` with nested relations | Opens its own transaction | Joins yours |
 | `find`, `findAll`, `create`, `update`, `delete` and the other single-row calls | Runs on the pool, no transaction | Joins yours |
 
-So a single `update` is not wrapped in a transaction of its own: its existence check and its `UPDATE` are two statements. Pass a transaction when they must see the same snapshot, or use [optimistic locking](/docs/optimistic-locking) so the `UPDATE` re-checks the version.
+So a single `update` is not wrapped in a transaction of its own. Since 3.8.0 it is usually one statement: on PostgreSQL and SQLite, `update`, `softDelete`, `restore`, `delete` and `forceDelete` send the write with the whole check in its `WHERE` (primary key, tenant scope, expected version, and the soft delete state the call needs) and use `RETURNING` to tell a miss, which then gets the same 404 or 409 as before. The existence check still runs first, as a second statement, when something you can observe runs between the check and the write: a `before*` hook, `validateUpdate` or `mapUpdateDtoToEntity` your service overrides, or a before event on the [event bus](/docs/events). It always runs first on MySQL, which has no `RETURNING`. Either way the write re-checks everything, so a row deleted or changed in between is not written. Pass a transaction when the hooks and the write must see the same snapshot.
 
 ## Can I mix package methods with raw Drizzle?
 

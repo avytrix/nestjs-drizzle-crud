@@ -169,6 +169,7 @@ These are not callable from outside the service. Override the hooks in your subc
 | `mapUpdateDtoToEntity` | `(data: UpdateDto) => Record<string, any>` | A shallow copy of `data`. |
 | `executeSqlTransaction` | `<R>(operation: (tx) => Promise<R>, existingTransaction?) => Promise<R>` | Runs `operation` in `existingTransaction` when given, otherwise in a new `db.transaction`. |
 | `bindLimit` | `(db) => { limit: number; name: string }` | The most bound parameters one statement may carry, and the database's name for the 400: PostgreSQL and MySQL 65,535, SQLite 32,766, Cloudflare D1 100. Since 3.7.2. |
+| `relationChunkSize` | `(db) => number` | How many parent keys one batched relation or count query binds: the bind limit less headroom, so 64,535 on PostgreSQL and MySQL, 31,766 on SQLite, 90 on D1. A level with more keys is loaded in several queries. Since 3.8.0. |
 | `getEntityName` | `() => string` | The Drizzle table name, used in error messages. |
 | `config` | `SqlCrudConfig` | The merged entity config, including `db` and `table` for hand-written queries. |
 

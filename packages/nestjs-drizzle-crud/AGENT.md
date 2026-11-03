@@ -189,7 +189,10 @@ Operators inside an object value: `eq`, `gt`, `gte`, `lt`, `lte`, `neq`, `like`,
 `sql.caseSensitive`), `iStartsWith`, `iEndsWith`, `iContains` (always
 case-insensitive), and on PostgreSQL only `arrayContains`, `arrayOverlaps` and
 `jsonContains`. Any other operator is a 400. A bare string is an exact match,
-not a pattern, and `%` in it is a literal character. `isNull` and `isNotNull`
+not a pattern, and `%` in it is a literal character. On a text column it is
+`lower(col) = lower($1)` in `findAll` and `count` (index `lower(col)`), but a
+plain, case-sensitive `=` in `findOne`. https://crud.avytrix.dev/docs/indexes/
+lists the index each query shape needs; the package creates none. `isNull` and `isNotNull`
 take `true` / `false` or the strings `"true"` / `"false"`.
 
 OR and NOT need no raw Drizzle. `and`, `or` and `not` group filter objects, nest,

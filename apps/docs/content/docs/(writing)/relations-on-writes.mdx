@@ -23,7 +23,7 @@ post.author.name; // 'Bob'
 post.tags;        // []
 ```
 
-That is one `INSERT` plus one query per relation. A mass write loads the relations of every row it wrote in one query per relation too, so `massCreate` of 10 posts with `relations: ['author']` is an `INSERT` and one `SELECT`, not ten.
+That is one `INSERT` plus one query per relation. A mass write loads the relations of every row it wrote in one query per relation too, so `massCreate` of 10 posts with `relations: ['author']` is an `INSERT` and one `SELECT`, not ten. Since 3.8.0 a mass write that opened its own transaction loads them after it commits, so its row locks are held for less time; inside your transaction, or with a `counts` filter (whose value could fail and must roll the write back), they load inside it as before.
 
 ```ts title="posts.create.ts"
 const created = await posts.massCreate(dtos, { relations: ['author'], counts: ['tags'] });
@@ -142,7 +142,7 @@ post.tags; // [{ id: 2, name: 'tech' }]
 | `detach` | `detach(id, relation, relatedIds?, options?)` | Removes the given links, or every link when `relatedIds` is left out. |
 | `sync` | `sync(id, relation, relatedIds, options?)` | Adds the missing links and removes the rest, so the links match `relatedIds` exactly. `[]` removes every link. |
 
-Each method returns `Promise<T>`: the row with that relation loaded, plus anything in `options.relations`. Each runs in one transaction and is set based whatever the number of ids: one `SELECT` checks the targets exist, one finds the links already there, and one `INSERT` adds the rest (`sync` adds one `DELETE`). Duplicates in the list are ignored. The related rows themselves are never changed or deleted.
+Each method returns `Promise<T>`: the row with that relation loaded, plus anything in `options.relations`. Each runs in one transaction and is set based whatever the number of ids: one `SELECT` reads the row, one checks the targets exist, one finds the links already there, one `INSERT` adds the rest (`sync` adds one `DELETE`), and one query per relation loads the result onto the row read first. A nested create skips the "already linked" `SELECT`, since a row created in the same call has no links yet. Duplicates in the list are ignored. The related rows themselves are never changed or deleted.
 
 With global hooks on, they raise `attach`, `detach` and `sync` [events](/docs/events).
 

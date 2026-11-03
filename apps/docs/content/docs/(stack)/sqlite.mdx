@@ -115,7 +115,7 @@ The single-row methods (`create`, `update`, `upsert`, `softDelete`, `restore`, `
     For the single-row methods and every read, it should: Drizzle makes every better-sqlite3 query awaitable, though the package's suite does not run on it. Mass writes, nested creates and attach / detach / sync throw a `TransactionException`, because a better-sqlite3 transaction cannot wait for async work. Use libSQL with a `file:` URL for a local database that supports them.
   </Accordion>
   <Accordion title="Why are bulk writes not available on Cloudflare D1?">
-    They run in one interactive transaction with a savepoint per item, so a failing item can be named and everything rolled back. D1 has no interactive transactions, only `batch()`, so the package refuses those calls with a clear error instead of writing half a batch.
+    They run in one interactive transaction, and a failure is replayed with a savepoint per item, so a failing item can be named and everything rolled back. D1 has no interactive transactions, only `batch()`, so the package refuses those calls with a clear error instead of writing half a batch.
   </Accordion>
   <Accordion title="Is LIKE case-sensitive on SQLite?">
     No, not for ASCII letters: SQLite's `LIKE` matches `Ann` and `ann` alike. That is why, since 3.7.2, `contains`, `startsWith` and `endsWith` use `GLOB` when `sql.caseSensitive` is `true`, which compares case exactly. The `like` operator and the `i` forms stay `LIKE`.

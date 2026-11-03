@@ -43,14 +43,14 @@ A fixed number, whatever the number of ids:
 | Method | Statements |
 | --- | --- |
 | `massCreate` | one multi-row `INSERT ... RETURNING` |
-| `massUpdate` | one `SELECT` to check every id exists, one `UPDATE ... WHERE id IN (...)` |
+| `massUpdate` | one `SELECT` to check every id exists, one `UPDATE ... WHERE id IN (...)` per distinct SET (one, unless `beforeUpdate` returns different data per id) |
 | `massSoftDelete`, `massRestore` | one `SELECT`, one `UPDATE ... WHERE id IN (...)` |
 | `massDelete`, `massForceDelete` | one `SELECT`, one `DELETE ... WHERE id IN (...)` |
 | `massUpsert` | one `INSERT ... ON CONFLICT DO UPDATE` |
 
 So `massUpdate` over 100 ids is two queries, not two hundred.
 
-Two exceptions on MySQL, which has no `RETURNING`: one more `SELECT` reads the written rows back, and `massCreate` of rows with auto-increment keys inserts row by row, because MySQL only reports the first id of a multi-row insert. If every row carries its own primary key, `massCreate` stays one `INSERT` plus one `SELECT`.
+Two exceptions on MySQL, which has no `RETURNING`: one more `SELECT` reads the written rows back, and `massCreate` of rows with auto-increment keys inserts row by row, because MySQL only reports the first id of a multi-row insert, then reads them all back with one `SELECT` (since 3.8.0; before, one per row). If every row carries its own primary key, `massCreate` stays one `INSERT` plus one `SELECT`.
 
 On SQLite the statements are the same as on PostgreSQL, but only with a driver that has async transactions, such as libSQL. On Cloudflare D1 and on synchronous drivers (better-sqlite3, bun:sqlite, sql.js) every bulk method throws a `TransactionException` that says why; [SQLite, libSQL and Cloudflare D1](/docs/sqlite) has the details.
 
@@ -75,7 +75,10 @@ Every bulk method takes the same `SqlOperationOptions` as its single-row counter
 
 The whole call is rolled back and throws `BulkOperationException`. Every bulk method runs in one transaction, so no partial write is ever visible to a later read.
 
-When the set statement fails, the package still needs to know which items caused it. It replays the batch one item at a time, each in its own savepoint, all inside an outer savepoint that is rolled back at the end, and reports the items that fail on their own. That replay only runs on the failure path, and it leaves nothing behind, even inside your own transaction.
+When the set statement fails, the package still needs to know which items caused it. It replays the batch one item at a time, each in its own savepoint, and reports the items that fail on their own. That replay only runs on the failure path, and it leaves nothing behind, even inside your own transaction:
+
+- **In the transaction the bulk method opened itself** (no `transaction` option), the happy path sends no savepoint at all since 3.8.0: `massUpdate` is `BEGIN`, one `SELECT`, one `UPDATE`, `COMMIT`. When the set statement fails, that transaction rolls back and the replay runs in a fresh transaction that is rolled back too. Once a before event has handed the transaction to a subscriber, which may have written in it, the replay stays inside it, as below.
+- **In your transaction**, the set statement runs in a savepoint and the replay inside an outer savepoint that is rolled back at the end, because on PostgreSQL a failed statement would otherwise abort your whole transaction. A failed bulk call leaves your transaction usable.
 
 Two cases are worth knowing:
 
@@ -214,7 +217,7 @@ One transaction holding thousands of row locks can also block other connections.
     Catch `BulkOperationException`. Its response body lists each failed item by `index` (for `massCreate` and `massUpsert`) or by `id`, with the status and message that item alone would have produced.
   </Accordion>
   <Accordion title="Does massUpdate run one query per id?">
-    No. It runs one `SELECT` to check the ids and one `UPDATE ... WHERE id IN (...)`, whatever the number of ids. Pass `bulkMode: 'perItem'` if you want the single-row method per item.
+    No. It runs one `SELECT` to check the ids and one `UPDATE ... WHERE id IN (...)`, whatever the number of ids. When `beforeUpdate` returns different data for different ids, it sends one `UPDATE` per distinct result (since 3.8.0), so a hook that sets two values over 40 ids is two `UPDATE`s, not 40. Pass `bulkMode: 'perItem'` if you want the single-row method per item.
   </Accordion>
   <Accordion title="What HTTP status does a failed bulk call return?">
     A 400. Each entry in its `errors` array carries the item's own status, such as 409 for a duplicate or 404 for a missing id.

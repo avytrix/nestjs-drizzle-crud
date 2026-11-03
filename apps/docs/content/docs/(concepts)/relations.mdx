@@ -43,6 +43,12 @@ this replaces.
 Sibling relations load concurrently, so three collections are three parallel queries, not three
 round trips in sequence.
 
+A level with more parent keys than one statement can bind is split, since 3.8.0: the keys go out in
+chunks of 64,535 on PostgreSQL and MySQL (31,766 on SQLite, 90 on Cloudflare D1), so a nested load
+whose level holds 70,000 keys is two queries for that relation instead of a 400. All the children of
+one parent come from the same chunk, so grouping and `orderBy` are unchanged. Override the protected
+`relationChunkSize(db)` to load in smaller pieces.
+
 ## How do I declare a belongs-to relation?
 
 Name the foreign-key column on this table with `localKey`. A belongs-to is a many-to-one or

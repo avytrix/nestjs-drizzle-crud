@@ -92,7 +92,7 @@ scope: (ctx) => (ctx.isAdmin ? null : { tenant_id: ctx.tenantId })
   }}
 />
 
-Returning `null` leaves that call unscoped on purpose, for an admin or a background job. A key that is not a column of the table throws, and so does a function that returns something other than an object or `null`. The function runs synchronously, so resolve anything async (the user, their tenant) in middleware or a guard and put the result in the context.
+Returning `null` leaves that call unscoped on purpose, for an admin or a background job. A key that is not a column of the table throws, and so does a function that returns something other than an object or `null`. The function runs synchronously, once per call (since 3.8.0; it used to run once per statement and relation), so resolve anything async (the user, their tenant) in middleware or a guard and put the result in the context.
 
 ## Where does the context come from?
 
@@ -130,7 +130,7 @@ All of them:
 | Bulk | `massUpdate`, `massSoftDelete`, `massRestore`, `massDelete`, `massForceDelete` | 400 with a 404 entry for that id, nothing written |
 | Links | `attach`, `detach`, `sync` | 404 |
 
-The scope is ANDed into the existence check and into the `UPDATE` or `DELETE` statement itself, so a row cannot change tenant between the two. On upsert it sits in the `ON CONFLICT DO UPDATE ... WHERE`, on PostgreSQL and SQLite alike. MySQL's `ON DUPLICATE KEY UPDATE` has no `WHERE`, so a scoped upsert on MySQL is a 400 (`upsert on a scoped entity needs PostgreSQL or SQLite`).
+The scope is ANDed into the existence check and into the `UPDATE` or `DELETE` statement itself, so a row cannot change tenant between the two. Since every statement carries `tenant_id = $1`, put the tenant column first in your composite indexes; [Database indexes for fast Drizzle queries](/docs/indexes#how-do-i-index-a-multi-tenant-table) shows them. On upsert it sits in the `ON CONFLICT DO UPDATE ... WHERE`, on PostgreSQL and SQLite alike. MySQL's `ON DUPLICATE KEY UPDATE` has no `WHERE`, so a scoped upsert on MySQL is a 400 (`upsert on a scoped entity needs PostgreSQL or SQLite`).
 
 ## What does a create or update do with the scope column?
 
@@ -182,5 +182,6 @@ A composite foreign key such as `(tenant_id, author_id)` still makes the databas
   <Card icon={<Server />} title="NestJS CRUD controller generator" href="/docs/controller-factory" description="Generate scoped REST routes for an entity in one call." />
   <Card icon={<Lock />} title="Drizzle optimistic locking with versions" href="/docs/optimistic-locking" description="Refuse a write that names a stale version with a 409." />
   <Card icon={<Shield />} title="Error handling in NestJS with Drizzle" href="/docs/errors" description="MissingScopeException and every other exception, with its status." />
+  <Card icon={<Zap />} title="Database indexes for fast Drizzle queries" href="/docs/indexes" description="Tenant-first composite indexes for scoped reads and writes." />
   <Card icon={<Users />} title="Need a team?" href="/docs/commercial-support" description="Avytrix Technologies maintains this library and builds multi-tenant NestJS and Drizzle backends. See what they can take on." />
 </Cards>

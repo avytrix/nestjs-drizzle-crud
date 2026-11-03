@@ -108,6 +108,18 @@ export class UsersService extends SqlBaseCrudService<User, CreateUserDto, Update
 
 A before hook that throws stops the write. An after hook runs after the SQL, so a throw there only undoes the write when the call runs in a [transaction](/docs/transactions): every mass method does, a single write does when you pass `options.transaction`.
 
+### Do after hooks run inside the transaction?
+
+It depends on the method:
+
+| Call | Where the after hooks run | A throw in an after hook |
+| --- | --- | --- |
+| `create`, `update`, `softDelete`, `restore`, `delete` without `options.transaction` | After the statement has committed (a nested `create` commits its own transaction first) | Reaches the caller; the row stays written |
+| Any single write with `options.transaction` | Inside your transaction | Rolls everything back when you let it propagate |
+| `massCreate`, `massUpdate`, `massSoftDelete`, `massRestore`, `massDelete` | Inside the mass write's transaction, once per row | Rolls the whole batch back |
+
+Module-level [events](/docs/events) follow the same split: a single write raises its after event once the row is written, a mass write raises one before and one after event from inside its transaction. Wrap a single write in a transaction when its after hook must be atomic with it.
+
 ## How do I skip the hooks for one call?
 
 Pass `options.hooks`:
@@ -162,6 +174,9 @@ All hooks are `protected`, so code outside the class cannot call them. Override 
   </Accordion>
   <Accordion title="Do hooks run per row in a mass update?">
     Yes. `massUpdate` runs `validateUpdate`, `beforeUpdate` and the mapper for each id and `afterUpdate` for each row, even though the update itself is one statement.
+  </Accordion>
+  <Accordion title="Can a throw in afterUpdate undo the update?">
+    Only inside a transaction. A mass write runs its after hooks inside its own transaction, so a throw rolls the batch back. A single `update` without `options.transaction` has already committed when `afterUpdate` runs, so the throw reaches the caller and the row stays updated.
   </Accordion>
   <Accordion title="Does upsert run afterCreate?">
     No. `upsert` and `massUpsert` run `validateCreate`, `beforeCreate` and `mapCreateDtoToEntity`, but no after hook. Use the `afterUpsert` event if you need to react to one.

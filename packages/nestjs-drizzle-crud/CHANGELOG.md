@@ -11,6 +11,93 @@ restore, `ER_DUP_ENTRY` mapping, dialect locking) are tracked separately and unc
 3.3.1, 3.4.0, 3.5.0 and 3.5.2 were tagged but never published to npm. Their changes reached npm
 in 3.5.1 (3.3.1 to 3.5.0) and 3.6.0 (3.5.2). The unscoped `nestjs-drizzle-crud` stops at 3.3.0.
 
+## [3.8.0] - 2026-11-03
+
+Performance fixes from the 3.7.1 performance report. Calls return the same rows, in the same
+order, with the same errors, in fewer statements and shorter transactions. The one visible
+difference is under Changed: a row soft-deleted between the guard read and the write is now a 404
+instead of a write. Inside `SqlBaseCrudService` the six mass writes share one skeleton, and so
+do `softDelete`, `restore` and `delete`; no public API, override point or message changed.
+
+### Added
+
+- Full-text search takes a column that already is a `tsvector`, such as a generated, stored
+  column, and uses it as is instead of wrapping it in `to_tsvector`, so a GIN index on the column
+  serves `fullTextSearch()` and `search.mode: "fullText"`. Before, such a column failed with
+  `function to_tsvector(unknown, tsvector) does not exist`. Next to text columns it is
+  `coalesce(col, ''::tsvector)`; text columns keep the 3.7.2 vector, bare for one column and
+  coalesced for several. On 200,000 rows a search on the stored column with its index took
+  0.6 ms, against 600 to 900 ms computing `to_tsvector` per row without one. The full-text page
+  shows the index for each shape.
+- A docs page, [Database indexes for fast Drizzle queries](https://crud.avytrix.dev/docs/indexes/),
+  lists the index each query shape needs: `lower(col)` (or `citext`, or `caseSensitive: true`) for
+  the default case-insensitive equality, the sort columns plus the primary key for cursor pages,
+  GIN for full-text search, `pg_trgm` for `contains` and `search`, foreign keys and both join
+  table columns for relations, partial indexes on `deleted_at IS NULL`, and the tenant column
+  first. It says when to use `withCount: false` or the cursor on a large table. The filtering
+  page now spells out that `findOne` compares strings with a plain, case-sensitive `=` while
+  `findAll` and `count` use `lower()` by default (unchanged; a default change waits for a major),
+  and the hooks page says where after hooks run: after the commit for a single write, inside
+  the transaction for a mass write.
+
+### Changed
+
+- A row soft-deleted between the guard read and the write is no longer written: `update` and
+  `softDelete` only touch a live row, `restore` only a row in the trash, and `delete` no longer
+  hard-deletes a row that was soft-deleted meanwhile (`forceDelete` still does). Such a call is a
+  404 instead of a write, a `false` return or a "Failed to update entity" error, and one whose
+  row vanished with an expected version is a 404 instead of a 409.
+
+### Fixed
+
+- Keyset pages seek instead of filtering. `findByCursor` adds a bound on the first sort column
+  (`col <= $1` descending, `col >= $1` ascending) ahead of the OR expansion, drops the `IS NULL`
+  branch for NOT NULL and primary key columns (nullable and relation columns keep it), and on
+  PostgreSQL compares `(a, id) > ($1, $2)` as one row value when every column is NOT NULL and
+  sorts the same way. With an index on the sort columns and the primary key, page 9,000 of
+  200,000 rows went from 24.4 ms to 0.6 ms (`created_at` descending) and from 50.3 ms to 0.5 ms
+  (`views` ascending) on PGlite. A sort column the row already carries is no longer selected a
+  second time for the cursor. Pages, their order and cursors are unchanged.
+- Single-row writes skip the read first. On PostgreSQL and SQLite, `update`, `softDelete`,
+  `restore`, `delete` and `forceDelete` send one statement whose `WHERE` holds the whole guard
+  (primary key, tenant scope, expected version, soft delete state) and read the row only when
+  nothing came back, to answer with the same 404 or 409 as before. The read still runs first
+  when something a caller can observe sits between it and the write (an overridden `before*`
+  hook, `validateUpdate` or `mapUpdateDtoToEntity`, or a before event), so hooks and events see
+  exactly what they saw before, and on MySQL. A missing row is still a 404 ahead of a bad body.
+- Mass writes send no savepoint on the happy path when they open their own transaction:
+  `massUpdate`, `massSoftDelete`, `massRestore` and `massDelete` take 4 round trips instead of 8
+  (`BEGIN`, `SELECT`, the set statement, `COMMIT`), `massCreate` and `massUpsert` 3 instead of 5.
+  When the set statement fails, the transaction rolls back and the items are replayed in a fresh
+  transaction that is rolled back too, so `BulkOperationException` names the same items with the
+  same statuses and messages. Inside a caller's transaction, or once a before event handed the
+  transaction to a subscriber, the savepoints stay, so a failed item does not abort the caller's
+  PostgreSQL transaction.
+- `massUpdate` sends one `UPDATE` per distinct SET when `beforeUpdate` returns different data
+  per id, instead of one `UPDATE` and a savepoint pair per id: a hook with two results over 50
+  ids is 5 round trips instead of 155. Rows still come back in the input order, after hooks run
+  in that order, and a failure still names every failing id.
+- On MySQL, `massCreate` of rows with auto-increment keys reads the inserted rows back with one
+  `SELECT ... WHERE id IN (...)` instead of one per row. The inserts stay one per row: MySQL only
+  reports the first id of a multi-row `INSERT`, and InnoDB does not promise the others are
+  consecutive.
+- Relation loaders and relation counts split a parent key list that would not fit in one
+  statement. `loadBelongsTo`, `loadHasMany`, `loadManyToMany` and `loadCounts` send the keys in
+  chunks of 64,535 on PostgreSQL and MySQL, 31,766 on SQLite and 90 on Cloudflare D1, one query per
+  chunk, so a nested page whose level holds 70,000 keys loads in two queries instead of failing
+  with a 400 (3.7.2) or a 500 (before). Below that, it is one query per relation as before. The
+  chunk size is the new protected `relationChunkSize(db)`.
+- Fewer statements in a few calls. `exists(id, options)` is one `SELECT` and no longer loads
+  `options.relations` or `options.counts` it throws away (4 statements to 1 with two relations and
+  a count); they are still checked against the allowlists. A nested create skips the "already
+  linked?" read for its many-to-many ids. `attach`, `sync` and `detach` read the row once and load
+  the relation onto it, instead of reading it before and after (8, 9 and 6 round trips to 7, 8 and
+  5). A mass write that opened its own transaction loads `options.relations` and `options.counts`
+  after it commits, so it holds its row locks for less time; with a count filter, or in a caller's
+  transaction, they still load inside. The returned rows are the same.
+- A `scope` function runs once per call instead of once per statement and relation: 5 times for
+  a `findAll` with three relations and a count, 7 for a `massUpdate`, now 1 each.
+
 ## [3.7.2] - 2026-11-03
 
 Fixes from the 3.7.1 audit. The batch limit now counts the statement the database receives.
@@ -335,7 +422,8 @@ app.
   only operator on MySQL is a 400.
 - **Keyset pagination.** `findByCursor(filters, { cursor, limit, sortBy, count }, options)` returns
   `{ data, limit, nextCursor, total? }`. The cursor is base64url JSON of the last row's sort values
-  plus the primary key, so pages stay stable under inserts and deep pages cost the same as the
+  plus the primary key, so pages stay stable under inserts and, with an index on the sort columns
+  (since 3.8.0), deep pages cost the same as the
   first. It works with every sort, filter, relation and `select`, keeps timestamp microseconds and
   follows the database's NULL ordering. The count only runs with `count: true`. A cursor that is not
   valid, or was made for another sort, is a 400.
