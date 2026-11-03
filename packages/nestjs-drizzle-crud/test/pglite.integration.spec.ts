@@ -3209,3 +3209,46 @@ describe("3.7.2: the depth check survives a huge list (A-06)", () => {
 		expect(() => assertFilterDepth({ id: { in: list } })).not.toThrow();
 	});
 });
+
+describe("3.7.2: full-text search over a NULL column (A-14)", () => {
+	const articles = pgTable("articles", {
+		id: serial("id").primaryKey(),
+		title: text("title").notNull(),
+		body: text("body"),
+	});
+
+	it("still finds a row whose other column is NULL", async () => {
+		const log: string[] = [];
+		const db = await freshDb(log);
+		await db.$client.exec(`
+			CREATE TABLE articles (id serial PRIMARY KEY, title text NOT NULL, body text);
+			INSERT INTO articles (title, body) VALUES
+				('postgres tuning', 'a body'), ('postgres basics', NULL);
+		`);
+		const svc = new Svc({
+			...base(db, articles),
+			softDelete: { enabled: false, column: "deleted_at" },
+			timestamps: undefined,
+		});
+		expect((await svc.fullTextSearch("postgres", ["title"])).total).toBe(2);
+		const both = await svc.fullTextSearch("postgres", ["title", "body"]);
+		expect(both.total).toBe(2);
+		expect(both.data).toHaveLength(2);
+		const listed = await svc.findAll(
+			undefined,
+			{},
+			{
+				search: {
+					term: "postgres",
+					columns: ["title", "body"],
+					mode: "fullText",
+				},
+			},
+		);
+		expect(listed.total).toBe(2);
+		// The expression a GIN index has to repeat to be used.
+		expect(log.join("\n")).toContain(
+			`to_tsvector('english', coalesce("articles"."title", '')) || to_tsvector('english', coalesce("articles"."body", ''))`,
+		);
+	});
+});

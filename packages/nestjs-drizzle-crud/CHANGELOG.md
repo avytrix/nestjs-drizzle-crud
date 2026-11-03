@@ -58,6 +58,12 @@ Fixes from the 3.7.1 audit. The batch limit now counts the statement the databas
   thousand items.
 - A batch so large that Drizzle's own SQL builder overflows the call stack is the same 400 as
   any other statement past the limit.
+- Full-text search over several columns no longer drops rows that have `NULL` in one of them.
+  The vector was `to_tsvector(cfg, a) || to_tsvector(cfg, b)`, and `x || NULL` is `NULL`, so
+  such a row never matched, in `fullTextSearch()` and in `search.mode: "fullText"` alike. Each
+  column is now wrapped in `coalesce(column, '')` when there is more than one. A GIN index on the
+  old multi-column expression no longer matches the query; recreate it with the `coalesce` (the
+  full-text search page has the exact `CREATE INDEX`). A single column is unchanged.
 
 ### Docs
 

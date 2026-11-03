@@ -1630,8 +1630,15 @@ export abstract class SqlBaseCrudService<
 		// sql.join keeps the column references as bound SQL chunks instead of
 		// stringifying them (which Array#join + sql.raw did, producing invalid
 		// SQL and an injection vector).
+		// With several columns each one is coalesced: `x || NULL` is NULL, so
+		// one NULL column would hide the whole row. A single column stays bare,
+		// so an index on to_tsvector(cfg, col) keeps matching.
 		const vector = sql.join(
-			columns.map((column) => sql`to_tsvector(${config}, ${column})`),
+			columns.map((column) =>
+				columns.length > 1
+					? sql`to_tsvector(${config}, coalesce(${column}, ''))`
+					: sql`to_tsvector(${config}, ${column})`,
+			),
 			sql` || `,
 		);
 		return { vector, query: sql`${parse}(${config}, ${term})` };

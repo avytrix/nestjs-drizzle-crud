@@ -281,15 +281,19 @@ export function describeDialectContract(setup: DialectSetup): void {
 				400,
 			);
 			expect(error.message).toContain(`takes at most ${limit}`);
-			// Five values a row (three columns and two timestamps): just over.
-			const many = range(Math.floor(limit / 5) + 1).map((n) => ({
-				title: `T${n}`,
-				author_id: 1,
-				views: 0,
-			}));
-			const refused = await expectStatus(posts.massCreate(many), 400);
-			expect(refused.message).toContain(`takes at most ${limit}`);
-			expect(await posts.count()).toBe(12);
+			// Without RETURNING (MySQL) a massCreate with generated keys inserts
+			// row by row, so only the dialects with one multi-row INSERT refuse it.
+			if (setup.dialect !== "mysql") {
+				// Five values a row (three columns and two timestamps): just over.
+				const many = range(Math.floor(limit / 5) + 1).map((n) => ({
+					title: `T${n}`,
+					author_id: 1,
+					views: 0,
+				}));
+				const refused = await expectStatus(posts.massCreate(many), 400);
+				expect(refused.message).toContain(`takes at most ${limit}`);
+				expect(await posts.count()).toBe(12);
+			}
 			// MySQL takes a few seconds over two statements of 65,000 values.
 		}, 60_000);
 
