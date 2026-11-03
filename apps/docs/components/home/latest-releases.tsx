@@ -4,6 +4,12 @@ import { ArrowRight } from "lucide-react";
 // Newest first; the top banner announces RELEASES[0].
 export const RELEASES = [
 	{
+		version: "3.7.2",
+		date: "Nov 3, 2026",
+		title: "Batch limits per statement, tenant-safe keys",
+		body: "The bound parameter limit is checked on the real statement, against each database's own limit: 65,535 on PostgreSQL and MySQL, 32,766 on SQLite, 100 on D1. A belongs-to key must point inside the caller's tenant, SQLite type errors are 400s, caseSensitive works on SQLite, and idleTimeout works on MySQL.",
+	},
+	{
 		version: "3.7.1",
 		date: "Nov 2, 2026",
 		title: "Clearer scoped upsert error on MySQL",

@@ -73,7 +73,9 @@ export const posts = sqliteTable('posts', {
 | Filters, relation filters, sort, select, relations, counts | Yes |
 | Writes read back with `RETURNING` | Yes, `sql.useReturning` defaults to `true` |
 | `search` in `ilike` mode, `ilike`, `iContains` and friends | `LIKE ... ESCAPE '\'`, so `%`, `_` and `\` in the term match literally |
-| Case-sensitive `like`, `contains`, `startsWith` | SQLite's `LIKE` ignores ASCII case, so these match case-insensitively for ASCII letters, as on MySQL's default collations |
+| `contains`, `startsWith`, `endsWith` with `sql.caseSensitive: true` | Case-sensitive since 3.7.2: they compile to `GLOB`, with `*`, `?` and `[` in the value matched literally |
+| `like` | Plain `LIKE`, which ignores ASCII case on SQLite whatever `sql.caseSensitive` says |
+| Bound parameters per statement | 32,766 (libSQL and SQLite's default `SQLITE_MAX_VARIABLE_NUMBER`), 100 on D1. Past it is a 400 before the statement runs |
 | `upsert`, `massUpsert` | `ON CONFLICT DO UPDATE`, including the tenant scope guard |
 | Nested creates, bulk writes, attach / detach / sync | Yes on libSQL; `TransactionException` on D1 and synchronous drivers |
 | Optimistic locking, tenant scope, soft delete, events | Yes |
@@ -81,7 +83,11 @@ export const posts = sqliteTable('posts', {
 | `lock`, `forNoKeyUpdate` | 400. SQLite has no row locks |
 | `arrayContains`, `arrayOverlaps`, `jsonContains` | 400 |
 
-Driver errors map to HTTP the same way as on the other dialects: a `UNIQUE` or primary key violation is a 409 `DuplicateEntityException`, a `FOREIGN KEY` violation is a 400 on a write and a 409 on a delete, and `NOT NULL` or `CHECK` is a 400 `ValidationFailedException`. SQLite does not report the duplicate value, so the message names the column only.
+Driver errors map to HTTP the same way as on the other dialects: a `UNIQUE` or primary key violation is a 409 `DuplicateEntityException`, a `FOREIGN KEY` violation is a 400 on a write and a 409 on a delete, and `NOT NULL` or `CHECK` is a 400 `ValidationFailedException`. Since 3.7.2 so are the type errors: a `STRICT` table refusing `"abc"` for an integer column (extended code 3091) and `SQLITE_MISMATCH` (`"abc"` for an `INTEGER PRIMARY KEY`). SQLite does not report the duplicate value, so the message names the column only.
+
+## How many values can one SQLite statement bind?
+
+32,766 on SQLite and libSQL, the default `SQLITE_MAX_VARIABLE_NUMBER`, and 100 on Cloudflare D1. The service counts the bound parameters of every statement and answers one past the limit with a 400 that names both numbers, instead of the driver's `too many SQL variables` (a 500). It tells D1 apart by the Drizzle instance you pass. A `massCreate` of 2,000 rows with 20 columns binds 40,000 values, so split it in two on SQLite. If your SQLite build allows more, override the protected `bindLimit(db)` method.
 
 ## How do I use Cloudflare D1?
 
@@ -112,7 +118,7 @@ The single-row methods (`create`, `update`, `upsert`, `softDelete`, `restore`, `
     They run in one interactive transaction with a savepoint per item, so a failing item can be named and everything rolled back. D1 has no interactive transactions, only `batch()`, so the package refuses those calls with a clear error instead of writing half a batch.
   </Accordion>
   <Accordion title="Is LIKE case-sensitive on SQLite?">
-    No, not for ASCII letters. SQLite's `LIKE` ignores ASCII case, so the case-sensitive pattern operators match `Ann` and `ann` alike. Letters outside ASCII are compared as they are.
+    No, not for ASCII letters: SQLite's `LIKE` matches `Ann` and `ann` alike. That is why, since 3.7.2, `contains`, `startsWith` and `endsWith` use `GLOB` when `sql.caseSensitive` is `true`, which compares case exactly. The `like` operator and the `i` forms stay `LIKE`.
   </Accordion>
 </Accordions>
 

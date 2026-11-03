@@ -6,7 +6,7 @@ Deterministic rules for AI agents working in this repo. Read this first.
 
 Turborepo + pnpm monorepo. One published library, two private apps:
 
-- `packages/nestjs-drizzle-crud` (npm: `nestjs-drizzle-crud`), the only public artifact. Built with `tsc` to `dist/`.
+- `packages/nestjs-drizzle-crud` (npm: `@avytrix/nestjs-drizzle-crud`), the only public artifact. Built with `tsc` to `dist/`.
 - `apps/docs`, Next.js 16 + Fumadocs, static-exported to GitHub Pages at [crud.avytrix.dev](https://crud.avytrix.dev). This is what `pnpm dev` runs, on **:3000**. Its own rules live in `apps/docs/AGENTS.md`.
 - `apps/api`, an example NestJS 11 app that doubles as the e2e testbed. `pnpm dev:api`, on **:4000**. `pnpm dev:all` runs both. Its e2e suite is Playwright over real HTTP against **PGlite** (Postgres compiled to WASM, in-process), so it needs no container, no credentials and no browser download.
 
@@ -82,7 +82,7 @@ Other invariants:
 8. **Do not swap the toolchain.** `ts-jest` is incompatible with TypeScript 7, typescript-eslint caps below it, and `apps/docs` pins 5.9 for Fumadocs Twoslash. These are worked around on purpose; do not "fix" them by downgrading.
 9. **Comment deliberate no-ops.** A swallowed error or an intentionally empty hook gets a line saying why. Never silently discard an error anywhere else.
 10. **Every behaviour change carries a test.** Unit tests for logic, an e2e assertion in `apps/api/e2e` for anything that has to be true over real HTTP against real Postgres. The e2e suite runs everywhere with no setup, so "I could not test the database path" is not a reason to skip it.
-11. **The e2e suite runs on PGlite, never on Docker and never on a real database.** `apps/api/playwright.config.ts` pins `DATABASE_URL=pglite` for the server it boots, which overrides anything in the shell or in `apps/api/.env`, so the suite cannot reach a real server. Do not add a container, a service, a compose file or a `DATABASE_URL` secret to make tests pass; extend the fixture in `apps/api/src/db/pglite.ts` instead. A real connection string stays a `pnpm dev:api` concern only.
+11. **The e2e suite runs on PGlite, never on Docker and never on a real database.** `apps/api/playwright.config.ts` pins `DATABASE_URL=pglite` for the server it boots, which overrides anything in the shell or in `apps/api/.env`, so the suite cannot reach a real server. Do not add a container, a service, a compose file or a `DATABASE_URL` secret to make tests pass; extend the fixture in `apps/api/src/db/pglite.ts` instead. A real connection string stays a `pnpm dev:api` concern only. PGlite silently returns no rows for a statement with more than 32,767 bound parameters (real Postgres takes 65,535), so a spec on it stays under 32,767 bound values, or only asserts the 400 the bound parameter check throws before the statement runs.
 12. **Changelog and docs on every change (mandatory, see below).** No feature or fix is done until the changelog and the relevant docs are updated in the same change. After writing them you re-read and humanize the prose, and make it SEO and AEO friendly.
 
 ## Changelog and docs, mandatory on every change, never skip

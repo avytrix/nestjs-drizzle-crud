@@ -25,7 +25,7 @@ Every option, with the default `normalizeConfig` fills in ([`drizzle-crud.module
     dialect: { type: '"postgresql" | "mysql" | "sqlite"', required: true, description: "The database dialect. sqlite covers SQLite, libSQL (Turso) and Cloudflare D1." },
     connectionString: { type: "string", description: "The module builds the connection (postgres on PostgreSQL, a mysql2 pool on MySQL) and closes it on shutdown. Not for sqlite." },
     "connection.poolSize": { type: "number", description: "Most connections in the pool the module builds: postgres-js max, mysql2 connectionLimit. Unset, the driver default applies." },
-    "connection.idleTimeout": { type: "number", description: "Seconds an unused connection stays open: postgres-js idle_timeout, mysql2 idleTimeout (the module converts it to milliseconds)." },
+    "connection.idleTimeout": { type: "number", description: "Seconds an unused connection stays open: postgres-js idle_timeout, mysql2 idleTimeout (the module converts it to milliseconds and sets maxIdle one below the pool size, so mysql2 actually closes them)." },
     "connection.ssl": { type: 'boolean | "require" | "allow" | "prefer" | "verify-full" | object', description: "TLS. true turns it on with certificate checks, an object is handed to the driver as Node tls options. The string modes are postgres-js only; on MySQL they are a startup error." },
     db: { type: "Drizzle instance", description: "A Drizzle instance you built yourself, any dialect. You own its lifecycle." },
     schema: { type: "Record<string, unknown>", description: "Your Drizzle schema, passed to drizzle() when the module builds the connection from connectionString." },
@@ -109,10 +109,12 @@ DrizzleCrudModule.forRoot({
 | Option | postgres-js | mysql2 |
 | --- | --- | --- |
 | `poolSize` | `max` | `connectionLimit` |
-| `idleTimeout` (seconds) | `idle_timeout` | `idleTimeout`, in milliseconds |
+| `idleTimeout` (seconds) | `idle_timeout` | `idleTimeout`, in milliseconds, plus `maxIdle` one below the pool size |
 | `ssl: true` | `ssl: true` | `ssl: {}`, which mysql2 verifies by default |
 | `ssl: { ... }` | passed as is | passed as is |
 | `ssl: "require"` and the other modes | passed as is | startup error |
+
+mysql2 only closes idle connections when `maxIdle` is below `connectionLimit`, and `maxIdle` defaults to `connectionLimit`, so before 3.7.2 `idleTimeout` did nothing on MySQL. The module now sets `maxIdle` to the pool size minus one (9 with mysql2's default of 10) whenever you give `idleTimeout`. One consequence of how mysql2 works: when every connection in the pool is idle, it closes one of them within about a second, and the rest after `idleTimeout`. With `poolSize: 1` the single connection closes about a second after it goes idle.
 
 `connection` only applies to a connection the module builds. With `db`, configure the driver yourself. Anything else the driver takes, such as a statement timeout, also means building it yourself.
 

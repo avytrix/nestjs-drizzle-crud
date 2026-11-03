@@ -287,7 +287,7 @@ export class UsersController {
 |---|---|---|
 | `dialect` | `'postgresql' \| 'mysql' \| 'sqlite'` | **Required.** Database dialect. `'sqlite'` covers SQLite, libSQL and Cloudflare D1. |
 | `connectionString` | `string` | Connection string. The module builds the connection (PostgreSQL with `postgres`, MySQL with `mysql2`). |
-| `connection` | `{ poolSize?, idleTimeout?, ssl? }` | Pool size, idle timeout (seconds) and TLS for the connection built from `connectionString`. |
+| `connection` | `{ poolSize?, idleTimeout?, ssl? }` | Pool size, idle timeout (seconds) and TLS for the connection built from `connectionString`. On MySQL an idle timeout also sets mysql2's `maxIdle` one below the pool size, so idle connections really close. |
 | `db` | `Drizzle instance` | Alternatively, pass a Drizzle instance you built yourself (any dialect). |
 | `schema` | `Record<string, unknown>` | Drizzle schema, used when building from `connectionString`. |
 | `defaults.softDelete` | `boolean` | Enable soft delete for all entities (default `true`). |
@@ -334,7 +334,8 @@ DrizzleCrudModule.forRootAsync({
 ```
 
 `forRootAsync` also takes `useClass` or `useExisting` with a class that
-implements `DrizzleCrudOptionsFactory`:
+implements `DrizzleCrudOptionsFactory`. Give exactly one of the three; more than
+one is a startup error:
 
 ```typescript
 @Injectable()
@@ -542,7 +543,7 @@ await service.findAll({
 | `in` / `notIn` | `IN (...)` / `NOT IN (...)` |
 | `between` | `BETWEEN a AND b`, `[from, to]` |
 | `isNull` / `isNotNull` | `true` / `"true"` gives `IS NULL` / `IS NOT NULL`, `false` / `"false"` the opposite |
-| `startsWith` / `endsWith` / `contains` | escaped `LIKE`, case-insensitive unless `sql.caseSensitive` |
+| `startsWith` / `endsWith` / `contains` | escaped `LIKE`, case-insensitive unless `sql.caseSensitive` (then `GLOB` on SQLite, whose `LIKE` ignores case) |
 | `iStartsWith` / `iEndsWith` / `iContains` | escaped `ILIKE` (`LIKE` on MySQL), always case-insensitive |
 | `arrayContains` / `arrayOverlaps` | PostgreSQL arrays, `@>` / `&&` |
 | `jsonContains` | PostgreSQL `jsonb`, `@>` |
@@ -940,6 +941,11 @@ inside a savepoint that is rolled back, and the response body lists only them:
 
 `bulkMode: 'perItem'` runs the single-row method per item instead, as in 3.3.
 
+One statement may bind at most 65,535 values on PostgreSQL and MySQL, 32,766 on
+SQLite and 100 on Cloudflare D1. The service counts the real statement (every
+column, version check and OR'd list included) and answers one past the limit
+with a 400 that names both numbers, before it runs. Split larger batches.
+
 ---
 
 ## Upsert
@@ -1044,7 +1050,9 @@ await docs.findAll({}, {}, { context: { tenantId: 7 } });
 
 A missing context value is a 403 (`MissingScopeException`), never an unscoped
 query. A resolver that returns `null`, or `skipScope: true`, runs unscoped on
-purpose.
+purpose. A belongs-to key that a write sets must point at a row of the same
+tenant when the related table has the scope columns: another tenant's row is the
+same 400 `ForeignKeyViolationException` as a missing one.
 
 ---
 

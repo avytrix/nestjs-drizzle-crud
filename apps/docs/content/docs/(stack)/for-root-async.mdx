@@ -7,8 +7,8 @@ icon: Workflow
 `DrizzleCrudModule.forRootAsync({ imports, inject, useFactory })` is the async form of `forRoot` for NestJS Drizzle apps that read their config from `ConfigService`. Nest calls your `useFactory` at startup with the providers listed in `inject`, and the object it returns (or resolves to) is the same `DrizzleCrudConfig` that [`forRoot`](/docs/for-root) takes, with the same defaults filled in. Since 3.7.0 it also takes `useClass` or `useExisting`, the usual Nest way to build options from a class.
 
 <Callout title="Give exactly one of useFactory, useClass or useExisting">
-  With none of them, `forRootAsync` throws when the module is declared. When `useFactory` is set,
-  it wins over the other two.
+  With none of them, or with more than one, `forRootAsync` throws when the module is declared,
+  and the message names what it got. Before 3.7.2 `useFactory` silently won over the other two.
 </Callout>
 
 ## What does forRootAsync take?

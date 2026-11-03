@@ -85,7 +85,7 @@ On MySQL, `ER_DUP_ENTRY` (1062) is a 409 `DuplicateEntityException`, `ER_NO_REFE
 | 1292 | date or time with an invalid format |
 | 3819 | check constraint failed |
 
-On SQLite the constraint kind decides: `UNIQUE` or `PRIMARY KEY` is a 409 `DuplicateEntityException` (SQLite names the column but not the value), `FOREIGN KEY` is a 400 on create or update and a 409 on delete, and `NOT NULL` or `CHECK` is a 400 `ValidationFailedException`. libSQL and better-sqlite3 report the kind as an extended code such as `SQLITE_CONSTRAINT_UNIQUE`; D1 only in the message, which is read instead.
+On SQLite the constraint kind decides: `UNIQUE` or `PRIMARY KEY` is a 409 `DuplicateEntityException` (SQLite names the column but not the value), `FOREIGN KEY` is a 400 on create or update and a 409 on delete, and `NOT NULL` or `CHECK` is a 400 `ValidationFailedException`. libSQL and better-sqlite3 report the kind as an extended code such as `SQLITE_CONSTRAINT_UNIQUE`; D1 only in the message, which is read instead. Since 3.7.2 two type errors are a 400 `ValidationFailedException` too: a `STRICT` table refusing a value of the wrong type (extended code 3091, which libSQL reports as `UNKNOWN_SQLITE_ERROR_3091`, with the column name), and `SQLITE_MISMATCH`, such as `"abc"` for an `INTEGER PRIMARY KEY`.
 
 Any other error passes through unchanged.
 
@@ -96,6 +96,7 @@ Plain Nest `BadRequestException`s for input the service cannot use:
 - an unknown filter column or operator, an operator on the wrong column type, or an invalid date,
 - an invalid cursor, or a `findOne` with no condition,
 - an unknown `fullTextSearch` column,
+- a statement with more bound parameters than the database takes (65,535 on PostgreSQL and MySQL, 32,766 on SQLite, 100 on D1), see [how large a bulk call can be](/docs/bulk-operations#how-large-can-a-bulk-call-be),
 - anything outside an [allowlist](/docs/allowlists),
 - anything [`parseQuery`](/docs/query-parsing) cannot read.
 

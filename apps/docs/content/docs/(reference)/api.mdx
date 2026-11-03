@@ -168,6 +168,7 @@ These are not callable from outside the service. Override the hooks in your subc
 | `mapCreateDtoToEntity` | `(data: CreateDto) => Record<string, any>` | A shallow copy of `data`. |
 | `mapUpdateDtoToEntity` | `(data: UpdateDto) => Record<string, any>` | A shallow copy of `data`. |
 | `executeSqlTransaction` | `<R>(operation: (tx) => Promise<R>, existingTransaction?) => Promise<R>` | Runs `operation` in `existingTransaction` when given, otherwise in a new `db.transaction`. |
+| `bindLimit` | `(db) => { limit: number; name: string }` | The most bound parameters one statement may carry, and the database's name for the 400: PostgreSQL and MySQL 65,535, SQLite 32,766, Cloudflare D1 100. Since 3.7.2. |
 | `getEntityName` | `() => string` | The Drizzle table name, used in error messages. |
 | `config` | `SqlCrudConfig` | The merged entity config, including `db` and `table` for hand-written queries. |
 

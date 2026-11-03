@@ -17,6 +17,59 @@ The 3.0.x line is PostgreSQL-first. MySQL-specific paths (non-`RETURNING` restor
 3.3.1, 3.4.0, 3.5.0 and 3.5.2 were tagged but never published to npm. Their changes reached npm
 in 3.5.1 (3.3.1 to 3.5.0) and 3.6.0 (3.5.2). The unscoped `nestjs-drizzle-crud` stops at 3.3.0.
 
+## [3.7.2] - 2026-11-03
+
+Fixes from the 3.7.1 audit. The batch limit now counts the statement the database receives.
+
+### Changed
+
+- The bound parameter limit is checked per statement, against the database's own limit:
+  65,535 on PostgreSQL and MySQL, 32,766 on SQLite and libSQL, 100 on Cloudflare D1. The service
+  counts the parameters of every statement as Drizzle builds it, so two OR'd `IN` lists, the
+  version checks of a `massUpdate` with `expectedVersions`, the children of a nested create and
+  the targets of `attach` and `sync` all count, and a statement past the limit is a 400 that
+  names its count and the limit before it runs. Before, each input list was checked against
+  60,000 on its own: some of those calls still ended in a 500, a `massCreate` that would have fit
+  on PostgreSQL was refused (it counted four extra values per row), and on SQLite the cap sat
+  above the database's limit. The message changes from "Too many values in one call (n); the
+  limit is 60000" to "Too many values in one statement: n bound parameters, and PostgreSQL takes
+  at most 65535". `bindLimit(db)` is protected, for a server built with another limit.
+  `MAX_BATCH_PARAMETERS`, `assertBatchSize` and `insertParameters` stay for compatibility but are
+  deprecated and no longer used.
+- On a scoped entity, `create`, `update`, `upsert` and the mass writes check every belongs-to key
+  they set against the caller's tenant when the related table has the scope columns, the way
+  `attach` checks its targets: one `SELECT` per relation for the whole call. A key to another
+  tenant's row is the same 400 `ForeignKeyViolationException` as a key to a missing row, so the
+  answer no longer tells them apart, and a missing row is refused even without a database
+  foreign key. Calls with `skipScope: true` and related tables without the scope columns are
+  not checked.
+- On SQLite, `contains`, `startsWith` and `endsWith` with `sql.caseSensitive: true` compile to
+  `GLOB` and match case exactly. They used `LIKE`, which ignores ASCII case. The default
+  (case-insensitive) and the `like` operator are unchanged.
+- On MySQL, `connection.idleTimeout` also sets mysql2's `maxIdle` to one below the pool size.
+  mysql2 only reaps idle connections when `maxIdle` is below `connectionLimit`, so the timeout
+  had no effect before.
+- `forRootAsync` with more than one of `useFactory`, `useClass` and `useExisting` throws at
+  startup and names them. Before, `useFactory` won and the class was ignored.
+
+### Fixed
+
+- On SQLite, a `STRICT` table refusing a value of the wrong type (extended code 3091, which
+  libSQL reports as `UNKNOWN_SQLITE_ERROR_3091`) and `SQLITE_MISMATCH` (`"abc"` for an
+  `INTEGER PRIMARY KEY`) are a 400 `ValidationFailedException`, not a 500. The dialect contract
+  checks the same mapping on every dialect.
+- Filters inside `options.counts` get the same 32 level depth cap as a `findAll` filter. A very
+  deep one was a 500 (stack overflow).
+- The filter depth check no longer overflows the call stack on an `IN` list of a few hundred
+  thousand items.
+- A batch so large that Drizzle's own SQL builder overflows the call stack is the same 400 as
+  any other statement past the limit.
+
+### Docs
+
+- `AGENTS.md` names the package `@avytrix/nestjs-drizzle-crud`, and says that PGlite, the engine
+  of the unit and e2e specs, returns no rows above 32,767 bound parameters.
+
 ## [3.7.1] - 2026-11-02
 
 ### Fixed
