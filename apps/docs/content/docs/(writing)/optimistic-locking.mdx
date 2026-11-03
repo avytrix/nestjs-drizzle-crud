@@ -111,7 +111,7 @@ A `StaleVersionException`, which extends Nest's `ConflictException`, so the HTTP
 }
 ```
 
-The check runs twice. The existence check compares the version before anything is written, and the `UPDATE` or `DELETE` itself carries `AND version = <expected>`, so a write that lands between the two is also caught.
+The `UPDATE` or `DELETE` itself carries `AND version = <expected>`, so a write that lands between a read and the write is always caught. When that statement changes no row, the service reads the row once to give the right answer: 404 when it is not there (or belongs to another tenant), 409 when it is at another version. When your service runs a before hook, or a before event is wired, the version is also compared before anything is written, so the hook never runs for a stale write.
 
 ## What if the client sends no version?
 

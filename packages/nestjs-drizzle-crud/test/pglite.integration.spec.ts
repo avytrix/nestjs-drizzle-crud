@@ -26,6 +26,7 @@ import {
 	uuid,
 	varchar,
 } from "drizzle-orm/pg-core";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { Test } from "@nestjs/testing";
 import { SqlBaseCrudService } from "../src/core/abstract/sql-base-crud.service";
@@ -1241,7 +1242,7 @@ describe("M04: set-based bulk writes", () => {
 		const svc = postsService(db);
 		reset();
 		await svc.massUpdate([1, 2, 3], { title: "p" }, { bulkMode: "perItem" });
-		expect(statements()).toHaveLength(6);
+		expect(statements()).toHaveLength(3); // one guardless UPDATE per item since 3.8.0
 		const error = await caught(
 			svc.massUpdate([1, 999], { title: "p" }, { bulkMode: "perItem" }),
 		);
@@ -1700,7 +1701,7 @@ describe("M10: relations on writes", () => {
 			{ relations: ["author"] },
 		);
 		expect(updated.author.name).toBe("Cy");
-		expect(verbs(statements())).toEqual(["select", "update", "select"]);
+		expect(verbs(statements())).toEqual(["update", "select"]);
 
 		const upserted = await svc.upsert(
 			{ id: post.id, title: "Up", author_id: 1, status: "draft", views: 1 },
@@ -3419,5 +3420,176 @@ describe("3.8.0 P-06: a stored tsvector column searches as is", () => {
 		expect(log[0]).toContain(
 			`coalesce("pages"."search", ''::tsvector) || to_tsvector('english', coalesce("pages"."title", ''))`,
 		);
+	});
+});
+
+describe("3.8.0 P-03 / F6: single-row writes without the read first", () => {
+	// A row of posts as stored, soft-deleted or not.
+	const stored = async (db: any, id: number) =>
+		(await db.select().from(posts).where(eq(posts.id, id)))[0];
+
+	it("sends one statement per write on the happy path", async () => {
+		const { db, reset, statements } = await countingDb();
+		const svc = postsService(db);
+		const runs: Array<[string, () => Promise<unknown>]> = [
+			["update", () => svc.update(1, { title: "u" })],
+			["softDelete", () => svc.softDelete(2)],
+			["restore", () => svc.restore(2)],
+			["delete", () => svc.delete(3)],
+			["forceDelete", () => svc.forceDelete(4)],
+		];
+		for (const [name, run] of runs) {
+			reset();
+			await run();
+			expect([name, statements().length]).toEqual([name, 1]);
+		}
+		expect((await stored(db, 1)).title).toBe("u");
+		expect(await stored(db, 3)).toBeUndefined();
+		// Versioned and scoped: still one statement, the version in the WHERE.
+		const docsDb = await countingDb();
+		const docs = docsService(docsDb.db);
+		docsDb.reset();
+		const doc = await docs.update(
+			1,
+			{ title: "v2" },
+			{
+				...asTenant(1),
+				expectedVersion: 1,
+			},
+		);
+		expect(doc.version).toBe(2);
+		expect(docsDb.statements()).toHaveLength(1);
+		expect(docsDb.statements()[0]).toMatch(/"docs"\."version" = \$/);
+	});
+
+	it("answers a miss with the guard's 404 or 409", async () => {
+		const db = await freshDb();
+		const svc = postsService(db);
+		expect((await caught(svc.update(999, { title: "x" }))).getStatus()).toBe(
+			404,
+		);
+		expect((await caught(svc.softDelete(999))).getStatus()).toBe(404);
+		expect((await caught(svc.delete(999))).getStatus()).toBe(404);
+		await svc.softDelete(5);
+		// A soft-deleted row is not there for update or a second softDelete.
+		expect((await caught(svc.update(5, { title: "x" }))).getStatus()).toBe(404);
+		expect((await caught(svc.softDelete(5))).getStatus()).toBe(404);
+		expect((await caught(svc.delete(5))).getStatus()).toBe(404);
+		expect(await stored(db, 5)).toBeDefined();
+		// Restore on a live row stays a 404 and writes nothing.
+		const before = await stored(db, 6);
+		expect((await caught(svc.restore(6))).getStatus()).toBe(404);
+		expect(await stored(db, 6)).toEqual(before);
+		// A bad body on a missing row is still the 404, as when the guard ran
+		// first.
+		expect((await caught(svc.update(999, {}))).getStatus()).toBe(404);
+		expect((await caught(svc.update(7, {}))).getStatus()).toBe(400);
+
+		const docs = docsService(db);
+		const stale = await caught(
+			docs.update(1, { title: "x" }, { ...asTenant(1), expectedVersion: 7 }),
+		);
+		expect(stale).toBeInstanceOf(StaleVersionException);
+		expect(stale.getStatus()).toBe(409);
+		expect(
+			(
+				await caught(
+					docs.update(
+						99,
+						{ title: "x" },
+						{ ...asTenant(1), expectedVersion: 1 },
+					),
+				)
+			).getStatus(),
+		).toBe(404);
+		// Another tenant's row is a 404, not a 409.
+		expect(
+			(
+				await caught(
+					docs.update(
+						4,
+						{ title: "x" },
+						{ ...asTenant(1), expectedVersion: 7 },
+					),
+				)
+			).getStatus(),
+		).toBe(404);
+		const staleDelete = await caught(
+			docs.delete(2, { ...asTenant(1), expectedVersion: 3 }),
+		);
+		expect(staleDelete).toBeInstanceOf(StaleVersionException);
+		expect(
+			(
+				await caught(docs.softDelete(2, { ...asTenant(1), expectedVersion: 3 }))
+			).getStatus(),
+		).toBe(409);
+	});
+
+	it("keeps the guard first when a before hook can observe the row", async () => {
+		const { db, reset, statements } = await countingDb();
+		const seen: unknown[] = [];
+		class Hooked extends Svc {
+			protected override async beforeUpdate(id: any, data: any) {
+				seen.push(id);
+				return data;
+			}
+		}
+		const svc = new Hooked({
+			...base(db, posts),
+			relations: { author: { table: authors, localKey: "author_id" } },
+		});
+		reset();
+		await svc.update(1, { title: "h" });
+		expect(verbs(statements())).toEqual(["select", "update"]);
+		// The hook never runs for a row that is not there.
+		expect((await caught(svc.update(999, { title: "h" }))).getStatus()).toBe(
+			404,
+		);
+		expect(seen).toEqual([1]);
+		// A before event is observable too.
+		const bus = new CrudEventBus();
+		const events: string[] = [];
+		bus.subscribe({ beforeWrite: (e) => void events.push(e.operation) });
+		const evented = postsService(db, { events: bus });
+		expect((await caught(evented.softDelete(999))).getStatus()).toBe(404);
+		expect(events).toEqual([]);
+		reset();
+		await evented.softDelete(1, { skipEvents: true });
+		expect(statements()).toHaveLength(1);
+	});
+
+	it("does not write a row a hook soft-deleted between the guard and the write", async () => {
+		const db = await freshDb();
+		const trash = (id: number) =>
+			db.update(posts).set({ deleted_at: new Date() }).where(eq(posts.id, id));
+		class Racing extends Svc {
+			protected override async beforeUpdate(id: any, data: any) {
+				await trash(id);
+				return data;
+			}
+			protected override async beforeDelete(id: any) {
+				await trash(id);
+			}
+			protected override async beforeRestore(id: any) {
+				await db
+					.update(posts)
+					.set({ deleted_at: null })
+					.where(eq(posts.id, id));
+			}
+		}
+		const svc = new Racing(base(db, posts));
+		const before = await stored(db, 8);
+		expect((await caught(svc.update(8, { title: "lost" }))).getStatus()).toBe(
+			404,
+		);
+		expect((await stored(db, 8)).title).toBe(before.title);
+		// delete() of a row trashed meanwhile does not hard-delete it.
+		expect((await caught(svc.delete(9))).getStatus()).toBe(404);
+		expect(await stored(db, 9)).toBeDefined();
+		// restore() of a row restored meanwhile writes nothing.
+		await trash(10);
+		const trashed = await stored(db, 10);
+		expect((await caught(svc.restore(10))).getStatus()).toBe(404);
+		expect((await stored(db, 10)).updated_at).toEqual(trashed.updated_at);
 	});
 });

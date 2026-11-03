@@ -37,6 +37,18 @@ same order, with the same errors; the SQL behind it is cheaper.
   200,000 rows went from 24.4 ms to 0.6 ms (`created_at` descending) and from 50.3 ms to 0.5 ms
   (`views` ascending) on PGlite. A sort column the row already carries is no longer selected a
   second time for the cursor. Pages, their order and cursors are unchanged.
+- Single-row writes skip the read first. On PostgreSQL and SQLite, `update`, `softDelete`,
+  `restore`, `delete` and `forceDelete` send one statement whose `WHERE` holds the whole guard
+  (primary key, tenant scope, expected version, soft delete state) and read the row only when
+  nothing came back, to answer with the same 404 or 409 as before. The read still runs first
+  when something a caller can observe sits between it and the write (an overridden `before*`
+  hook, `validateUpdate` or `mapUpdateDtoToEntity`, or a before event), so hooks and events see
+  exactly what they saw before, and on MySQL. A missing row is still a 404 ahead of a bad body.
+- A row soft-deleted between the guard read and the write is no longer written: `update` and
+  `softDelete` only touch a live row, `restore` only a row in the trash, and `delete` no longer
+  hard-deletes a row that was soft-deleted meanwhile (`forceDelete` still does). Such a call is a
+  404 instead of a write, a `false` return or a "Failed to update entity" error, and one whose
+  row vanished with an expected version is a 404 instead of a 409.
 
 ## [3.7.2] - 2026-11-03
 

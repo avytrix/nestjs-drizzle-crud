@@ -1787,6 +1787,50 @@ export abstract class SqlBaseCrudService<
 		return row;
 	}
 
+	// The guard as a check: a 404 when the row is not there for this call, a
+	// 409 when it is at another version than the caller expects.
+	private async guardRow(
+		id: any,
+		options?: SqlOperationOptions,
+	): Promise<void> {
+		const row = await this.findForGuard(id, options);
+		if (!row) throw new EntityNotFoundException(this.getEntityName(), id);
+	}
+
+	// Whether a single write can go without its guard read. The write carries
+	// the guard's whole WHERE, and "no row came back" is then answered by the
+	// guard after the fact, so the read is only needed first when something a
+	// caller can observe runs between the guard and the write: a hook or
+	// mapping a subclass overrides (named in `methods`), or a before event.
+	// Without RETURNING (MySQL) the guard always runs first.
+	private skipsGuard(
+		options: SqlOperationOptions | undefined,
+		...methods: string[]
+	): boolean {
+		if (!this.config.sql?.useReturning) return false;
+		if (this.config.events && !options?.skipEvents) return false;
+		const base = SqlBaseCrudService.prototype as any;
+		return methods.every((name) => (this as any)[name] === base[name]);
+	}
+
+	// Run the part of a guardless write that comes before its statement. An
+	// error there is answered the way the guard would have answered first: a
+	// missing row is still a 404 and a stale version a 409, ahead of a bad
+	// body or key.
+	private async guardOnError<R>(
+		guarded: boolean,
+		id: any,
+		options: SqlOperationOptions | undefined,
+		run: () => Promise<R>,
+	): Promise<R> {
+		try {
+			return await run();
+		} catch (error) {
+			if (!guarded) await this.guardRow(id, options);
+			throw error;
+		}
+	}
+
 	// A 409 when the caller named a version and the row is at another one.
 	protected assertVersion(id: any, actual: unknown, expected: unknown): void {
 		if (expected === undefined || expected === null) return;
@@ -2982,14 +3026,21 @@ export abstract class SqlBaseCrudService<
 		this.checkReadOptions(options);
 		const expected = this.expectedVersionOf(data, options);
 		const opts: SqlOperationOptions = { ...options, expectedVersion: expected };
-		const existing = await this.findForGuard(id, opts);
-		if (!existing) throw new EntityNotFoundException(this.getEntityName(), id);
+		const guarded = !this.skipsGuard(
+			options,
+			"validateUpdate",
+			"mapUpdateDtoToEntity",
+			...(hooks.skipBefore ? [] : ["beforeUpdate"]),
+		);
+		if (guarded) await this.guardRow(id, opts);
 
-		await this.validateUpdate(id, data);
-		const processedData = hooks.skipBefore
-			? data
-			: await this.beforeUpdate(id, data);
-		const entityData = this.prepareUpdate(processedData, opts);
+		const entityData = await this.guardOnError(guarded, id, opts, async () => {
+			await this.validateUpdate(id, data);
+			const processedData = hooks.skipBefore
+				? data
+				: await this.beforeUpdate(id, data);
+			return this.prepareUpdate(processedData, opts);
+		});
 
 		if (this.config.timestamps?.updatedAt) {
 			entityData[this.config.timestamps.updatedAt] = new Date();
@@ -3004,14 +3055,20 @@ export abstract class SqlBaseCrudService<
 			options,
 		);
 		try {
-			await this.assertKeysInScope(db, entityData, opts);
+			await this.guardOnError(guarded, id, opts, () =>
+				this.assertKeysInScope(db, entityData, opts),
+			);
+			// The guard's soft delete predicate rides on the UPDATE, so a row
+			// deleted after the guard read is not written.
 			const [updatedEntity] = await this.updateWhereIn(
 				db,
 				this.withVersionBump(entityData),
 				[id],
 				opts,
+				this.softDeleteScope(opts),
 			);
 			if (!updatedEntity) {
+				await this.guardRow(id, opts);
 				if (expected !== undefined) {
 					throw new StaleVersionException(this.getEntityName(), id);
 				}
@@ -3032,19 +3089,21 @@ export abstract class SqlBaseCrudService<
 		}
 	}
 
-	// UPDATE ... WHERE pk IN (ids) AND <scope> [AND version], returning the
-	// rows in the order of `ids`. Without RETURNING the rows are read back with
-	// one SELECT.
+	// UPDATE ... WHERE pk IN (ids) AND <scope> [AND version] [AND extra],
+	// returning the rows in the order of `ids`. Without RETURNING the rows are
+	// read back with one SELECT.
 	private async updateWhereIn(
 		db: any,
 		set: Record<string, any>,
 		ids: any[],
 		options?: SqlOperationOptions,
+		extra?: any,
 	): Promise<T[]> {
+		const where = this.writeWhere(ids, options);
 		const query = db
 			.update(this.config.table)
 			.set(set)
-			.where(this.writeWhere(ids, options));
+			.where(extra ? and(where, extra) : where);
 		if (this.config.sql?.useReturning) {
 			return this.inIdOrder(await query.returning(), ids);
 		}
@@ -3091,12 +3150,19 @@ export abstract class SqlBaseCrudService<
 		}
 
 		const { transaction, hooks = {} } = options || {};
-		const existing = await this.findForGuard(id, {
+		const live: SqlOperationOptions = {
 			...options,
 			withDeleted: false,
 			onlyDeleted: false,
-		});
-		if (!existing) throw new EntityNotFoundException(this.getEntityName(), id);
+		};
+		if (
+			!this.skipsGuard(
+				options,
+				...(hooks.skipBefore ? [] : ["beforeSoftDelete"]),
+			)
+		) {
+			await this.guardRow(id, live);
+		}
 
 		if (!hooks.skipBefore) await this.beforeSoftDelete(id);
 		await this.emitEvent(
@@ -3107,17 +3173,21 @@ export abstract class SqlBaseCrudService<
 			options,
 		);
 
+		// Only a live row is soft deleted, also when it changed after the guard.
 		const db = this.dbFor(transaction);
 		let updateQuery = db
 			.update(this.config.table)
 			.set(this.softDeleteSet(new Date()))
-			.where(this.writeWhere([id], options));
+			.where(and(this.writeWhere([id], options), this.softDeleteScope(live)));
 
 		if (this.config.sql?.useReturning) updateQuery = updateQuery.returning();
 		const result = await this.runRead(updateQuery);
 		const success = this.wasAffected(result);
-		if (!success && options?.expectedVersion != null) {
-			throw new StaleVersionException(this.getEntityName(), id);
+		if (!success) {
+			await this.guardRow(id, live);
+			if (options?.expectedVersion != null) {
+				throw new StaleVersionException(this.getEntityName(), id);
+			}
 		}
 
 		if (success && !hooks.skipAfter) await this.afterSoftDelete(id);
@@ -3154,12 +3224,16 @@ export abstract class SqlBaseCrudService<
 		const { transaction, hooks = {} } = options || {};
 		// Only a row in the trash can be restored. A live row is a 404, before
 		// any hook or event runs, rather than a write that changes nothing.
-		const existing = await this.findForGuard(id, {
+		const trashed: SqlOperationOptions = {
 			...options,
 			withDeleted: false,
 			onlyDeleted: true,
-		});
-		if (!existing) throw new EntityNotFoundException(this.getEntityName(), id);
+		};
+		if (
+			!this.skipsGuard(options, ...(hooks.skipBefore ? [] : ["beforeRestore"]))
+		) {
+			await this.guardRow(id, trashed);
+		}
 		if (!hooks.skipBefore) await this.beforeRestore(id);
 		await this.emitEvent(
 			"before",
@@ -3169,11 +3243,20 @@ export abstract class SqlBaseCrudService<
 			options,
 		);
 
+		// `deleted_at IS NOT NULL` rides on the UPDATE: a row restored after
+		// the guard read is not written twice.
 		const db = this.dbFor(transaction);
 		const [restoredEntity] = await this.runRead(
-			this.updateWhereIn(db, this.softDeleteSet(null), [id], options),
+			this.updateWhereIn(
+				db,
+				this.softDeleteSet(null),
+				[id],
+				options,
+				this.softDeleteScope(trashed),
+			),
 		);
 		if (!restoredEntity) {
+			await this.guardRow(id, trashed);
 			if (options?.expectedVersion != null && this.config.versionColumn) {
 				throw new StaleVersionException(this.getEntityName(), id);
 			}
@@ -3193,8 +3276,11 @@ export abstract class SqlBaseCrudService<
 
 	async delete(id: any, options?: SqlOperationOptions): Promise<boolean> {
 		const { transaction, hooks = {} } = options || {};
-		const existing = await this.findForGuard(id, options);
-		if (!existing) throw new EntityNotFoundException(this.getEntityName(), id);
+		if (
+			!this.skipsGuard(options, ...(hooks.skipBefore ? [] : ["beforeDelete"]))
+		) {
+			await this.guardRow(id, options);
+		}
 
 		if (!hooks.skipBefore) await this.beforeDelete(id);
 		await this.emitEvent(
@@ -3205,16 +3291,23 @@ export abstract class SqlBaseCrudService<
 			options,
 		);
 
+		// The guard's soft delete predicate rides on the DELETE: delete() only
+		// removes a live row, forceDelete() any row.
 		const db = this.dbFor(transaction);
 		const deleteQuery = db
 			.delete(this.config.table)
-			.where(this.writeWhere([id], options));
+			.where(
+				and(this.writeWhere([id], options), this.softDeleteScope(options)),
+			);
 
 		try {
 			const result = await deleteQuery;
 			const success = this.wasAffected(result);
-			if (!success && options?.expectedVersion != null) {
-				throw new StaleVersionException(this.getEntityName(), id);
+			if (!success) {
+				await this.guardRow(id, options);
+				if (options?.expectedVersion != null) {
+					throw new StaleVersionException(this.getEntityName(), id);
+				}
 			}
 
 			if (success && !hooks.skipAfter) await this.afterDelete(id);
