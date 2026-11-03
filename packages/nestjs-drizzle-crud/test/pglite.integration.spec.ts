@@ -3721,3 +3721,53 @@ describe("3.8.0 P-04 / F4: savepoints only where a failure needs them", () => {
 		expect(await authorsService(db).findOne({ email: "sub@x.io" })).toBeNull();
 	});
 });
+
+describe("3.8.0 P-05 / F5: one UPDATE per distinct SET in massUpdate", () => {
+	// beforeUpdate gives even and odd ids different titles: two SETs.
+	class Parity extends Svc {
+		protected override async beforeUpdate(id: any, data: any) {
+			return { ...data, title: `${data.title}-${id % 2}` };
+		}
+	}
+	const ids = Array.from({ length: 40 }, (_, i) => 40 - i);
+
+	it("sends 2 UPDATEs for 2 distinct SETs over 40 ids, in input order", async () => {
+		const log: string[] = [];
+		const db = await freshDb(log);
+		const svc = new Parity(base(db, posts));
+		await svc.massCreate(
+			Array.from({ length: 10 }, (_, i) => ({
+				title: `Extra ${i}`,
+				author_id: 1,
+				status: "draft",
+				views: 0,
+			})),
+		);
+		log.length = 0;
+		const rows = await svc.massUpdate(ids, { title: "t" });
+		expect(verbs(log)).toEqual(["select", "update", "update"]);
+		expect(log.filter((query) => /savepoint/i.test(query))).toEqual([]);
+		expect(rows.map((row: any) => row.id)).toEqual(ids);
+		expect(rows.map((row: any) => row.title)).toEqual(
+			ids.map((id) => `t-${id % 2}`),
+		);
+	});
+
+	it("still names the failing ids across groups", async () => {
+		const db = await freshDb();
+		class Moves extends Svc {
+			protected override async beforeUpdate(id: any, data: any) {
+				// Ids 1 and 2 point at a missing author, in two different SETs.
+				return { ...data, author_id: id <= 2 ? 90 + id : 1 };
+			}
+		}
+		const svc = new Moves(base(db, posts));
+		const error = await caught(svc.massUpdate([3, 1, 2, 4], { title: "m" }));
+		expect(error).toBeInstanceOf(BulkOperationException);
+		expect((error.getResponse() as any).errors).toEqual([
+			{ id: 1, status: 400, message: expect.any(String) },
+			{ id: 2, status: 400, message: expect.any(String) },
+		]);
+		expect((await svc.find(3))?.title).toBe("Post 3");
+	});
+});

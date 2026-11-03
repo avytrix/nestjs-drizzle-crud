@@ -57,6 +57,14 @@ same order, with the same errors; the SQL behind it is cheaper.
   same statuses and messages. Inside a caller's transaction, or once a before event handed the
   transaction to a subscriber, the savepoints stay, so a failed item does not abort the caller's
   PostgreSQL transaction.
+- `massUpdate` sends one `UPDATE` per distinct SET when `beforeUpdate` returns different data
+  per id, instead of one `UPDATE` and a savepoint pair per id: a hook with two results over 50
+  ids is 5 round trips instead of 155. Rows still come back in the input order, after hooks run
+  in that order, and a failure still names every failing id.
+- On MySQL, `massCreate` of rows with auto-increment keys reads the inserted rows back with one
+  `SELECT ... WHERE id IN (...)` instead of one per row. The inserts stay one per row: MySQL only
+  reports the first id of a multi-row `INSERT`, and InnoDB does not promise the others are
+  consecutive.
 
 ## [3.7.2] - 2026-11-03
 

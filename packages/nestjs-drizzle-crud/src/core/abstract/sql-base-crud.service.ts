@@ -3707,7 +3707,9 @@ export abstract class SqlBaseCrudService<
 	// One multi-row INSERT. Without RETURNING the rows are read back by their
 	// primary keys, which works when the caller supplied them. MySQL only
 	// reports the first auto-increment id of a batch and InnoDB does not
-	// promise the rest are consecutive, so that one case inserts row by row.
+	// promise the rest are consecutive, so that one case inserts row by row,
+	// each INSERT reporting its own id, and reads every row back with one
+	// SELECT, the way insertOne reads one.
 	private async insertMany(
 		db: any,
 		rows: Record<string, any>[],
@@ -3725,9 +3727,36 @@ export abstract class SqlBaseCrudService<
 				options,
 			);
 		}
-		const created: T[] = [];
-		for (const row of rows)
-			created.push(await this.insertOne(db, row, options));
+		const ids: unknown[] = [];
+		for (const row of rows) {
+			const result = await db.insert(this.config.table).values(row);
+			ids.push(row[pk] ?? result?.[0]?.insertId);
+		}
+		return this.readBackCreated(db, ids, options);
+	}
+
+	// The rows insertOne would have read back for `ids`, with one SELECT: the
+	// same columns (options.select), tenant scope and soft delete scope, in
+	// `ids` order. A row that is not there fails the create, as in insertOne.
+	private async readBackCreated(
+		db: any,
+		ids: unknown[],
+		options?: SqlOperationOptions,
+	): Promise<T[]> {
+		const pk = this.config.primaryKey;
+		const base = this.parseSelect(options?.select).base;
+		const fields = this.buildSelectFields(
+			base.length > 0 ? Array.from(new Set([...base, pk])) : base,
+		);
+		const column = this.config.table[pk];
+		const rows = await (fields ? db.select(fields) : db.select())
+			.from(this.config.table)
+			.where(and(inArray(column, ids), ...this.rowScope(options)));
+		const created = this.inIdOrder(rows, ids as any[]);
+		if (created.length < ids.length) throw new Error("Failed to create entity");
+		if (fields && !base.includes(pk)) {
+			for (const row of created) delete (row as Record<string, any>)[pk];
+		}
 		return created;
 	}
 
@@ -3810,36 +3839,40 @@ export abstract class SqlBaseCrudService<
 						: set,
 				);
 
-			let updated: T[];
-			const first = this.fingerprint(sets[0]);
-			if (sets.every((set) => this.fingerprint(set) === first)) {
-				const set = stamp(sets[0]!);
-				updated = await this.runSet(
-					tx,
-					message,
-					(sp) => this.updateWhereIn(sp, set, unique, opts),
-					unique.map((id) => ({
-						id,
-						run: (sp: any) => this.updateWhereIn(sp, set, [id], opts),
-					})),
-					"write",
-				);
-			} else {
-				// A beforeUpdate hook returned different data per id, which one SET
-				// cannot express, so each row gets its own UPDATE.
-				const rows = await this.eachItem(
-					unique.map((id, i) => ({
-						id,
-						run: () =>
-							this.savepoint(tx, (sp) =>
-								this.updateWhereIn(sp, stamp(sets[i]!), [id], opts),
-							),
-					})),
-					message,
-					"write",
-				);
-				updated = rows.flat();
-			}
+			// One UPDATE per distinct SET: a single one when every id gets the same
+			// data, one per group when a beforeUpdate hook returned different data
+			// per id. The groups run as one set statement, so a failure is replayed
+			// id by id from before the first of them, as before.
+			const groups = new Map<
+				string,
+				{ set: Record<string, any>; ids: any[] }
+			>();
+			unique.forEach((id, i) => {
+				const key = this.fingerprint(sets[i]);
+				const group = groups.get(key);
+				if (group) group.ids.push(id);
+				else groups.set(key, { set: stamp(sets[i]!), ids: [id] });
+			});
+			const written = await this.runSet(
+				tx,
+				message,
+				async (sp) => {
+					const rows: T[] = [];
+					for (const group of groups.values()) {
+						rows.push(
+							...(await this.updateWhereIn(sp, group.set, group.ids, opts)),
+						);
+					}
+					return rows;
+				},
+				unique.map((id, i) => ({
+					id,
+					run: (sp: any) => this.updateWhereIn(sp, stamp(sets[i]!), [id], opts),
+				})),
+				"write",
+			);
+			const updated =
+				groups.size > 1 ? this.inIdOrder(written, unique) : written;
 			this.assertAllWritten(unique, updated, message, options);
 
 			if (!hooks.skipAfter) {
