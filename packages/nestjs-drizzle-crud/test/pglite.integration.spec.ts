@@ -9,7 +9,7 @@
  */
 
 import { PGlite } from "@electric-sql/pglite";
-import { afterAll, describe, expect, it, jest } from "@jest/globals";
+import { afterAll, afterEach, describe, expect, it, jest } from "@jest/globals";
 import { BadRequestException, HttpException } from "@nestjs/common";
 import {
 	bigint,
@@ -271,15 +271,25 @@ INSERT INTO docs (tenant_id, title, slug) VALUES
 INSERT INTO doc_notes (doc_id, tenant_id, body) VALUES (1, 1, 'n1'), (4, 2, 'n4');
 `;
 
-// Every database is closed after the run, so Jest exits without open handles.
+// A test's own databases are closed when it ends, so a hundred PGlite
+// instances never sit in memory at once; the shared one is closed after the
+// run, so Jest exits without open handles.
 const clients: PGlite[] = [];
+const kept: PGlite[] = [];
+afterEach(async () => {
+	await Promise.all(clients.splice(0).map((client) => client.close()));
+});
 afterAll(async () => {
-	await Promise.all(clients.map((client) => client.close()));
+	await Promise.all(kept.map((client) => client.close()));
 });
 
-async function freshDb(log?: string[], params?: unknown[][]): Promise<any> {
+async function freshDb(
+	log?: string[],
+	params?: unknown[][],
+	keep = false,
+): Promise<any> {
 	const client = await PGlite.create();
-	clients.push(client);
+	(keep ? kept : clients).push(client);
 	await client.exec(DDL);
 	await client.exec(SEED);
 	return drizzle(
@@ -316,7 +326,7 @@ async function countingDb() {
 // Read-only tests share one database. Anything that writes calls freshDb().
 let shared: Promise<any> | undefined;
 function sharedDb(): Promise<any> {
-	shared ??= freshDb();
+	shared ??= freshDb(undefined, undefined, true);
 	return shared;
 }
 
