@@ -11,6 +11,7 @@ import { afterAll, describe, expect, it } from "@jest/globals";
 import { type Client, createClient } from "@libsql/client";
 import { Test } from "@nestjs/testing";
 import { entityKind, sql } from "drizzle-orm";
+import { drizzle as drizzleD1 } from "drizzle-orm/d1";
 import { drizzle } from "drizzle-orm/libsql";
 import {
 	integer,
@@ -77,7 +78,7 @@ const DDL = [
 		name text NOT NULL,
 		email text NOT NULL UNIQUE,
 		created_at integer, updated_at integer, deleted_at integer
-	)`,
+	) STRICT`,
 	`CREATE TABLE posts (
 		id integer PRIMARY KEY AUTOINCREMENT,
 		title text NOT NULL,
@@ -85,16 +86,16 @@ const DDL = [
 		views integer NOT NULL,
 		score integer,
 		created_at integer, updated_at integer, deleted_at integer
-	)`,
+	) STRICT`,
 	`CREATE TABLE tags (
 		id integer PRIMARY KEY AUTOINCREMENT,
 		name text NOT NULL UNIQUE
-	)`,
+	) STRICT`,
 	`CREATE TABLE post_tags (
 		post_id integer NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
 		tag_id integer NOT NULL REFERENCES tags(id),
 		PRIMARY KEY (post_id, tag_id)
-	)`,
+	) STRICT`,
 	`CREATE TABLE docs (
 		id integer PRIMARY KEY AUTOINCREMENT,
 		tenant_id integer NOT NULL,
@@ -102,7 +103,7 @@ const DDL = [
 		slug text NOT NULL UNIQUE,
 		version integer NOT NULL DEFAULT 1,
 		created_at integer, updated_at integer, deleted_at integer
-	)`,
+	) STRICT`,
 ];
 
 const clients: Client[] = [];
@@ -270,6 +271,129 @@ describe("sqlite: drivers without interactive transactions fail clearly", () => 
 		expect(
 			svc.toClientError(d1("NOT NULL constraint failed: authors.name")),
 		).toMatchObject({ status: 400 });
+	});
+});
+
+describe("sqlite: the bound parameter limit (3.7.2)", () => {
+	const args = (n: number) => Array.from({ length: n }, (_, i) => i);
+	const inList = (n: number) =>
+		`select count(*) as n from tags where id in (${args(n)
+			.map(() => "?")
+			.join(",")})`;
+
+	it("is libSQL's own: 32,766 values run, 32,767 fail in the database", async () => {
+		const db = await emptyDb();
+		const client: Client = db.$client;
+		const ok = await client.execute({
+			sql: inList(32_766),
+			args: args(32_766),
+		});
+		expect(Number(ok.rows[0]?.n)).toBe(0);
+		await expect(
+			client.execute({ sql: inList(32_767), args: args(32_767) }),
+		).rejects.toThrow(/too many SQL variables/);
+	});
+
+	it("is a 400 from the service before the statement reaches libSQL", async () => {
+		const { posts: svc } = await fresh();
+		const error = await expectStatus(
+			svc.findAll({ id: { in: args(40_000) } }),
+			400,
+		);
+		expect(error.message).toBe(
+			"Too many values in one statement: 40001 bound parameters, and SQLite takes at most 32766. Split the batch.",
+		);
+	});
+
+	it("is 100 on Cloudflare D1", async () => {
+		const bound: number[] = [];
+		const binding = {
+			prepare: () => ({
+				bind: (...params: unknown[]) => {
+					bound.push(params.length);
+					return {
+						all: async () => ({ results: [] }),
+						raw: async () => [],
+						run: async () => ({ meta: { changes: 0 } }),
+					};
+				},
+			}),
+		};
+		const svc = new Svc({
+			dialect: "sqlite",
+			db: drizzleD1(binding as any),
+			table: posts,
+			primaryKey: "id",
+			softDelete: { enabled: true, column: "deleted_at" },
+			timestamps: { createdAt: "created_at", updatedAt: "updated_at" },
+		});
+		await svc.findAll({ id: { in: args(99) } });
+		expect(Math.max(...bound)).toBe(100);
+		const error = await expectStatus(
+			svc.findAll({ id: { in: args(100) } }),
+			400,
+		);
+		expect(error.message).toContain("Cloudflare D1 takes at most 100");
+	});
+});
+
+describe("sqlite: sql.caseSensitive (3.7.2)", () => {
+	const caseSensitive = (db: any) =>
+		new Svc({
+			dialect: "sqlite",
+			db,
+			table: posts,
+			primaryKey: "id",
+			softDelete: { enabled: true, column: "deleted_at" },
+			timestamps: { createdAt: "created_at", updatedAt: "updated_at" },
+			sql: {
+				caseSensitive: true,
+				useReturning: true,
+				jsonSupport: true,
+				enableFullTextSearch: false,
+			},
+		});
+	const titles = (res: { data: any[] }) =>
+		res.data.map((row: any) => row.title).sort();
+
+	it("makes contains, startsWith and endsWith case-sensitive", async () => {
+		const { db } = await fresh();
+		const svc = caseSensitive(db);
+		expect((await svc.findAll({ title: { contains: "POST" } })).total).toBe(0);
+		expect((await svc.findAll({ title: { startsWith: "post" } })).total).toBe(
+			0,
+		);
+		expect((await svc.findAll({ title: { contains: "ost 1" } })).total).toBe(4);
+		expect((await svc.findAll({ title: { startsWith: "Post" } })).total).toBe(
+			12,
+		);
+		expect(titles(await svc.findAll({ title: { endsWith: "t 12" } }))).toEqual([
+			"Post 12",
+		]);
+		// The i forms still ignore case.
+		expect((await svc.findAll({ title: { iContains: "POST" } })).total).toBe(
+			12,
+		);
+	});
+
+	it("matches GLOB's own wildcards literally", async () => {
+		const { db } = await fresh();
+		const svc = caseSensitive(db);
+		for (const title of ["a*b", "a?c", "x[y]z", "plain"]) {
+			await svc.create({ title, author_id: 1, views: 0 });
+		}
+		expect(titles(await svc.findAll({ title: { contains: "*" } }))).toEqual([
+			"a*b",
+		]);
+		expect(titles(await svc.findAll({ title: { contains: "?" } }))).toEqual([
+			"a?c",
+		]);
+		expect(titles(await svc.findAll({ title: { contains: "[y]" } }))).toEqual([
+			"x[y]z",
+		]);
+		expect(titles(await svc.findAll({ title: { endsWith: "]z" } }))).toEqual([
+			"x[y]z",
+		]);
 	});
 });
 

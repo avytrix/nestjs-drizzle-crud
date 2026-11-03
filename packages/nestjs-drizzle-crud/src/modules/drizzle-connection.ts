@@ -92,6 +92,11 @@ export function postgresOptions(
 // DrizzleConnectionOptions in mysql2 pool terms. mysql2 counts the idle
 // timeout in milliseconds and turns TLS on with an options object, so `true`
 // becomes `{}` (verify the server certificate) and `false` leaves TLS off.
+// mysql2 only starts its idle reaper when maxIdle is below connectionLimit,
+// and maxIdle defaults to connectionLimit, so an idle timeout alone would
+// never close anything. maxIdle is set one below the pool size (mysql2's
+// default size is 10). Not 0: the reaper closes every free connection past
+// maxIdle each second, idle or not.
 export function mysqlOptions(
 	options: DrizzleConnectionOptions = {},
 ): Record<string, unknown> {
@@ -99,6 +104,7 @@ export function mysqlOptions(
 	if (options.poolSize !== undefined) out.connectionLimit = options.poolSize;
 	if (options.idleTimeout !== undefined) {
 		out.idleTimeout = options.idleTimeout * 1000;
+		out.maxIdle = Math.max(0, (options.poolSize ?? 10) - 1);
 	}
 	const ssl = options.ssl;
 	if (ssl === true) out.ssl = {};

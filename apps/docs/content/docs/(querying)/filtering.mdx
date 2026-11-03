@@ -84,18 +84,18 @@ All 22 operators, as the service and the query parser handle them:
 | `gt` / `gte` / `lt` / `lte` | `>` `>=` `<` `<=` | Numeric and date columns. Date strings are parsed. `NaN` or `Infinity` is a 400. |
 | `like` | `LIKE` | You supply the `%` wildcards. The value is passed as is. On SQLite the package adds `ESCAPE '\'`, so a backslash escapes as it does on the other dialects. |
 | `ilike` | `ILIKE` (PostgreSQL), `LIKE` (MySQL, SQLite) | Case-insensitive, you supply the `%`. MySQL and SQLite have no `ILIKE`; MySQL's default collations ignore case, and SQLite's `LIKE` ignores ASCII case. |
-| `in` | `IN (...)` | The value must be an array, otherwise 400. |
+| `in` | `IN (...)` | The value must be an array, otherwise 400. A list past the database's bound parameter limit (65,535 on PostgreSQL and MySQL, 32,766 on SQLite, 100 on D1, every list in the statement counted) is a 400, see [bulk operations](/docs/bulk-operations#how-large-can-a-bulk-call-be). |
 | `notIn` | `NOT IN (...)` | The value must be an array, otherwise 400. |
 | `between` | `BETWEEN a AND b` | `[from, to]`, both inclusive. Anything other than two values is a 400. Date strings are parsed. |
 | `isNull` | `IS NULL` / `IS NOT NULL` | `true` or `"true"` gives `IS NULL`, `false` or `"false"` gives `IS NOT NULL`. Anything else is a 400. |
 | `isNotNull` | `IS NOT NULL` / `IS NULL` | The mirror of `isNull`. |
-| `startsWith` / `endsWith` / `contains` | `LIKE 'x%'`, `'%x'`, `'%x%'` | Text columns and string values only. The value is escaped. Case-insensitive (`ILIKE` on PostgreSQL) unless `sql.caseSensitive` is `true`. |
+| `startsWith` / `endsWith` / `contains` | `LIKE 'x%'`, `'%x'`, `'%x%'` | Text columns and string values only. The value is escaped. Case-insensitive (`ILIKE` on PostgreSQL) unless `sql.caseSensitive` is `true`. On SQLite the case-sensitive forms are `GLOB` (since 3.7.2), since SQLite's `LIKE` ignores ASCII case. |
 | `iStartsWith` / `iEndsWith` / `iContains` | `ILIKE` (PostgreSQL), `LIKE` (MySQL, SQLite) | Always case-insensitive, whatever `sql.caseSensitive` says. Escaped like the plain forms. |
 | `arrayContains` | `@>` | PostgreSQL array columns: the column holds every value. `{ tags: { arrayContains: ["a", "b"] } }`. |
 | `arrayOverlaps` | `&&` | PostgreSQL array columns: the column holds at least one of the values. |
 | `jsonContains` | `@> '...'::jsonb` | PostgreSQL `jsonb` columns only (not `json`): `{ meta: { jsonContains: { plan: "pro" } } }`. |
 
-A pattern operator on a column that is not text, an array operator on a column that is not an array, a `jsonContains` on a column that is not `jsonb`, or any of the three PostgreSQL operators on MySQL or SQLite is a 400 that says so. On MySQL and SQLite the case-sensitive pattern forms still ignore case for the letters the database folds, because their `LIKE` does.
+A pattern operator on a column that is not text, an array operator on a column that is not an array, a `jsonContains` on a column that is not `jsonb`, or any of the three PostgreSQL operators on MySQL or SQLite is a 400 that says so. On MySQL the case-sensitive pattern forms still ignore case for the letters the default collations fold, because its `LIKE` does. On SQLite they match case exactly since 3.7.2: `contains: "Ann"` no longer matches `ann`. The `like` operator stays plain `LIKE`, which ignores ASCII case on SQLite.
 
 ## How do I combine filters?
 

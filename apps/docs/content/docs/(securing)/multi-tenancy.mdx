@@ -142,7 +142,19 @@ With [nested create](/docs/relations-on-writes), child rows get the scope values
 
 Yes, when the related table has the scope columns. Loaded relations, joins, relation filters (`some`, `none`, `every` and nested columns) and `counts` only see related rows of the caller's tenant. A belongs-to row of another tenant loads as `null`, and a filter on it matches nothing. A related table without the scope column is treated as shared and left unscoped.
 
-A plain foreign key only checks that the parent row exists, not that it is in the same tenant. A composite foreign key such as `(tenant_id, author_id)` makes the database refuse a cross-tenant reference at write time.
+## Can a write point a foreign key at another tenant's row?
+
+No, since 3.7.2, when the related table has the scope columns. On a scoped entity, `create`, `update`, `upsert` and the mass writes check every belongs-to key they set (`localKey` of a relation in `relations`) against the caller's tenant, the way `attach` checks its targets. A key that points at another tenant's row gets exactly the answer a key pointing at a missing row gets, a 400 `ForeignKeyViolationException`, so the response does not reveal that the row exists:
+
+```ts
+// notes are scoped by tenant_id and belong to a doc; doc 4 is tenant 2's
+await notes.create({ docId: 4, body: 'x' }, { context: { tenantId: 1 } });
+// 400 Invalid reference for doc_notes: 'doc_id' does not refer to an existing record
+```
+
+The check costs one `SELECT` per relation for the whole call, whatever the number of rows; a mass write lists the failing items in a `BulkOperationException`. A related table without the scope columns is shared and not checked, and neither is a call with `skipScope: true`. A key to a row that does not exist at all is refused the same way, even without a database foreign key.
+
+A composite foreign key such as `(tenant_id, author_id)` still makes the database itself refuse a cross-tenant reference, for writes that do not go through the service.
 
 ## Common questions
 

@@ -31,7 +31,10 @@ import { SqlBaseCrudService } from "../src/core/abstract/sql-base-crud.service";
 import { CrudContext } from "../src/core/context/crud-context";
 import { CrudEventBus } from "../src/core/events/crud-event-bus";
 import type { CrudEvent } from "../src/core/interfaces/events.interface";
-import { parseCrudQuery } from "../src/core/utils/query-parser";
+import {
+	assertFilterDepth,
+	parseCrudQuery,
+} from "../src/core/utils/query-parser";
 import type { SqlCrudConfig } from "../src/core/interfaces/sql-crud-config.interface";
 import {
 	BulkOperationException,
@@ -2752,14 +2755,15 @@ describe("re-audit R-06: batches past the parameter limit are a 400", () => {
 			role: "writer",
 		}));
 		const many = Array.from({ length: 70_000 }, (_, i) => i + 1);
+		// One call at a time: each rejects on its own statement.
 		for (const call of [
-			svc.massCreate(rows as any),
-			svc.massUpdate(many, { name: "x" } as any),
-			svc.findAll({ id: many }),
-			svc.findAll({ id: { in: many } }),
+			() => svc.massCreate(rows as any),
+			() => svc.massUpdate(many, { name: "x" } as any),
+			() => svc.findAll({ id: many }),
+			() => svc.findAll({ id: { in: many } }),
 		]) {
-			const error = await expect400(call);
-			expect(JSON.stringify(error.getResponse())).toContain("60000");
+			const error = await expect400(call());
+			expect(JSON.stringify(error.getResponse())).toContain("65535");
 		}
 	});
 });
@@ -2963,5 +2967,288 @@ describe("3.7.1: select paths from the request", () => {
 		expect(
 			svc.selectFor({ base: [], relations: {} }, "__proto__").base,
 		).toEqual([]);
+	});
+});
+
+// PGlite returns no rows, without an error, for a statement with more than
+// 32,767 bound parameters (real Postgres takes 65,535). So these specs only
+// assert the refusals past 65,535, which happen before anything is sent, and
+// keep every statement that does run under 32,767.
+describe("3.7.2: the bound parameter check sees the real statement", () => {
+	const range = (from: number, n: number) =>
+		Array.from({ length: n }, (_, i) => from + i);
+	const tooMany = async (promise: Promise<unknown>) => {
+		const error = await expect400(promise);
+		expect(error.message).toMatch(
+			/^Too many values in one statement: \d+ bound parameters, and PostgreSQL takes at most 65535\./,
+		);
+		return error;
+	};
+
+	it("A-01: counts two OR'd IN lists together", async () => {
+		const svc = authorsService(await sharedDb());
+		await tooMany(
+			svc.findAll({
+				or: [
+					{ id: { in: range(1, 40_000) } },
+					{ id: { in: range(40_001, 40_000) } },
+				],
+			}),
+		);
+	});
+
+	it("A-01: counts the version checks of a versioned mass update", async () => {
+		const db = await freshDb();
+		await db.$client.exec(
+			"INSERT INTO docs (tenant_id, title, slug) SELECT 1, 'd' || n, 'd' || n FROM generate_series(6, 25005) AS n",
+		);
+		const svc = docsService(db);
+		const ids = range(6, 25_000);
+		// The existence check binds 25,001 values and runs; the UPDATE binds
+		// about three per id (id list, id and version), 75,000 in all.
+		await tooMany(
+			svc.massUpdate(ids, { title: "v" } as any, {
+				...asTenant(1),
+				expectedVersions: Object.fromEntries(ids.map((id) => [String(id), 1])),
+			}),
+		);
+		expect(await svc.count({ title: "v" }, asTenant(1))).toBe(0);
+	});
+
+	it("A-01: checks the target lookup of attach", async () => {
+		const svc = postsWithTags(await freshDb());
+		await tooMany(svc.attach(1, "tags", range(1, 70_000)));
+	});
+
+	it("A-01: checks the child INSERT of a nested create, and rolls it all back", async () => {
+		const db = await freshDb();
+		const svc = new Svc({
+			...base(db, authors),
+			relations: {
+				posts: { table: posts, type: "hasMany", foreignKey: "author_id" },
+			},
+			writableRelations: ["posts"],
+		});
+		await tooMany(
+			svc.create({
+				name: "Many",
+				email: "many@x.io",
+				role: "writer",
+				posts: range(0, 25_000).map((i) => ({ title: `t${i}` })),
+			} as any),
+		);
+		expect(await svc.count()).toBe(3);
+	});
+
+	it("A-01: refuses a huge massUpsert before it writes, without replaying it row by row", async () => {
+		const { db, statements } = await countingDb();
+		const svc = authorsService(db);
+		const rows = range(0, 14_000).map((i) => ({
+			name: `n${i}`,
+			email: `n${i}@x.io`,
+			role: "writer",
+		}));
+		await tooMany(svc.massUpsert(rows as any, { conflictTarget: "email" }));
+		await tooMany(svc.massCreate(rows as any));
+		expect(statements().filter((q) => /^\s*insert/i.test(q))).toEqual([]);
+		expect(await svc.count()).toBe(3);
+	});
+
+	it("A-04: lets a one-column insert through that the old estimate refused", async () => {
+		const svc = new Svc({
+			...base(await freshDb(), tags),
+			timestamps: undefined,
+		});
+		// 15,001 rows bind 15,001 values; the 3.7.1 guard counted five per row.
+		const created = await svc.massCreate(
+			range(0, 15_001).map((i) => ({ name: `tag${i}` })) as any,
+		);
+		expect(created).toHaveLength(15_001);
+	});
+
+	it("A-01: still answers a batch too big for Drizzle to build with a 400", async () => {
+		const svc = authorsService(await sharedDb());
+		// 250,000 values: Drizzle's own SQL builder overflows the call stack.
+		const error = await expect400(
+			svc.massCreate(
+				range(0, 50_000).map((i) => ({
+					name: `n${i}`,
+					email: `n${i}@x.io`,
+					role: "writer",
+				})) as any,
+			),
+		);
+		expect(error.message).toBe(
+			"Too many values in one statement: more than 65535 bound parameters, and PostgreSQL takes at most 65535. Split the batch.",
+		);
+	});
+
+	it("A-01: names the statement's own count", async () => {
+		const svc = authorsService(await sharedDb());
+		const error = await tooMany(svc.findAll({ id: { in: range(1, 65_536) } }));
+		// 65,536 ids plus the LIMIT.
+		expect(error.message).toContain("65537 bound parameters");
+	});
+});
+
+describe("3.7.2: a belongs-to key stays inside the tenant (A-05)", () => {
+	// Notes are scoped like docs, and point at a doc. Docs 1-3 are tenant 1's,
+	// docs 4-5 tenant 2's.
+	const notesService = (db: any) =>
+		new Svc({
+			...base(db, docNotes),
+			softDelete: { enabled: false, column: "deleted_at" },
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: { doc: { table: docs, localKey: "doc_id" } },
+		});
+	const response = async (promise: Promise<unknown>) =>
+		(await expect400(promise)).getResponse();
+
+	it("answers another tenant's doc exactly like a missing one, on every write", async () => {
+		const svc = notesService(await freshDb());
+		const as1 = asTenant(1);
+		const missing = await response(
+			svc.create({ doc_id: 999, body: "x" } as any, as1),
+		);
+		expect(missing).toMatchObject({ statusCode: 400 });
+		expect(
+			await response(svc.create({ doc_id: 4, body: "x" } as any, as1)),
+		).toEqual(missing);
+		expect(await response(svc.update(1, { doc_id: 4 } as any, as1))).toEqual(
+			await response(svc.update(1, { doc_id: 999 } as any, as1)),
+		);
+		expect(
+			await response(
+				svc.upsert({ id: 1, doc_id: 4, body: "x" } as any, {}, as1),
+			),
+		).toEqual(missing);
+		// The row is still where it was, and nothing new points at tenant 2.
+		expect((await svc.find(1, as1))?.doc_id).toBe(1);
+		expect(await svc.count({ doc_id: 4 }, asTenant(2))).toBe(1);
+		// The caller's own doc is fine.
+		await expect(
+			svc.create({ doc_id: 2, body: "mine" } as any, as1),
+		).resolves.toMatchObject({ doc_id: 2, tenant_id: 1 });
+	});
+
+	it("checks a batch with one SELECT and names the failing items", async () => {
+		const { db, statements, reset } = await countingDb();
+		const svc = notesService(db);
+		const as1 = asTenant(1);
+		reset();
+		const failed = await caught(
+			svc.massCreate(
+				[
+					{ doc_id: 1, body: "a" },
+					{ doc_id: 4, body: "b" },
+					{ doc_id: 2, body: "c" },
+					{ doc_id: 5, body: "d" },
+				] as any,
+				as1,
+			),
+		);
+		expect(failed).toBeInstanceOf(BulkOperationException);
+		expect(failed.errors.map((e: any) => e.index)).toEqual([1, 3]);
+		expect(statements().filter((q) => /from "docs"/.test(q))).toHaveLength(1);
+		expect(failed.errors[0].error.getResponse()).toEqual(
+			(
+				await caught(svc.create({ doc_id: 999, body: "x" } as any, as1))
+			).getResponse(),
+		);
+		expect(await svc.count(undefined, as1)).toBe(1);
+
+		const updated = await caught(
+			svc.massUpdate([1], { doc_id: 5 } as any, as1),
+		);
+		expect(updated).toBeInstanceOf(BulkOperationException);
+		expect(updated.errors).toMatchObject([{ id: 1 }]);
+		const upserted = await caught(
+			svc.massUpsert([{ id: 1, doc_id: 4, body: "x" }] as any, {}, as1),
+		);
+		expect(upserted).toBeInstanceOf(BulkOperationException);
+		expect(upserted.errors).toMatchObject([{ index: 0 }]);
+	});
+
+	it("leaves an unscoped call and a related table without the scope column alone", async () => {
+		const db = await freshDb();
+		// skipScope: no tenant, nothing to check.
+		await expect(
+			notesService(db).create({ doc_id: 4, body: "admin" } as any, {
+				skipScope: true,
+			}),
+		).resolves.toMatchObject({ doc_id: 4 });
+		// Comments point at authors, which have no tenant column.
+		const scoped = new Svc({
+			...base(db, comments),
+			primaryKey: "uid",
+			scope: () => ({ author_id: 1 }),
+			relations: { author: { table: authors, localKey: "author_id" } },
+		});
+		await expect(scoped.create({ body: "hi" } as any)).resolves.toMatchObject({
+			author_id: 1,
+		});
+	});
+});
+
+describe("3.7.2: filters inside counts are depth capped (A-07)", () => {
+	it("refuses a 20,000 level count filter with a 400, not a stack overflow", async () => {
+		const svc = authorsWithPosts(await sharedDb());
+		let filter: any = { title: "x" };
+		for (let i = 0; i < 20_000; i++) filter = { not: filter };
+		const error = await expect400(
+			svc.findAll(undefined, {}, { counts: { posts: filter } }),
+		);
+		expect(error.message).toMatch(/nested too deeply/);
+	});
+});
+
+describe("3.7.2: the depth check survives a huge list (A-06)", () => {
+	it("walks a 300,000 item IN list without overflowing the stack", () => {
+		const list = Array.from({ length: 300_000 }, (_, i) => i);
+		expect(() => assertFilterDepth({ id: { in: list } })).not.toThrow();
+	});
+});
+
+describe("3.7.2: full-text search over a NULL column (A-14)", () => {
+	const articles = pgTable("articles", {
+		id: serial("id").primaryKey(),
+		title: text("title").notNull(),
+		body: text("body"),
+	});
+
+	it("still finds a row whose other column is NULL", async () => {
+		const log: string[] = [];
+		const db = await freshDb(log);
+		await db.$client.exec(`
+			CREATE TABLE articles (id serial PRIMARY KEY, title text NOT NULL, body text);
+			INSERT INTO articles (title, body) VALUES
+				('postgres tuning', 'a body'), ('postgres basics', NULL);
+		`);
+		const svc = new Svc({
+			...base(db, articles),
+			softDelete: { enabled: false, column: "deleted_at" },
+			timestamps: undefined,
+		});
+		expect((await svc.fullTextSearch("postgres", ["title"])).total).toBe(2);
+		const both = await svc.fullTextSearch("postgres", ["title", "body"]);
+		expect(both.total).toBe(2);
+		expect(both.data).toHaveLength(2);
+		const listed = await svc.findAll(
+			undefined,
+			{},
+			{
+				search: {
+					term: "postgres",
+					columns: ["title", "body"],
+					mode: "fullText",
+				},
+			},
+		);
+		expect(listed.total).toBe(2);
+		// The expression a GIN index has to repeat to be used.
+		expect(log.join("\n")).toContain(
+			`to_tsvector('english', coalesce("articles"."title", '')) || to_tsvector('english', coalesce("articles"."body", ''))`,
+		);
 	});
 });

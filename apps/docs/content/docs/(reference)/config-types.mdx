@@ -43,7 +43,7 @@ Provide one of `db` or `connectionString`; with neither, startup fails. A `conne
 ```ts title="drizzle-crud-config.interface.ts"
 interface DrizzleConnectionOptions {
   poolSize?: number;    // postgres-js max, mysql2 connectionLimit
-  idleTimeout?: number; // seconds: postgres-js idle_timeout, mysql2 idleTimeout x 1000
+  idleTimeout?: number; // seconds: postgres-js idle_timeout, mysql2 idleTimeout x 1000 (and maxIdle)
   ssl?: boolean | "require" | "allow" | "prefer" | "verify-full" | Record<string, unknown>;
 }
 

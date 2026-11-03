@@ -390,8 +390,10 @@ consumer
 The scope is ANDed into every read, count and write (bulk, upsert, soft delete,
 restore, force delete, attach included) and written onto every created row, so
 another tenant's id is a 404. A missing context value is a 403, never an
-unscoped query. Do not add `tenant_id` to filters or DTOs by hand, and use
-`skipScope: true` only in trusted server code.
+unscoped query. A belongs-to key a write sets must point at a row of the
+caller's tenant when the related table has the scope columns; another tenant's
+row is the same 400 as a missing one. Do not add `tenant_id` to filters or DTOs
+by hand, and use `skipScope: true` only in trusted server code.
 
 # Optimistic locking
 
@@ -434,7 +436,8 @@ never reaches the caller as a 500: a unique violation is a 409, a value that is
 too long, fails a check, has the wrong type or is not a valid date is a 400 (on
 reads too), a foreign key pointing at a row that does not exist is a 400, and a
 delete blocked by dependent rows is a 409. The same holds on MySQL (strict mode
-errors included) and SQLite (constraint errors).
+errors included) and SQLite (constraint errors, and the `STRICT` and
+`SQLITE_MISMATCH` type errors).
 
 ---
 
@@ -453,6 +456,9 @@ whole set (plus one `SELECT` that checks the ids), so never loop `create` or
 `update` over an array yourself. The 400 from `BulkOperationException` lists
 only the failed items: `errors: [{ index | id, status, message }]`.
 `bulkMode: 'perItem'` runs one single-row call per item when a hook needs it.
+One statement may bind at most 65,535 values on PostgreSQL and MySQL, 32,766 on
+SQLite and 100 on Cloudflare D1; past that the call is a 400 before it runs, so
+split very large batches into chunks.
 
 To insert or update by a unique key, use
 `upsert(dto, { conflictTarget: 'email' })` or `massUpsert(rows, ...)` rather

@@ -265,6 +265,38 @@ export function describeDialectContract(setup: DialectSetup): void {
 			expect(list.data[0]).toMatchObject({ id: 2, author: { name: "Bob" } });
 		});
 
+		// 3.7.2 (A-01, A-02): the limit is the database's, per statement.
+		it("runs a statement just under the bound parameter limit and refuses one past it", async () => {
+			const { posts } = await fresh();
+			const limit = setup.dialect === "sqlite" ? 32_766 : 65_535;
+			const range = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+			// The ids plus the LIMIT, two under the limit.
+			const under = await posts.findAll(
+				{ id: { in: range(limit - 3) } },
+				{ limit: 100 },
+			);
+			expect(under.total).toBe(12);
+			const error = await expectStatus(
+				posts.findAll({ id: { in: range(limit + 1) } }),
+				400,
+			);
+			expect(error.message).toContain(`takes at most ${limit}`);
+			// Without RETURNING (MySQL) a massCreate with generated keys inserts
+			// row by row, so only the dialects with one multi-row INSERT refuse it.
+			if (setup.dialect !== "mysql") {
+				// Five values a row (three columns and two timestamps): just over.
+				const many = range(Math.floor(limit / 5) + 1).map((n) => ({
+					title: `T${n}`,
+					author_id: 1,
+					views: 0,
+				}));
+				const refused = await expectStatus(posts.massCreate(many), 400);
+				expect(refused.message).toContain(`takes at most ${limit}`);
+				expect(await posts.count()).toBe(12);
+			}
+			// MySQL takes a few seconds over two statements of 65,000 values.
+		}, 60_000);
+
 		it("keeps a scoped entity inside its tenant", async () => {
 			const { tenantDocs } = await fresh();
 			expect((await tenantDocs.findAll()).total).toBe(2);
@@ -306,6 +338,23 @@ export function describeDialectContract(setup: DialectSetup): void {
 			);
 			await expectStatus(authors.delete(1), 409);
 			await expectStatus(authors.create({ email: "nameless@x.io" }), 400);
+		});
+
+		// 3.7.2 (A-03): SQLite reported these as a 500 (a STRICT table's
+		// extended code 3091, and SQLITE_MISMATCH for a rowid).
+		it("maps a value of the wrong type to 400, the primary key included", async () => {
+			const { authors, posts } = await fresh();
+			const wrongType = await expectStatus(
+				posts.create({ title: "Typo", author_id: 1, views: "abc" }),
+				400,
+			);
+			expect(wrongType.message).toMatch(/does not match its column type/);
+			const textId = await expectStatus(
+				authors.create({ id: "abc", name: "Dee", email: "dee@x.io" }),
+				400,
+			);
+			expect(textId.message).toMatch(/does not match its column type/);
+			expect(await authors.count()).toBe(3);
 		});
 
 		it("runs the mass writes in one transaction", async () => {

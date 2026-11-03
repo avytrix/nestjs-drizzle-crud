@@ -85,18 +85,18 @@ export function assertFilterDepth(filters: unknown): void {
 	const stack: Array<[unknown, number]> = [[filters, 0]];
 	while (stack.length > 0) {
 		const [node, depth] = stack.pop()!;
-		const children = Array.isArray(node)
-			? node.map((item): [unknown, number] => [item, depth])
-			: isPlainObject(node)
-				? Object.values(node).map((item): [unknown, number] => [
-						item,
-						depth + 1,
-					])
-				: [];
 		if (depth > MAX_FILTER_DEPTH) {
 			throw bad(`Filter is nested too deeply (max ${MAX_FILTER_DEPTH} levels)`);
 		}
-		stack.push(...children);
+		// One push per child: spreading a 300,000 item IN list into push()
+		// would overflow the call stack.
+		const children = Array.isArray(node)
+			? node
+			: isPlainObject(node)
+				? Object.values(node)
+				: [];
+		const next = Array.isArray(node) ? depth : depth + 1;
+		for (const child of children) stack.push([child, next]);
 	}
 }
 

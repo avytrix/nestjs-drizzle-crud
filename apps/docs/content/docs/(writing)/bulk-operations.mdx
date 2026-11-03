@@ -189,7 +189,18 @@ Yes:
 
 ## How large can a bulk call be?
 
-A call may bind at most 60,000 values, below the 65,535 bound parameters a Postgres statement accepts. For `massCreate` and `massUpsert` that is rows times columns; for the id based methods it is the number of ids. A bigger call is a 400 that names the limit, before any statement runs. The same limit applies to an `IN` filter list.
+As large as one SQL statement allows. Since 3.7.2 the service counts the bound parameters of every statement it builds and compares them with the database's own limit:
+
+| Database | Bound parameters per statement |
+| --- | --- |
+| PostgreSQL | 65,535 |
+| MySQL | 65,535 |
+| SQLite, libSQL | 32,766 (`SQLITE_MAX_VARIABLE_NUMBER`) |
+| Cloudflare D1 | 100 |
+
+A statement past the limit is a 400 that names its count and the limit, before it reaches the database: `Too many values in one statement: 75003 bound parameters, and PostgreSQL takes at most 65535. Split the batch.` The count is the real one, so everything adds up: rows times the columns actually written (timestamps and scope included) for `massCreate` and `massUpsert`, about three values per id for a versioned `massUpdate` with `expectedVersions`, the children of a nested create, the targets of `attach` and `sync`, and every list in an `IN` filter, OR'd lists together. The refusal is not replayed item by item, and the transaction rolls back.
+
+On a server built with a different limit, override the protected `bindLimit(db)` method in your service.
 
 One transaction holding thousands of row locks can also block other connections. For thousands of rows, split the array into chunks of a few hundred and call the bulk method once per chunk, accepting that each chunk commits on its own.
 
