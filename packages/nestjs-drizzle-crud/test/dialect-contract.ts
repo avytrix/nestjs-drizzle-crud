@@ -290,7 +290,8 @@ export function describeDialectContract(setup: DialectSetup): void {
 			const refused = await expectStatus(posts.massCreate(many), 400);
 			expect(refused.message).toContain(`takes at most ${limit}`);
 			expect(await posts.count()).toBe(12);
-		});
+			// MySQL takes a few seconds over two statements of 65,000 values.
+		}, 60_000);
 
 		it("keeps a scoped entity inside its tenant", async () => {
 			const { tenantDocs } = await fresh();
