@@ -92,7 +92,7 @@ scope: (ctx) => (ctx.isAdmin ? null : { tenant_id: ctx.tenantId })
   }}
 />
 
-Returning `null` leaves that call unscoped on purpose, for an admin or a background job. A key that is not a column of the table throws, and so does a function that returns something other than an object or `null`. The function runs synchronously, so resolve anything async (the user, their tenant) in middleware or a guard and put the result in the context.
+Returning `null` leaves that call unscoped on purpose, for an admin or a background job. A key that is not a column of the table throws, and so does a function that returns something other than an object or `null`. The function runs synchronously, once per call (since 3.8.0; it used to run once per statement and relation), so resolve anything async (the user, their tenant) in middleware or a guard and put the result in the context.
 
 ## Where does the context come from?
 

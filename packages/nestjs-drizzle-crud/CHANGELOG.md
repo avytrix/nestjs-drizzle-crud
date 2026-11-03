@@ -71,6 +71,16 @@ same order, with the same errors; the SQL behind it is cheaper.
   chunk, so a nested page whose level holds 70,000 keys loads in two queries instead of failing
   with a 400 (3.7.2) or a 500 (before). Below that, it is one query per relation as before. The
   chunk size is the new protected `relationChunkSize(db)`.
+- Fewer statements in a few calls. `exists(id, options)` is one `SELECT` and no longer loads
+  `options.relations` or `options.counts` it throws away (4 statements to 1 with two relations and
+  a count); they are still checked against the allowlists. A nested create skips the "already
+  linked?" read for its many-to-many ids. `attach`, `sync` and `detach` read the row once and load
+  the relation onto it, instead of reading it before and after (8, 9 and 6 round trips to 7, 8 and
+  5). A mass write that opened its own transaction loads `options.relations` and `options.counts`
+  after it commits, so it holds its row locks for less time; with a count filter, or in a caller's
+  transaction, they still load inside. The returned rows are the same.
+- A `scope` function runs once per call instead of once per statement and relation: 5 times for
+  a `findAll` with three relations and a count, 7 for a `massUpdate`, now 1 each.
 
 ## [3.7.2] - 2026-11-03
 

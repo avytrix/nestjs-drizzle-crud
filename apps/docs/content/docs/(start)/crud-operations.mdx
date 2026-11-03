@@ -32,7 +32,7 @@ the row type, and every `options` argument is the `SqlOperationOptions` object l
 | `findByCursor(filters?, pagination?, options?)` | `Promise<CursorPage<T>>` | `{ data, limit, nextCursor }`, plus `total` when you pass `count: true`. See [Cursor pagination](/docs/cursor-pagination). |
 | `count(filters?, options?)` | `Promise<number>` | Same filters and soft delete rule as `findAll`. |
 | `countBy(column, filters?, options?)` | `Promise<CountByRow[]>` | `[{ value, count }]`, largest group first. See [Aggregates](/docs/aggregates). |
-| `exists(id, options?)` | `Promise<boolean>` | Selects only the primary key. A soft deleted row counts as missing. |
+| `exists(id, options?)` | `Promise<boolean>` | One `SELECT` of the primary key; `relations` and `counts` in the options are not loaded. A soft deleted row counts as missing. |
 | `fullTextSearch(term, columns, pagination?, options?)` | `Promise<{ data, total, page, limit }>` | PostgreSQL only, ranked by `ts_rank`. See [Full-text search](/docs/full-text-search). |
 
 ### Writes

@@ -1858,13 +1858,13 @@ describe("M10: relations on writes", () => {
 		reset();
 		const attached = await svc.attach(2, "tags", [1, 2, "2"]);
 		expect(attached.tags.map((t: any) => t.name)).toEqual(["news", "tech"]);
-		// Guard, targets, existing links, one INSERT for the rest, read back.
+		// The row, targets, existing links, one INSERT for the rest, the
+		// relation loaded onto the row read first (3.8.0: the row once).
 		expect(verbs(statements())).toEqual([
 			"select",
 			"select",
 			"select",
 			"insert",
-			"select",
 			"select",
 		]);
 
@@ -3832,5 +3832,191 @@ describe("3.8.0 F2: relation loaders chunk their IN lists", () => {
 		expect(page.data.slice(0, 3).map((p: any) => p._count.tags)).toEqual([
 			2, 1, 0,
 		]);
+	});
+});
+
+describe("3.8.0 P-08 / F8 / F9 / F10: statement trims", () => {
+	// Every statement, plus "begin" and "end" around each transaction the
+	// client opens, so a statement can be placed inside or after it.
+	async function tracedDb() {
+		const log: string[] = [];
+		const db = await freshDb(log);
+		const client = db.$client;
+		const open = client.transaction.bind(client);
+		client.transaction = async (run: any) => {
+			log.push("begin");
+			try {
+				return await open(run);
+			} finally {
+				log.push("end");
+			}
+		};
+		return { db, log, verbs: () => verbs(log) };
+	}
+
+	it("exists runs one statement, whatever relations and counts say", async () => {
+		const { db, log } = await tracedDb();
+		const svc = postsWithTags(db);
+		log.length = 0;
+		expect(
+			await svc.exists(1, { relations: ["author", "tags"], counts: ["tags"] }),
+		).toBe(true);
+		expect(log).toHaveLength(1);
+		expect(log[0]).not.toContain("authors");
+		// Still checked against the allowlists.
+		await expect400(
+			postsWithTags(db, { loadableRelations: [] }).exists(1, {
+				relations: ["tags"],
+			}),
+		);
+	});
+
+	it("links a new row's many-to-many ids without asking what it already links", async () => {
+		const { db, verbs: sent, log } = await tracedDb();
+		const svc = postsWithTags(db, { writableRelations: ["tags"] });
+		log.length = 0;
+		const post = await svc.create({
+			title: "Linked",
+			author_id: 1,
+			status: "draft",
+			views: 0,
+			tags: [1, 2],
+		});
+		// The row, the targets check, the links.
+		expect(sent()).toEqual(["begin", "insert", "select", "insert", "end"]);
+		const tags = await svc.find(post.id, { relations: ["tags"] });
+		expect(tags?.tags.map((t: any) => t.name)).toEqual(["news", "tech"]);
+	});
+
+	it("attach, sync and detach read the row once", async () => {
+		const { db, verbs: sent, log } = await tracedDb();
+		const svc = postsWithTags(db);
+		log.length = 0;
+		await svc.attach(2, "tags", [2]);
+		// Row, targets, existing links, INSERT, the relation.
+		expect(sent()).toEqual([
+			"begin",
+			"select",
+			"select",
+			"select",
+			"insert",
+			"select",
+			"end",
+		]);
+		log.length = 0;
+		const synced = await svc.sync(2, "tags", [1]);
+		expect(synced.tags.map((t: any) => t.name)).toEqual(["news"]);
+		expect(sent()).toEqual([
+			"begin",
+			"select",
+			"select",
+			"select",
+			"delete",
+			"select",
+			"end",
+		]);
+		log.length = 0;
+		const detached = await svc.detach(2, "tags", undefined, {
+			relations: ["author"],
+			select: ["id", "title", "author.name"],
+		});
+		expect(sent()).toEqual(["begin", "select", "delete", "select", "end"]);
+		expect(detached).toEqual({
+			id: 2,
+			title: "Post 2",
+			author: { name: "Bob" },
+			tags: [],
+		});
+	});
+
+	it("loads a mass write's relations after its own transaction commits", async () => {
+		const { db, verbs: sent, log } = await tracedDb();
+		const svc = postsWithTags(db);
+		log.length = 0;
+		const rows = await svc.massUpdate(
+			[1, 2],
+			{ title: "m" },
+			{
+				relations: ["tags", "author"],
+				counts: ["tags"],
+			},
+		);
+		expect(sent()).toEqual([
+			"begin",
+			"select",
+			"update",
+			"end",
+			"select",
+			"select",
+			"select",
+		]);
+		expect(rows.map((row: any) => row.tags.length)).toEqual([2, 1]);
+		expect(rows.map((row: any) => row._count.tags)).toEqual([2, 1]);
+		expect(rows[0].author.name).toBe("Ann");
+		// A count with a filter can fail on its value: it stays inside, so a
+		// failure still rolls the write back.
+		log.length = 0;
+		await svc.massUpdate(
+			[1],
+			{ title: "n" },
+			{
+				counts: { tags: { name: "news" } },
+			},
+		);
+		expect(sent()).toEqual(["begin", "select", "update", "select", "end"]);
+		// So does everything in a caller's transaction.
+		log.length = 0;
+		await db.transaction((tx: any) =>
+			svc.massCreate(
+				[{ title: "c", author_id: 1, status: "draft", views: 0 }],
+				{ transaction: tx, relations: ["tags"] },
+			),
+		);
+		expect(sent()).toEqual([
+			"begin",
+			"savepoint",
+			"insert",
+			"release",
+			"select",
+			"end",
+		]);
+	});
+
+	it("resolves the tenant scope once per call", async () => {
+		const db = await freshDb();
+		let calls = 0;
+		const svc = docsService(db, {
+			scope: (ctx) => {
+				calls++;
+				return { tenant_id: ctx.tenantId };
+			},
+		});
+		const t1 = asTenant(1);
+		const runs: Array<[string, () => Promise<unknown>]> = [
+			[
+				"findAll",
+				() =>
+					svc.findAll(
+						{ notes: { some: { body: "n1" } } },
+						{},
+						{ ...t1, relations: ["notes"], counts: ["notes"] },
+					),
+			],
+			[
+				"findByCursor",
+				() => svc.findByCursor({}, {}, { ...t1, relations: ["notes"] }),
+			],
+			["find", () => svc.find(1, { ...t1, relations: ["notes"] })],
+			["count", () => svc.count({}, t1)],
+			["create", () => svc.create({ title: "N", slug: "n" }, t1)],
+			["update", () => svc.update(1, { title: "U" }, t1)],
+			["massUpdate", () => svc.massUpdate([1, 2], { title: "M" }, t1)],
+			["softDelete", () => svc.softDelete(3, t1)],
+		];
+		for (const [name, run] of runs) {
+			calls = 0;
+			await run();
+			expect([name, calls]).toEqual([name, 1]);
+		}
 	});
 });
