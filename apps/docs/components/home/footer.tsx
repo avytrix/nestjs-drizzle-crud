@@ -1,5 +1,6 @@
-import { Heart, Package } from "lucide-react";
+import { Heart } from "lucide-react";
 import { GithubMark } from "@/components/github-mark";
+import { NpmMark } from "@/components/npm-mark";
 import Link from "next/link";
 import { avytrixUrl, siteConfig } from "@/lib/seo";
 
@@ -62,7 +63,7 @@ export function Footer() {
 							Changelog
 						</Link>
 						<a
-							href="https://github.com/avytrix/nestjs-drizzle-crud"
+							href={siteConfig.github}
 							target="_blank"
 							rel="noreferrer noopener"
 							className="inline-flex items-center gap-1.5 -mx-2 rounded-lg px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
@@ -86,13 +87,13 @@ export function Footer() {
 							About the maintainers
 						</Link>
 						<a
-							href="https://www.npmjs.com/package/nestjs-drizzle-crud"
+							href={siteConfig.npm}
 							target="_blank"
 							rel="noreferrer noopener"
 							className="inline-flex items-center gap-1.5 -mx-2 rounded-lg px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
 						>
-							<Package className="size-4" />
-							npm
+							<NpmMark />
+							<span className="sr-only">npm</span>
 						</a>
 					</div>
 				</div>

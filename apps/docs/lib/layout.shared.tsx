@@ -1,6 +1,7 @@
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
-import { BookOpen, Globe, Heart, History, Package } from "lucide-react";
+import { BookOpen, Globe, Heart, History } from "lucide-react";
 import { GithubMark } from "@/components/github-mark";
+import { NpmMark } from "@/components/npm-mark";
 import { avytrixUrl, siteConfig } from "@/lib/seo";
 
 /**
@@ -43,9 +44,14 @@ export function baseOptions(): BaseLayoutProps {
 				text: "Changelog",
 				url: "/docs/changelog",
 			},
+			// The wordmark readers know, with the name kept for screen readers
 			{
-				icon: <Package />,
-				text: "npm",
+				text: (
+					<>
+						<NpmMark />
+						<span className="sr-only">npm</span>
+					</>
+				),
 				url: siteConfig.npm,
 				external: true,
 			},
