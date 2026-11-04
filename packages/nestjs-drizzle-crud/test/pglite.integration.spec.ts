@@ -4196,3 +4196,79 @@ INSERT INTO org_items (org_id, name) VALUES (7, 'seven'), (8, 'eight');`;
 		expect(theirs).toEqual(["Four", "Five"]);
 	});
 });
+
+describe("3.8.1 D-02: a text key compares exactly", () => {
+	// Two tenants own codes that differ only in case.
+	const codes = pgTable("codes", {
+		code: text("code").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+	});
+	const codedItems = pgTable("coded_items", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+		code: text("code"),
+	});
+	const codeLinks = pgTable("code_links", {
+		item_id: integer("item_id").notNull(),
+		code: text("code").notNull(),
+	});
+	const ddl = `CREATE TABLE codes (code text PRIMARY KEY, tenant_id integer NOT NULL);
+CREATE TABLE coded_items (
+  id serial PRIMARY KEY, tenant_id integer NOT NULL,
+  code text REFERENCES codes(code)
+);
+CREATE TABLE code_links (
+  item_id integer NOT NULL REFERENCES coded_items(id),
+  code text NOT NULL REFERENCES codes(code),
+  PRIMARY KEY (item_id, code)
+);
+INSERT INTO codes VALUES ('US', 1), ('us', 2);
+INSERT INTO coded_items (tenant_id) VALUES (1);`;
+	const itemsSvc = (db: any) =>
+		new Svc({
+			...base(db, codedItems),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: {
+				codeRef: { table: codes, localKey: "code", references: "code" },
+				links: {
+					table: codes,
+					type: "manyToMany",
+					through: codeLinks,
+					throughLocalKey: "item_id",
+					throughForeignKey: "code",
+					references: "code",
+				},
+			},
+		});
+	const t1 = asTenant(1);
+
+	it("refuses a batch that names another tenant's key in another case", async () => {
+		const db = await customDb(ddl);
+		const svc = itemsSvc(db);
+		await expect400(svc.create({ code: "us" }, t1));
+		const batch = await caught(
+			svc.massCreate([{ code: "US" }, { code: "us" }], t1),
+		);
+		expect(batch).toBeInstanceOf(BulkOperationException);
+		expect(batch.errors.map((e: any) => e.index)).toEqual([1]);
+		// The same answer as a key that is not there at all.
+		const missing = await caught(
+			svc.massCreate([{ code: "US" }, { code: "uS" }], t1),
+		);
+		expect(batch.getResponse()).toEqual(missing.getResponse());
+		expect(await svc.count({}, t1)).toBe(1);
+		await expect(svc.massCreate([{ code: "US" }], t1)).resolves.toHaveLength(1);
+	});
+
+	it("refuses to link another tenant's key in another case", async () => {
+		const db = await customDb(ddl);
+		const svc = itemsSvc(db);
+		const linked = await caught(svc.attach(1, "links", ["US", "us"], t1));
+		expect(linked).toBeInstanceOf(BulkOperationException);
+		expect(linked.errors).toMatchObject([{ id: "us" }]);
+		const row = await svc.attach(1, "links", ["US"], t1);
+		expect(row.links.map((c: any) => c.code)).toEqual(["US"]);
+	});
+});

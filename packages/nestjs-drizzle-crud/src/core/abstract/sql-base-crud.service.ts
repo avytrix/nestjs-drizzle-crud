@@ -2879,16 +2879,21 @@ export abstract class SqlBaseCrudService<
 			if (scope.length === 0 || !referenced) continue;
 			const keys = this.uniqueValues(
 				rows.map((row) => row[local]).filter((value) => value != null),
+				referenced,
 			);
 			if (keys.length === 0) continue;
 			const found: any[] = await db
 				.select({ id: referenced })
 				.from(relation.table)
 				.where(and(inArray(referenced, keys), ...scope));
-			const present = new Set(found.map((row) => this.valueKey(row.id)));
+			const present = new Set(
+				found.map((row) => this.valueKey(row.id, referenced)),
+			);
 			rows.forEach((row, index) => {
 				const value = row[local];
-				if (value == null || present.has(this.valueKey(value))) return;
+				if (value == null || present.has(this.valueKey(value, referenced))) {
+					return;
+				}
 				if (!failures.has(index)) {
 					failures.set(index, this.missingParentException(local));
 				}
@@ -2956,10 +2961,10 @@ export abstract class SqlBaseCrudService<
 		options?: SqlOperationOptions,
 		fresh = false,
 	): Promise<void> {
-		const wanted = this.uniqueValues(ids);
-		if (wanted.length === 0) return;
 		const target = relation.table;
 		const referenced = target[relation.references ?? "id"];
+		const wanted = this.uniqueValues(ids, referenced);
+		if (wanted.length === 0) return;
 		const through = relation.through;
 		const local = through[relation.throughLocalKey!];
 		const foreign = through[relation.throughForeignKey!];
@@ -2970,8 +2975,9 @@ export abstract class SqlBaseCrudService<
 			.select({ id: referenced })
 			.from(target)
 			.where(and(...conditions));
-		const present = new Set(found.map((row) => this.valueKey(row.id)));
-		const missing = wanted.filter((id) => !present.has(this.valueKey(id)));
+		const key = (value: unknown) => this.valueKey(value, referenced);
+		const present = new Set(found.map((row) => key(row.id)));
+		const missing = wanted.filter((id) => !present.has(key(id)));
 		if (missing.length > 0) {
 			const name = this.tableName(target);
 			throw new BulkOperationException(
@@ -2989,8 +2995,8 @@ export abstract class SqlBaseCrudService<
 					.select({ id: foreign })
 					.from(through)
 					.where(and(eq(local, parentValue), inArray(foreign, wanted)));
-		const already = new Set(linked.map((row) => this.valueKey(row.id)));
-		const add = wanted.filter((id) => !already.has(this.valueKey(id)));
+		const already = new Set(linked.map((row) => key(row.id)));
+		const add = wanted.filter((id) => !already.has(key(id)));
 		if (add.length > 0) {
 			await tx.insert(through).values(
 				add.map((id) => ({
@@ -3067,7 +3073,10 @@ export abstract class SqlBaseCrudService<
 			throw new BadRequestException(`${operation} takes an array of ids`);
 		}
 		this.checkReadOptions(options);
-		const ids = this.uniqueValues(relatedIds ?? []);
+		const ids = this.uniqueValues(
+			relatedIds ?? [],
+			relation.table[relation.references ?? "id"],
+		);
 		const parentKey = this.parentKeyOf(relation);
 
 		return this.executeSqlTransaction(async (tx) => {
@@ -3131,16 +3140,19 @@ export abstract class SqlBaseCrudService<
 		}, options?.transaction);
 	}
 
-	// A comparable key for any id: numbers from the driver against strings
-	// from a request, uuids in either case.
-	private valueKey(value: unknown): string {
-		return String(value).toLowerCase();
+	// A comparable key for a value of `column`: numbers from the driver
+	// against strings from a request. A text key compares exactly, the way
+	// Postgres and SQLite compare it ("US" and "us" are two rows); only a uuid
+	// column folds case, as keyOf does for the primary key.
+	private valueKey(value: unknown, column?: any): string {
+		const key = String(value);
+		return column?.columnType === "PgUUID" ? key.toLowerCase() : key;
 	}
 
-	private uniqueValues(values: unknown[]): unknown[] {
+	private uniqueValues(values: unknown[], column?: any): unknown[] {
 		const seen = new Set<string>();
 		return values.filter((value) => {
-			const key = this.valueKey(value);
+			const key = this.valueKey(value, column);
 			if (seen.has(key)) return false;
 			seen.add(key);
 			return true;
@@ -3593,7 +3605,9 @@ export abstract class SqlBaseCrudService<
 		if (written.length >= rows.length) return written;
 		const keys = this.conflictKeys(upsert);
 		const keyOf = (row: Record<string, any>) =>
-			keys.map((k) => this.valueKey(row[k])).join("|");
+			keys
+				.map((k) => this.valueKey(row[k], this.columnOf(this.config.table, k)))
+				.join("|");
 		const seen = new Set(written.map(keyOf));
 		throw new BulkOperationException(
 			message,
