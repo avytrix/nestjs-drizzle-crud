@@ -4199,11 +4199,15 @@ export abstract class SqlBaseCrudService<
 					: unique.map((id) => ({ id, run: () => this.beforeSoftDelete(id) })),
 			write: (tx, _prepared, opts, unique) => {
 				const set = this.softDeleteSet(new Date());
+				// Only a live row, as the guard read found it: a row trashed
+				// since is not stamped again.
 				const update = (db: any, keys: any[]) =>
 					db
 						.update(this.config.table)
 						.set(set)
-						.where(this.writeWhere(keys, opts));
+						.where(
+							and(this.writeWhere(keys, opts), this.softDeleteScope(opts)),
+						);
 				return this.runSet(
 					tx,
 					message,
@@ -4245,13 +4249,17 @@ export abstract class SqlBaseCrudService<
 					: unique.map((id) => ({ id, run: () => this.beforeRestore(id) })),
 			write: (tx, _prepared, opts, unique) => {
 				const set = this.softDeleteSet(null);
+				// The guard's soft delete state rides on the UPDATE, as on the
+				// other trash writes. massRestore takes live and trashed rows
+				// alike, so today that adds no predicate.
+				const state = this.softDeleteScope(opts);
 				return this.runSet(
 					tx,
 					message,
-					(sp) => this.updateWhereIn(sp, set, unique, opts),
+					(sp) => this.updateWhereIn(sp, set, unique, opts, state),
 					unique.map((id) => ({
 						id,
-						run: (sp: any) => this.updateWhereIn(sp, set, [id], opts),
+						run: (sp: any) => this.updateWhereIn(sp, set, [id], opts, state),
 					})),
 					"write",
 				);
@@ -4289,8 +4297,14 @@ export abstract class SqlBaseCrudService<
 					? undefined
 					: unique.map((id) => ({ id, run: () => this.beforeDelete(id) })),
 			write: (tx, _prepared, opts, unique) => {
+				// massDelete only removes a live row, as the guard read found it;
+				// massForceDelete any row.
 				const remove = (db: any, keys: any[]) =>
-					db.delete(this.config.table).where(this.writeWhere(keys, opts));
+					db
+						.delete(this.config.table)
+						.where(
+							and(this.writeWhere(keys, opts), this.softDeleteScope(opts)),
+						);
 				return this.runSet(
 					tx,
 					message,

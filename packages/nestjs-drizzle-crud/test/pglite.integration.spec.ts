@@ -4518,3 +4518,33 @@ INSERT INTO scores (score) VALUES (1), (2);`;
 		expect(rows.map((row: any) => row.views)).toEqual([11, 12]);
 	});
 });
+
+describe("3.8.1 D-08: mass trash writes carry the guard's soft delete state", () => {
+	// A row trashed between the guard read and the write cannot be raced in
+	// a single-connection PGlite, so the statement's shape is asserted.
+	it("puts deleted_at IS NULL in the WHERE of massSoftDelete and massDelete", async () => {
+		const { db, reset, statements } = await countingDb();
+		const svc = postsService(db);
+		const live = /"posts"\."deleted_at" is null/;
+		const writes = () =>
+			statements().filter((query) => /^\s*(update|delete)\b/i.test(query));
+
+		reset();
+		await svc.massSoftDelete([1, 2]);
+		expect(writes()).toHaveLength(1);
+		expect(writes()[0]).toMatch(live);
+
+		reset();
+		await svc.massDelete([3, 4]);
+		expect(writes()).toHaveLength(1);
+		expect(writes()[0]).toMatch(live);
+
+		// The purge and the restore take a row in either state.
+		reset();
+		await svc.massForceDelete([1]);
+		expect(writes()[0]).not.toMatch(/deleted_at/);
+		reset();
+		await svc.massRestore([2, 5]);
+		expect(writes()[0]).not.toMatch(/"deleted_at" is/);
+	});
+});
