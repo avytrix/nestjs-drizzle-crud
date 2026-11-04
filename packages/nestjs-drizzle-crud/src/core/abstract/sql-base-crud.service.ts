@@ -4476,25 +4476,39 @@ export abstract class SqlBaseCrudService<
 		});
 	}
 
-	// A stable string for comparing two SET objects. Strings (Dates included,
-	// as JSON) are prefixed, so the tags below never equal a real value:
-	// bigints, NaN and Infinity (which JSON writes as null), and any value
-	// that is not plain data (Drizzle's SQL, Param, a Column), which gets a
-	// tag of its own so a SET carrying one never shares an UPDATE and is never
-	// walked (an SQL object is circular).
+	// A stable string for comparing two SET objects. The replacer reads each
+	// raw value (this[key]), before JSON.stringify has called its toJSON: a
+	// Date is tagged by its time, so an Invalid Date is not null and a Date is
+	// not its ISO string, and a byte array by its bytes. Strings are
+	// prefixed, so the tags never equal a real value: bigints, NaN and
+	// Infinity (which JSON writes as null), and any other value that is not
+	// plain data (Drizzle's SQL, Param, a Column), which gets a tag of its own
+	// so a SET carrying one never shares an UPDATE and is never walked (an
+	// SQL object is circular).
 	private fingerprint(value: unknown): string {
-		return JSON.stringify(value, (_key, v) => {
-			if (typeof v === "string") return `s:${v}`;
-			if (typeof v === "bigint") return `bigint:${v}`;
-			if (typeof v === "number" && !Number.isFinite(v)) return `number:${v}`;
-			if (v !== null && typeof v === "object" && !Array.isArray(v)) {
-				const proto = Object.getPrototypeOf(v);
-				if (proto !== Object.prototype && proto !== null) {
-					return `opaque:${++fingerprintTag}`;
+		return JSON.stringify(
+			value,
+			function (this: Record<string, unknown>, key: string, json: unknown) {
+				const v = this[key];
+				if (v instanceof Date) return `date:${v.getTime()}`;
+				if (ArrayBuffer.isView(v)) {
+					const bytes = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+					return `bytes:${bytes.join(",")}`;
 				}
-			}
-			return v;
-		});
+				if (typeof v === "string") return `s:${v}`;
+				if (typeof v === "bigint") return `bigint:${v}`;
+				if (typeof v === "number" && !Number.isFinite(v)) {
+					return `number:${v}`;
+				}
+				if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+					const proto = Object.getPrototypeOf(v);
+					if (proto !== Object.prototype && proto !== null) {
+						return `opaque:${++fingerprintTag}`;
+					}
+				}
+				return json;
+			},
+		);
 	}
 
 	// One SELECT for every id, in the soft delete scope of `options`. Every id

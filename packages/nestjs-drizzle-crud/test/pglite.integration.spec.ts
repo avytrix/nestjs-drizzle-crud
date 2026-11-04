@@ -4951,3 +4951,47 @@ CREATE TABLE dated_kids (
 		expect(error.message).toBe("not a bind limit");
 	});
 });
+
+describe("3.8.2 G-04: massUpdate groups SETs by their raw values", () => {
+	it("keeps an Invalid Date, a Date, its ISO string and null apart", () => {
+		const svc = postsService({}) as any;
+		const print = (value: unknown) => svc.fingerprint({ v: value });
+		const at = new Date(0);
+		const prints = [
+			print(null),
+			print(new Date("x")),
+			print(at),
+			print(at.toISOString()),
+		];
+		expect(new Set(prints).size).toBe(4);
+		expect(print(new Date(0))).toBe(print(at));
+		expect(print(Buffer.from([1, 2]))).toBe(print(new Uint8Array([1, 2])));
+		expect(print(Buffer.from([1, 2]))).not.toBe(print(Buffer.from([1, 3])));
+	});
+
+	it("answers both orders of a hook's null and Invalid Date alike", async () => {
+		for (const order of [
+			[null, "invalid"],
+			["invalid", null],
+		]) {
+			const db = await freshDb();
+			class Hooked extends Svc {
+				protected override async beforeUpdate(id: any, data: any) {
+					const value = order[Number(id) - 1];
+					return {
+						...data,
+						published_at: value === "invalid" ? new Date("x") : value,
+					};
+				}
+			}
+			const svc = new Hooked(base(db, posts));
+			await expect400(svc.massUpdate([1, 2], { title: "t" }));
+			const rows = await db
+				.select({ at: posts.published_at })
+				.from(posts)
+				.where(sql`${posts.id} in (1, 2)`)
+				.orderBy(posts.id);
+			expect(rows.every((row: any) => row.at !== null)).toBe(true);
+		}
+	});
+});
