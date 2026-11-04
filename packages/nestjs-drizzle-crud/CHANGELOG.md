@@ -38,7 +38,9 @@ and nested children that skipped the key check. No public API or override point 
   after the commit, where a retry gives the same rows, except for a write whose values hold an SQL
   expression (``massUpdate(ids, { views: sql`views + 1` })``), which 3.8.2 loads inside too.
 - `update` of a missing row with a value the database refuses (`update(999, { views: "abc" })`)
-  is a 404, as it was before 3.8.0, instead of a 400.
+  is a 404, as it was before 3.8.0, instead of a 400, outside a caller's transaction. Inside one
+  (`options.transaction`) the failed statement has aborted the transaction on PostgreSQL, so the
+  answer stays the 400, which is the same for every tenant.
 
 ### Fixed
 

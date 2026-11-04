@@ -5053,3 +5053,29 @@ describe("3.8.2 G-07: a massUpdate with an SQL value loads inside its transactio
 		expect(row.author.name).toBe("Ann");
 	});
 });
+
+describe("3.8.2 G-08: one SQL value shared by every SET is one UPDATE", () => {
+	const counters = pgTable("counters", {
+		id: serial("id").primaryKey(),
+		n: integer("n").notNull(),
+	});
+	const ddl = `CREATE TABLE counters (id serial PRIMARY KEY, n integer NOT NULL);
+INSERT INTO counters (n) SELECT 0 FROM generate_series(1, 50);`;
+
+	it("sends one UPDATE for 50 ids and adds once to each row", async () => {
+		const log: string[] = [];
+		const db = await customDb(ddl, log);
+		const svc = new Svc({
+			...base(db, counters),
+			softDelete: undefined,
+			timestamps: undefined,
+		});
+		const ids = Array.from({ length: 50 }, (_, i) => i + 1);
+		log.length = 0;
+		const rows = await svc.massUpdate(ids, {
+			n: sql`${counters.n} + 1`,
+		} as any);
+		expect(log.filter((query) => /^\s*update\b/i.test(query))).toHaveLength(1);
+		expect(rows.map((row: any) => row.n)).toEqual(ids.map(() => 1));
+	});
+});
