@@ -4348,3 +4348,49 @@ INSERT INTO t_categories (tenant_id) VALUES (1), (2);`;
 		]);
 	});
 });
+
+describe("3.8.1 D-11: the tenant key check sends its SELECTs together", () => {
+	const pairs = pgTable("doc_pairs", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+		doc_id: integer("doc_id").notNull(),
+		other_id: integer("other_id").notNull(),
+	});
+	const ddl = `CREATE TABLE doc_pairs (
+  id serial PRIMARY KEY, tenant_id integer NOT NULL,
+  doc_id integer NOT NULL, other_id integer NOT NULL
+);`;
+
+	it("starts every relation's SELECT before awaiting the first", async () => {
+		const db = await customDb(ddl);
+		const svc = new Svc({
+			...base(db, pairs),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: {
+				doc: { table: docs, localKey: "doc_id" },
+				other: { table: docs, localKey: "other_id" },
+			},
+		});
+		const trace: string[] = [];
+		const client = db.$client;
+		const query = client.query.bind(client);
+		client.query = async (text: string, ...rest: any[]) => {
+			const checked = /from "docs"/.test(text);
+			if (checked) trace.push("start");
+			try {
+				return await query(text, ...rest);
+			} finally {
+				if (checked) trace.push("end");
+			}
+		};
+		await svc.create({ doc_id: 1, other_id: 2 }, asTenant(1));
+		expect(trace).toEqual(["start", "start", "end", "end"]);
+		// A failure is still named by the first relation that refuses it.
+		const failed = await expect400(
+			svc.create({ doc_id: 4, other_id: 5 }, asTenant(1)),
+		);
+		expect(failed.message).toContain("doc_id");
+	});
+});

@@ -2878,6 +2878,7 @@ export abstract class SqlBaseCrudService<
 	): Promise<Map<number, ForeignKeyViolationException>> {
 		const failures = new Map<number, ForeignKeyViolationException>();
 		if (!this.resolveScope(options)) return failures;
+		const checks: Array<{ local: string; referenced: any; query: any }> = [];
 		for (const [name, relation] of Object.entries(owner.relations ?? {})) {
 			const local = relation.localKey;
 			if (!local || this.isCollection(relation) || skip.includes(name)) {
@@ -2891,12 +2892,21 @@ export abstract class SqlBaseCrudService<
 				referenced,
 			);
 			if (keys.length === 0) continue;
-			const found: any[] = await db
-				.select({ id: referenced })
-				.from(relation.table)
-				.where(and(inArray(referenced, keys), ...scope));
+			checks.push({
+				local,
+				referenced,
+				query: db
+					.select({ id: referenced })
+					.from(relation.table)
+					.where(and(inArray(referenced, keys), ...scope)),
+			});
+		}
+		// The SELECTs run together; failures are still named in relation
+		// order, so the error a row gets does not depend on which came first.
+		const found = await Promise.all(checks.map((check) => check.query));
+		checks.forEach(({ local, referenced }, i) => {
 			const present = new Set(
-				found.map((row) => this.valueKey(row.id, referenced)),
+				(found[i] as any[]).map((row) => this.valueKey(row.id, referenced)),
 			);
 			rows.forEach((row, index) => {
 				const value = row[local];
@@ -2907,7 +2917,7 @@ export abstract class SqlBaseCrudService<
 					failures.set(index, this.missingParentException(local, owner.table));
 				}
 			});
-		}
+		});
 		return failures;
 	}
 
