@@ -12,6 +12,7 @@ import { afterAll, describe, expect, it } from "@jest/globals";
 import { Test } from "@nestjs/testing";
 import { sql } from "drizzle-orm";
 import {
+	bigint,
 	datetime,
 	int,
 	mysqlTable,
@@ -278,6 +279,68 @@ run("MySQL integration (MYSQL_URL)", () => {
 				expect(row.links.map((c: any) => c.code)).toEqual(["US"]);
 			});
 		}
+	});
+
+	// 3.8.2: ELT returns a string, so the key check casts it back to an
+	// integer column's type. Compared as doubles, 9007199254740992 and
+	// 9007199254740993 (2^53 and 2^53 + 1) are equal.
+	describe("the tenant key check compares a BIGINT key exactly", () => {
+		const refs = mysqlTable("big_refs", {
+			id: bigint("id", { mode: "bigint", unsigned: true }).primaryKey(),
+			tenant_id: int("tenant_id").notNull(),
+		});
+		const owned = mysqlTable("big_owned", {
+			id: int("id").autoincrement().primaryKey(),
+			tenant_id: int("tenant_id").notNull(),
+			ref_id: bigint("ref_id", { mode: "bigint" }),
+		});
+		async function bigDb() {
+			const db = await emptyDb();
+			for (const statement of [
+				"DROP TABLE IF EXISTS big_owned, big_refs",
+				"CREATE TABLE big_refs (id bigint unsigned PRIMARY KEY, tenant_id int NOT NULL)",
+				"CREATE TABLE big_owned (id int AUTO_INCREMENT PRIMARY KEY, tenant_id int NOT NULL, ref_id bigint)",
+				"INSERT INTO big_refs VALUES (9007199254740993, 1), (5, 2)",
+			]) {
+				await db.execute(sql.raw(statement));
+			}
+			const svc = new Svc({
+				dialect: "mysql",
+				db,
+				table: owned,
+				primaryKey: "id",
+				softDelete: undefined,
+				timestamps: undefined,
+				scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+				relations: { ref: { table: refs, localKey: "ref_id" } },
+			});
+			return { db, svc };
+		}
+		const t1 = { context: { tenantId: 1 } };
+		const stored = async (db: any) => {
+			const [rows] = await db.execute(
+				sql.raw("SELECT CAST(ref_id AS CHAR) AS ref FROM big_owned"),
+			);
+			return rows.map((row: any) => row.ref);
+		};
+
+		it("refuses a key one below the stored one", async () => {
+			const { db, svc } = await bigDb();
+			await expectStatus(svc.create({ ref_id: "9007199254740992" }, t1), 400);
+			const batch = await caught(
+				svc.massCreate([{ ref_id: "9007199254740992" }], t1),
+			);
+			expect(batch.errors.map((e: any) => e.index)).toEqual([0]);
+			// Another tenant's key is refused as before.
+			await expectStatus(svc.create({ ref_id: "5" }, t1), 400);
+			expect(await stored(db)).toEqual([]);
+		});
+
+		it("takes the exact key", async () => {
+			const { db, svc } = await bigDb();
+			await svc.create({ ref_id: "9007199254740993" }, t1);
+			expect(await stored(db)).toEqual(["9007199254740993"]);
+		});
 	});
 
 	it("builds its own pool from connectionString", async () => {

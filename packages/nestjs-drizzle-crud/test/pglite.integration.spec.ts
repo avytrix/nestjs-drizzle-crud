@@ -4351,6 +4351,13 @@ INSERT INTO coded_items (tenant_id) VALUES (1);`;
 		expect(links.sent.at(-1)!.params).toEqual([1, "US"]);
 
 		// A _bin collation: nothing matched, so "us" is outside the tenant.
+		// ELT gives a string back: an integer key is cast to its column's
+		// type, so a BIGINT past 2^53 is not compared as a double.
+		const { sql: castSql } = ci.db.dialect.sqlToQuery(
+			sql`${svc.keyInput(mItems.id, ["1"]).value}`,
+		);
+		expect(castSql).toBe("cast(elt(input.column_0 + 1, ?) as signed)");
+
 		const bin = stub([]);
 		expect(
 			(await svc.keysOutsideScope(bin.db, [{ code: "us" }], t1)).size,
@@ -5077,5 +5084,41 @@ INSERT INTO counters (n) SELECT 0 FROM generate_series(1, 50);`;
 		} as any);
 		expect(log.filter((query) => /^\s*update\b/i.test(query))).toHaveLength(1);
 		expect(rows.map((row: any) => row.n)).toEqual(ids.map(() => 1));
+	});
+});
+
+describe("3.8.2 G-01: an enum key is cast to its enum type", () => {
+	const statuses = pgTable("tenant_statuses", {
+		code: postStatus("code").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+	});
+	const tagged = pgTable("status_tagged", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+		status: postStatus("status"),
+	});
+	const ddl = `CREATE TABLE tenant_statuses (code post_status PRIMARY KEY, tenant_id integer NOT NULL);
+CREATE TABLE status_tagged (id serial PRIMARY KEY, tenant_id integer NOT NULL, status post_status);
+INSERT INTO tenant_statuses VALUES ('draft', 1), ('published', 2);`;
+
+	it("matches an enum key in the tenant and refuses the rest with a 400", async () => {
+		const db = await customDb(ddl);
+		const svc = new Svc({
+			...base(db, tagged),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: {
+				state: { table: statuses, localKey: "status", references: "code" },
+			},
+		});
+		const t1 = asTenant(1);
+		await expect(svc.create({ status: "draft" }, t1)).resolves.toMatchObject({
+			status: "draft",
+		});
+		// Another tenant's value, and one the enum does not have.
+		await expect400(svc.create({ status: "published" }, t1));
+		await expect400(svc.massCreate([{ status: "bogus" }], t1));
+		expect(await svc.count({}, t1)).toBe(1);
 	});
 });

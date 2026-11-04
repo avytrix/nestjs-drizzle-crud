@@ -25,9 +25,10 @@ than in 3.8.1.
   `SELECT`, so the column's type and collation decide which key matched. A `citext` or SQLite
   `NOCASE` key of the caller's own tenant in another case is accepted again (3.8.1 refused it with
   a 400), and on MySQL a key under a `_bin` collation that differs from another tenant's only in
-  case is refused. PostgreSQL `text` still compares exactly, and a uuid matches in any case.
-  `attach` and `sync` link each target by its key as stored, so `"ann@x.io"` and `"Ann@X.io"` on a
-  `citext` column give one link.
+  case is refused. PostgreSQL `text` still compares exactly, and a uuid matches in any case. On
+  MySQL an integer or decimal key is compared in its column's type, so a `BIGINT` past 2^53 is
+  matched exactly. `attach` and `sync` link each target by its key as stored, so `"ann@x.io"` and
+  `"Ann@X.io"` on a `citext` column give one link.
 - `massUpdate` and `massUpsert` load `relations` and `counts` inside their transaction when a value
   holds a Drizzle `sql` expression. A load that fails then rolls the write back, so a retry no
   longer adds `views + 1` twice.

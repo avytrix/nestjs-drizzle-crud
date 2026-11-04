@@ -3336,7 +3336,9 @@ export abstract class SqlBaseCrudService<
 	// each value up by position with ELT() instead of carrying it in the
 	// list: a derived table's text column has an implicit collation of its
 	// own, and comparing it with a column of another one is an error, where a
-	// bound value takes the column's.
+	// bound value takes the column's. ELT returns a string, so for a numeric
+	// column it is cast back to the column's type (mysqlKeyCast): compared as
+	// a string, two BIGINT ids past 2^53 would compare as equal doubles.
 	private keyInput(
 		column: any,
 		values: unknown[],
@@ -3344,10 +3346,12 @@ export abstract class SqlBaseCrudService<
 		const params = values.map((value) => sql.param(value, column));
 		if (this.config.dialect === "mysql") {
 			const rows = values.map((_, at) => sql`row(${sql.raw(String(at))})`);
+			const picked = sql`elt(input.column_0 + 1, ${sql.join(params, sql`, `)})`;
+			const cast = this.mysqlKeyCast(column);
 			return {
 				list: sql`(values ${sql.join(rows, sql`, `)}) as input`,
 				at: sql`input.column_0`,
-				value: sql`elt(input.column_0 + 1, ${sql.join(params, sql`, `)})`,
+				value: cast ? sql`cast(${picked} as ${sql.raw(cast)})` : picked,
 			};
 		}
 		const type = this.config.dialect === "postgresql" && this.pgKeyType(column);
@@ -3360,6 +3364,21 @@ export abstract class SqlBaseCrudService<
 			at: sql`input.column1`,
 			value: sql`input.column2`,
 		};
+	}
+
+	// The CAST type that gives a MySQL key back its column's type after ELT:
+	// SIGNED or UNSIGNED for an integer column (serial is BIGINT UNSIGNED),
+	// the column's own DECIMAL for a decimal one. A string column needs none:
+	// the value takes the column's collation.
+	private mysqlKeyCast(column: any): string | undefined {
+		const type = String(column?.getSQLType?.() ?? "").toLowerCase();
+		if (type === "serial") return "unsigned";
+		if (/^(tiny|small|medium|big)?int\b/.test(type)) {
+			return type.includes("unsigned") ? "unsigned" : "signed";
+		}
+		const decimal = type.match(/^decimal(\(\d+(?:,\d+)?\))?/);
+		if (decimal) return `decimal${decimal[1] ?? ""}`;
+		return undefined;
 	}
 
 	// The type a Postgres VALUES list casts a key of `column` to: its SQL
