@@ -11,6 +11,57 @@ restore, `ER_DUP_ENTRY` mapping, dialect locking) are tracked separately and unc
 3.3.1, 3.4.0, 3.5.0 and 3.5.2 were tagged but never published to npm. Their changes reached npm
 in 3.5.1 (3.3.1 to 3.5.0) and 3.6.0 (3.5.2). The unscoped `nestjs-drizzle-crud` stops at 3.3.0.
 
+## [3.8.2] - 2026-11-04
+
+Fixes from the 3.8.1 audit (G-01 to G-08). The tenant key check now lets the database compare keys,
+so it follows each column's collation, and a malformed key or an ISO date string in a write body is
+no longer a 500. No public API or override point changed, and no operation sends more statements
+than in 3.8.1.
+
+### Changed
+
+- The tenant key check, `attach` and `sync` leave the key comparison to the database. They join the
+  keys they were sent, as an inline `VALUES` list, against the related table in the same scoped
+  `SELECT`, so the column's type and collation decide which key matched. A `citext` or SQLite
+  `NOCASE` key of the caller's own tenant in another case is accepted again (3.8.1 refused it with
+  a 400), and on MySQL a key under a `_bin` collation that differs from another tenant's only in
+  case is refused. PostgreSQL `text` still compares exactly, and a uuid matches in any case.
+  `attach` and `sync` link each target by its key as stored, so `"ann@x.io"` and `"Ann@X.io"` on a
+  `citext` column give one link.
+- `massUpdate` and `massUpsert` load `relations` and `counts` inside their transaction when a value
+  holds a Drizzle `sql` expression. A load that fails then rolls the write back, so a retry no
+  longer adds `views + 1` twice.
+- A `RangeError` thrown while a statement's values are mapped (a custom type's own check, say) is
+  no longer reported as "Too many values in one statement". Only the call stack overflow of an
+  oversized parameter list is.
+
+### Fixed
+
+- A belongs-to key the column's type cannot hold (`"nope"` for a uuid) is a 400 in `massCreate`,
+  `massUpdate` and `massUpsert`, and in `update` inside a caller's transaction. It was a raw
+  `22P02` or `25P02`, a 500.
+- Every write (`create`, `update`, `upsert`, the mass writes and nested rows) turns an ISO date
+  string or a number for a date-mode `timestamp`, `date` or `datetime` column into a `Date`, as
+  filters already did. It was a 500 `TypeError` (`value.toISOString is not a function`). A value
+  that is not a date, an Invalid Date included, is a 400 that names the column, in a write and in a
+  filter.
+- `massUpdate` groups SETs by their raw values: a hook that returns `null` for one id and an
+  Invalid Date for another no longer gets both into one `UPDATE`. A `Date` and its ISO string are
+  two values, and byte arrays compare by their bytes.
+- A `massUpdate` whose SETs all hold the same `sql` expression object, as in
+  ``massUpdate(ids, { n: sql`n + 1` })``, sends one `UPDATE` instead of one per id.
+- The per-call scope memo ends with the public call that started it. Options a hook kept and passed
+  to a later call reused the old memo, which grew with each call and resolved a context object
+  mutated in place to its old tenant.
+
+### Docs
+
+- The 3.8.1 entry now says the 404 ahead of a refused value holds outside a caller's transaction,
+  and that a mass write with an SQL value was not safe to retry. The bulk operations page says when
+  such a write loads its relations and that one shared `sql` object is one `UPDATE`.
+- The multi-tenancy page says the database compares the keys. The CRUD operations page, the README
+  and `AGENT.md` say date strings are parsed on writes.
+
 ## [3.8.1] - 2026-11-04
 
 Fixes from the 3.8.0 audit (D-01 to D-11). Three of them close gaps in tenant isolation: a scope
