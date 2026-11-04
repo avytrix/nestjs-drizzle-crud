@@ -17,6 +17,59 @@ The 3.0.x line is PostgreSQL-first. MySQL-specific paths (non-`RETURNING` restor
 3.3.1, 3.4.0, 3.5.0 and 3.5.2 were tagged but never published to npm. Their changes reached npm
 in 3.5.1 (3.3.1 to 3.5.0) and 3.6.0 (3.5.2). The unscoped `nestjs-drizzle-crud` stops at 3.3.0.
 
+## [3.8.1] - 2026-11-04
+
+Fixes from the 3.8.0 audit (D-01 to D-11). Three of them close gaps in tenant isolation: a scope
+handed from one service to another, a batch key that differs from another tenant's only in case,
+and nested children that skipped the key check. No public API or override point changed.
+
+### Changed
+
+- Text keys compare exactly in the tenant key check, `attach` and `sync`: `"US"` and `"us"` are
+  two keys, as they are two rows on PostgreSQL and SQLite. Before, every key was lowercased, so a
+  batch holding both could point a row at another tenant's `"us"` and get a 201 where `"us"`
+  alone was a 400. Only a uuid column still ignores case. On MySQL, whose default collations
+  compare text without case, a key now has to be sent in the case it is stored in.
+- On a scoped entity, a nested create checks the belongs-to keys of the rows it writes (a
+  belongs-to parent, has-many children, new many-to-many targets) against the caller's tenant,
+  using the nested relation's own `relations`. A child key to another tenant's row is the same
+  400 `ForeignKeyViolationException` as a key to a missing row, and nothing is written. It was a
+  201. A child key that no nested relation declares is still left to the database's foreign key.
+- `massSoftDelete` and `massDelete` put `deleted_at IS NULL` in the `WHERE` of their write, as the
+  single-row writes have since 3.8.0. A row soft-deleted between the existence check and the
+  write is a 404 entry and the batch writes nothing, instead of being stamped again or
+  hard-deleted. `massForceDelete` still removes a row in either state.
+- `massCreate` loads `relations` and `counts` inside its transaction again. A load that fails
+  rolls the rows back, so a retry no longer stores them twice. The other mass writes, which give
+  the same rows when retried, still load after the commit.
+- `update` of a missing row with a value the database refuses (`update(999, { views: "abc" })`)
+  is a 404, as it was before 3.8.0, instead of a 400.
+
+### Fixed
+
+- The per-call scope memo is keyed by service and by the context it was resolved for. Options
+  handed from one service to another, the natural way for a subclass override to share a
+  transaction, carried the first service's scope: a service whose scope is `null` let a scoped
+  one read every tenant's rows, and a second service scoped by another column stored `NULL` in
+  it. Each service still runs its scope function once per call.
+- An override of `emitEvent` or `prepareUpdate` keeps the guard read ahead of the write, like an
+  override of a `before*` hook. An `emitEvent` override saw the before event for another
+  tenant's id before the 404.
+- `massUpdate` with a `beforeUpdate` hook that returns `NaN` for one id and `null` for another no
+  longer writes `NaN` to both, and a Drizzle `sql` expression as a value (`views + 1`) works as
+  it does in `update` instead of failing with a circular `TypeError` (a 500).
+- The tenant key check sends its `SELECT`s, one per relation, together instead of one after the
+  other.
+
+### Docs
+
+- The multi-tenancy FAQ answered "No" to "Are eager-loaded relations filtered by tenant?", against
+  the section on the same page. It now says yes, when the related table has the scope columns.
+  The multi-tenancy and relations-on-writes pages say which nested keys are checked, and the bulk
+  operations page says when a mass write loads its relations.
+- `AGENTS.md`, `CONTRIBUTING.md` and `apps/docs/AGENTS.md` point at the changelog page where it
+  lives now, `(support)/changelog.mdx`.
+
 ## [3.8.0] - 2026-11-03
 
 Performance fixes from the 3.7.1 performance report. Calls return the same rows, in the same

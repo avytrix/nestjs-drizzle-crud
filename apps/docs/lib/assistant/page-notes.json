@@ -130,16 +130,16 @@
 		"summary": "The nestjs-drizzle-crud changelog, every release since 3.0.0 with what was added, changed, fixed and deprecated, newest first, mirroring CHANGELOG.md.",
 		"topics": [
 			{
-				"heading": "[3.8.0] - 2026-11-03",
-				"anchor": "380---2026-11-03"
-			},
-			{
-				"heading": "Added",
-				"anchor": "added"
+				"heading": "[3.8.1] - 2026-11-04",
+				"anchor": "381---2026-11-04"
 			},
 			{
 				"heading": "Changed",
 				"anchor": "changed"
+			},
+			{
+				"heading": "Fixed",
+				"anchor": "fixed"
 			}
 		]
 	},
@@ -710,12 +710,12 @@
 				"anchor": "how-do-i-get-a-created-row-back-with-its-relations"
 			},
 			{
-				"heading": "How do I create a row with its children in one call?",
-				"anchor": "how-do-i-create-a-row-with-its-children-in-one-call"
+				"heading": "How do I get a created row back with its relations?",
+				"anchor": "how-do-i-get-a-created-row-back-with-its-relations"
 			},
 			{
-				"heading": "Declare the relation and allow writing it",
-				"anchor": "declare-the-relation-and-allow-writing-it"
+				"heading": "How do I create a row with its children in one call?",
+				"anchor": "how-do-i-create-a-row-with-its-children-in-one-call"
 			}
 		]
 	},

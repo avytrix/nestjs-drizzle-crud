@@ -4,6 +4,12 @@ import { ArrowRight } from "lucide-react";
 // Newest first; the top banner announces RELEASES[0].
 export const RELEASES = [
 	{
+		version: "3.8.1",
+		date: "Nov 4, 2026",
+		title: "Tighter tenant checks",
+		body: "Each service resolves its own tenant scope, even when another service hands it its options. Text keys compare exactly, so a key that differs from another tenant's only in case is refused, and nested children get the same key check as their parent. massCreate rolls back when its relations fail to load, and massUpdate takes sql values.",
+	},
+	{
 		version: "3.8.0",
 		date: "Nov 3, 2026",
 		title: "Faster cursor pages, fewer round trips",
