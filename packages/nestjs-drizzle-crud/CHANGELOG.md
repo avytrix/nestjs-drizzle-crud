@@ -34,8 +34,9 @@ and nested children that skipped the key check. No public API or override point 
   write is a 404 entry and the batch writes nothing, instead of being stamped again or
   hard-deleted. `massForceDelete` still removes a row in either state.
 - `massCreate` loads `relations` and `counts` inside its transaction again. A load that fails
-  rolls the rows back, so a retry no longer stores them twice. The other mass writes, which give
-  the same rows when retried, still load after the commit.
+  rolls the rows back, so a retry no longer stores them twice. The other mass writes still load
+  after the commit, where a retry gives the same rows, except for a write whose values hold an SQL
+  expression (``massUpdate(ids, { views: sql`views + 1` })``), which 3.8.2 loads inside too.
 - `update` of a missing row with a value the database refuses (`update(999, { views: "abc" })`)
   is a 404, as it was before 3.8.0, instead of a 400.
 

@@ -5024,3 +5024,32 @@ describe("3.8.2 G-06: the scope memo ends with its call", () => {
 		expect(resolved).toEqual([1, 2, 2]);
 	});
 });
+
+describe("3.8.2 G-07: a massUpdate with an SQL value loads inside its transaction", () => {
+	it("leaves the row as it was when the load fails, so a retry adds once", async () => {
+		const db = await freshDb();
+		let fail = true;
+		class Flaky extends Svc {
+			protected override async loadWriteRelations(
+				...args: Parameters<Svc["loadWriteRelations"]>
+			) {
+				if (fail && args[1].length > 0) throw new Error("load failed");
+				return super.loadWriteRelations(...args);
+			}
+		}
+		const svc = new Flaky({
+			...base(db, posts),
+			relations: { author: { table: authors, localKey: "author_id" } },
+		});
+		const bump = { views: sql`${posts.views} + 10` } as any;
+		const before = (await svc.find(1))!.views;
+		await expect(
+			svc.massUpdate([1], bump, { relations: ["author"] }),
+		).rejects.toThrow("load failed");
+		expect((await svc.find(1))!.views).toBe(before);
+		fail = false;
+		const [row] = await svc.massUpdate([1], bump, { relations: ["author"] });
+		expect(row.views).toBe(before + 10);
+		expect(row.author.name).toBe("Ann");
+	});
+});

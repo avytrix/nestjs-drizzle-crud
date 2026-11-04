@@ -25,8 +25,9 @@ import {
 	not,
 	notExists,
 	notInArray,
+	is,
 	or,
-	type SQL,
+	SQL,
 	sql,
 } from "drizzle-orm";
 import {
@@ -2627,7 +2628,9 @@ export abstract class SqlBaseCrudService<
 	// failure has to roll the write back, as it always did. A create never
 	// loads after the commit: it is not idempotent, so a load that fails then
 	// (a pool timeout, a dropped connection) would answer an error for rows
-	// that are stored, and a retry would store them twice.
+	// that are stored, and a retry would store them twice. Neither does a
+	// write whose rows hold an SQL expression (`views + 1`), which
+	// writeThenLoad learns from the write itself.
 	private loadsAfterCommit(
 		operation: CrudWriteOperation,
 		options?: SqlOperationOptions,
@@ -2643,20 +2646,24 @@ export abstract class SqlBaseCrudService<
 
 	// Run a mass write's transaction, then load its write relations: inside
 	// the transaction, or after it commits when loadsAfterCommit allows. The
-	// rows come back the same either way.
+	// rows come back the same either way. A write that is not safe to retry
+	// passes `inside` to load in the transaction anyway.
 	private async writeThenLoad<R extends T[]>(
 		operation: CrudWriteOperation,
 		options: SqlOperationOptions | undefined,
-		write: (tx: any, load: (tx: any, rows: T[]) => Promise<void>) => Promise<R>,
+		write: (
+			tx: any,
+			load: (tx: any, rows: T[], inside?: boolean) => Promise<void>,
+		) => Promise<R>,
 	): Promise<R> {
-		const late = this.loadsAfterCommit(operation, options);
+		let late = this.loadsAfterCommit(operation, options);
 		const rows = await this.executeSqlTransaction(
 			(tx) =>
-				write(tx, (inTx, written) =>
-					late
-						? Promise.resolve()
-						: this.loadWriteRelations(inTx, written, options),
-				),
+				write(tx, (inTx, written, inside = false) => {
+					if (late && !inside) return Promise.resolve();
+					late = false;
+					return this.loadWriteRelations(inTx, written, options);
+				}),
 			options?.transaction,
 		);
 		if (late) await this.loadWriteRelations(this.dbFor(), rows, options);
@@ -4061,7 +4068,7 @@ export abstract class SqlBaseCrudService<
 		if (spec.returnsRows) this.checkReadOptions(options);
 		const body = async (
 			tx: any,
-			load: (tx: any, rows: T[]) => Promise<void>,
+			load: (tx: any, rows: T[], inside?: boolean) => Promise<void>,
 		): Promise<T[]> => {
 			const opts = { ...options, transaction: tx, ...spec.state };
 			const unique = ids ? this.uniqueIds(ids) : [];
@@ -4105,7 +4112,15 @@ export abstract class SqlBaseCrudService<
 				},
 				options,
 			);
-			if (spec.returnsRows) await load(tx, written);
+			// A row that holds an SQL expression (`views + 1`) is not the same
+			// row when the write is retried, so it loads inside.
+			if (spec.returnsRows) {
+				await load(
+					tx,
+					written,
+					prepared.some((row) => this.holdsSql(row)),
+				);
+			}
 			return ids ? this.inIdOrder(written, ids) : written;
 		};
 		return spec.returnsRows
@@ -4517,6 +4532,16 @@ export abstract class SqlBaseCrudService<
 			withDeleted: true,
 			onlyDeleted: false,
 		});
+	}
+
+	// Whether a prepared row or SET holds a Drizzle SQL expression.
+	private holdsSql(row: unknown): boolean {
+		return (
+			isPlainObject(row) &&
+			Object.values(row as Record<string, unknown>).some((value) =>
+				is(value, SQL),
+			)
+		);
 	}
 
 	// The ids in input order with duplicates removed.
