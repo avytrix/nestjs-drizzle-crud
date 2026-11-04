@@ -151,6 +151,8 @@ Those are legacy manual patterns and they break registration.
 `withCount: false` it skips the count, `total` is `null` and `hasMore` is set.
 `delete` and `softDelete` return a boolean. `update` and `restore` return the entity and
 throw `EntityNotFoundException` when the row is missing.
+Writes turn an ISO string or a number for a date-mode `timestamp` / `date` /
+`datetime` column into a `Date`; a value that is not a date is a 400 naming the column.
 
 Every method takes `options`: `{ transaction, relations, select, search, hooks, lock, forNoKeyUpdate, withDeleted, onlyDeleted, skipAllowlists, bulkMode, counts, context, skipScope, skipEvents, expectedVersion, expectedVersions }`.
 

@@ -287,12 +287,55 @@ export abstract class SqlBaseCrudService<
 	// parameter with toISOString(). Turn the string into a Date, and answer a
 	// value that is not a date with a 400 instead of a driver crash.
 	protected coerceFilterValue(column: any, value: any): any {
-		if (column?.dataType !== "date" || value instanceof Date) return value;
-		if (typeof value === "string" || typeof value === "number") {
-			const date = new Date(value);
-			if (!Number.isNaN(date.getTime())) return date;
-		}
+		if (column?.dataType !== "date") return value;
+		const date = this.toDate(value);
+		if (date) return date;
 		throw new BadRequestException(`Invalid date filter value: ${value}`);
+	}
+
+	// A value for a date-mode column as a valid Date: a Date as it is, a
+	// string or a number read by `new Date()`. Undefined for anything else,
+	// an Invalid Date included.
+	private toDate(value: unknown): Date | undefined {
+		const date =
+			value instanceof Date
+				? value
+				: typeof value === "string" || typeof value === "number"
+					? new Date(value)
+					: undefined;
+		return date && !Number.isNaN(date.getTime()) ? date : undefined;
+	}
+
+	// The same for a row about to be written: a JSON body carries dates as
+	// strings, so a string or number for a date-mode column of `table` becomes
+	// a Date, and one that is not a date (an Invalid Date included) is a 400
+	// naming the column. Anything else, null or an SQL expression, is left as
+	// it is. Changes `row` in place and returns it.
+	private coerceDates(
+		table: any,
+		row: Record<string, any>,
+	): Record<string, any> {
+		for (const [key, value] of Object.entries(row)) {
+			const column = this.columnOf(table, key);
+			if (
+				column?.dataType !== "date" ||
+				!(
+					typeof value === "string" ||
+					typeof value === "number" ||
+					value instanceof Date
+				)
+			) {
+				continue;
+			}
+			const date = this.toDate(value);
+			if (!date) {
+				throw new ValidationFailedException(
+					`a date or time value has an invalid format: ${column.name ?? key}`,
+				);
+			}
+			row[key] = date;
+		}
+		return row;
 	}
 
 	// ---- Allowlists, soft delete scope, writable columns ----
@@ -590,8 +633,12 @@ export abstract class SqlBaseCrudService<
 				// Drizzle spreads each part's parameters into one array, which
 				// overflows the call stack somewhere past 100,000 of them, before
 				// there is a count to read. Filters are depth capped, so nothing
-				// else that small overflows here.
-				if (error instanceof RangeError) throw tooMany(`more than ${limit}`);
+				// else that small overflows here. Any other RangeError (a value's
+				// own mapping, such as an Invalid Date's toISOString) is not a
+				// bind limit and stands.
+				if (error instanceof RangeError && /call stack/i.test(error.message)) {
+					throw tooMany(`more than ${limit}`);
+				}
 				throw error;
 			}
 			const count = query?.params?.length ?? 0;
@@ -2623,7 +2670,10 @@ export abstract class SqlBaseCrudService<
 		const mapped = this.mapCreateDtoToEntity(processedData);
 		const version = this.config.versionColumn;
 		if (version) delete mapped[version];
-		const entityData = this.filterWritable(mapped, "create", options);
+		const entityData = this.coerceDates(
+			this.config.table,
+			this.filterWritable(mapped, "create", options),
+		);
 
 		const now = new Date();
 		if (this.config.timestamps?.createdAt)
@@ -2866,7 +2916,7 @@ export abstract class SqlBaseCrudService<
 		)) {
 			if (this.columnOf(table, key)) out[key] = item;
 		}
-		return out;
+		return this.coerceDates(table, out);
 	}
 
 	// ---- Belongs-to keys stay inside the tenant ----
@@ -3309,7 +3359,10 @@ export abstract class SqlBaseCrudService<
 		for (const key of Object.keys(this.resolveScope(options) ?? {})) {
 			delete mapped[key];
 		}
-		const entityData = this.filterWritable(mapped, "update", options);
+		const entityData = this.coerceDates(
+			this.config.table,
+			this.filterWritable(mapped, "update", options),
+		);
 		const settable = Object.keys(entityData).filter(
 			(key) =>
 				entityData[key] !== undefined &&

@@ -15,6 +15,7 @@ import {
 	bigint,
 	boolean,
 	customType,
+	date,
 	doublePrecision,
 	integer,
 	jsonb,
@@ -4843,5 +4844,110 @@ INSERT INTO cat_posts (tenant_id, title) VALUES (1, 'one');`;
 		expect(await db.select().from(catPosts)).toMatchObject([
 			{ id: 1, title: "one", cat_id: null },
 		]);
+	});
+});
+
+describe("3.8.2 G-03: a date string is written as a date", () => {
+	const dated = pgTable("dated", {
+		id: serial("id").primaryKey(),
+		slug: text("slug").notNull().unique(),
+		at: timestamp("at", { withTimezone: true }),
+		day: date("day", { mode: "date" }),
+	});
+	const datedKids = pgTable("dated_kids", {
+		id: serial("id").primaryKey(),
+		dated_id: integer("dated_id").notNull(),
+		at: timestamp("at", { withTimezone: true }),
+	});
+	const ddl = `CREATE TABLE dated (
+  id serial PRIMARY KEY, slug text NOT NULL UNIQUE, at timestamptz, day date
+);
+CREATE TABLE dated_kids (
+  id serial PRIMARY KEY, dated_id integer NOT NULL REFERENCES dated(id), at timestamptz
+);`;
+	const datedSvc = (db: any) =>
+		new Svc({
+			...base(db, dated),
+			softDelete: undefined,
+			timestamps: undefined,
+			relations: {
+				kids: { table: datedKids, type: "hasMany", foreignKey: "dated_id" },
+			},
+			writableRelations: ["kids"],
+		});
+	const jan = "2026-01-01T00:00:00.000Z";
+	const feb = "2026-02-01T10:30:00.000Z";
+
+	it("stores the instant an ISO string names, on every write", async () => {
+		const db = await customDb(ddl);
+		const svc = datedSvc(db);
+		const created = await svc.create({ slug: "a", at: jan, day: "2026-03-04" });
+		expect(created.at.toISOString()).toBe(jan);
+		expect(created.day.toISOString()).toBe("2026-03-04T00:00:00.000Z");
+		const updated = await svc.update(created.id, { at: feb });
+		expect(updated.at.toISOString()).toBe(feb);
+		const upserted = await svc.upsert(
+			{ slug: "a", at: jan },
+			{ conflictTarget: "slug" },
+		);
+		expect(upserted.at.toISOString()).toBe(jan);
+		const [b, c] = await svc.massCreate([
+			{ slug: "b", at: feb },
+			{ slug: "c", at: Date.parse(jan) },
+		]);
+		expect([b.at.toISOString(), c.at.toISOString()]).toEqual([feb, jan]);
+		const moved = await svc.massUpdate([b.id, c.id], { at: jan });
+		expect(moved.map((row: any) => row.at.toISOString())).toEqual([jan, jan]);
+		const [d] = await svc.massUpsert([{ slug: "d", at: feb }], {
+			conflictTarget: "slug",
+		});
+		expect(d.at.toISOString()).toBe(feb);
+		const parent = await svc.create(
+			{ slug: "e", kids: [{ at: feb }] },
+			{ relations: ["kids"] },
+		);
+		expect(parent.kids[0].at.toISOString()).toBe(feb);
+	});
+
+	it("answers a value that is not a date with a 400 naming the column", async () => {
+		const db = await customDb(ddl);
+		const svc = datedSvc(db);
+		const created = await svc.create({ slug: "a" });
+		for (const at of ["nope", new Date("x")]) {
+			const error = await expect400(svc.update(created.id, { at }));
+			expect(error.message).toMatch(/date.*: at$/);
+			expect(error.message).not.toMatch(/Too many values/);
+		}
+		const kid = await expect400(
+			svc.create({ slug: "b", kids: [{ at: "nope" }] }),
+		);
+		expect(kid.message).toMatch(/: at$/);
+		await expect400(svc.massCreate([{ slug: "c", day: "2026-13-45" }]));
+		// A filter answers an Invalid Date the same way, not as a bind limit.
+		const filter = await expect400(svc.findAll({ at: { gte: new Date("x") } }));
+		expect(filter.message).not.toMatch(/Too many values/);
+		expect(await svc.count()).toBe(1);
+	});
+
+	it("calls only a parameter overflow a bind-limit error", async () => {
+		const db = await customDb(ddl);
+		const loud = customType<{ data: string; driverData: string }>({
+			dataType: () => "text",
+			toDriver: () => {
+				throw new RangeError("not a bind limit");
+			},
+		});
+		const odd = pgTable("dated", {
+			id: serial("id").primaryKey(),
+			slug: loud("slug").notNull(),
+		});
+		const svc = new Svc({
+			...base(db, odd),
+			softDelete: undefined,
+			timestamps: undefined,
+		});
+		const error = await caught(svc.create({ slug: "a" }));
+		expect(error).toBeInstanceOf(RangeError);
+		expect(error.message).toBe("not a bind limit");
 	});
 });
