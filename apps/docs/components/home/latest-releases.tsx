@@ -4,6 +4,12 @@ import { ArrowRight } from "lucide-react";
 // Newest first; the top banner announces RELEASES[0].
 export const RELEASES = [
 	{
+		version: "3.8.2",
+		date: "Nov 4, 2026",
+		title: "Keys compared by the database",
+		body: "The tenant key check lets the database compare keys, so citext, SQLite NOCASE and MySQL _bin columns get the answer their collation gives. A malformed key and an ISO date string in a write body are a 400 and a stored date instead of a 500, and a massUpdate with one shared sql value is one UPDATE.",
+	},
+	{
 		version: "3.8.1",
 		date: "Nov 4, 2026",
 		title: "Tighter tenant checks",

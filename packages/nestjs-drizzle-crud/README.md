@@ -445,6 +445,10 @@ export class UsersService extends SqlBaseCrudService<User, CreateUserDto, Update
 | `detach(id, relation, ids?, options?)` | `Promise<T>` | Unlink some, or all when `ids` is left out. |
 | `sync(id, relation, ids, options?)` | `Promise<T>` | Make the links exactly `ids`. |
 
+Every write turns an ISO string or a number for a date-mode `timestamp`, `date`
+or `datetime` column into a `Date`, so a JSON body needs no transforming DTO for
+it. A value that is not a date is a 400 that names the column.
+
 ### Bulk (run inside a transaction)
 
 | Method | Returns |

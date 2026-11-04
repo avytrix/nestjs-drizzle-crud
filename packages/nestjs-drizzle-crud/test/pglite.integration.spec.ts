@@ -15,6 +15,7 @@ import {
 	bigint,
 	boolean,
 	customType,
+	date,
 	doublePrecision,
 	integer,
 	jsonb,
@@ -28,6 +29,12 @@ import {
 	varchar,
 } from "drizzle-orm/pg-core";
 import { eq, sql } from "drizzle-orm";
+import {
+	int,
+	mysqlTable,
+	varchar as mysqlVarchar,
+} from "drizzle-orm/mysql-core";
+import { drizzle as drizzleMysql } from "drizzle-orm/mysql2";
 import { drizzle } from "drizzle-orm/pglite";
 import { Test } from "@nestjs/testing";
 import { SqlBaseCrudService } from "../src/core/abstract/sql-base-crud.service";
@@ -4273,47 +4280,90 @@ INSERT INTO coded_items (tenant_id) VALUES (1);`;
 		expect(row.links.map((c: any) => c.code)).toEqual(["US"]);
 	});
 
-	// MySQL's default collations match "us" to a stored "US", and a unique
-	// key cannot hold both, so the check folds case there. A stubbed db
-	// answers the key SELECT the way such a collation does.
-	it("folds case on MySQL, where the collation does", async () => {
-		const stub = (rows: unknown[]) => {
-			const inserted: unknown[] = [];
-			const db: any = {
-				select: () => ({ from: () => ({ where: async () => rows }) }),
-				insert: () => ({
-					values: async (values: unknown) => {
-						inserted.push(values);
-					},
-				}),
+	// Which key matched is the database's answer, by the position of the
+	// value sent, on MySQL as everywhere: its default collations match "us"
+	// to a stored "US", a _bin collation does not. A stubbed mysql2 client
+	// answers the key SELECT the way each would, and records what was sent.
+	it("takes the database's answer on MySQL, whatever the collation", async () => {
+		const mCodes = mysqlTable("codes", {
+			code: mysqlVarchar("code", { length: 10 }).primaryKey(),
+			tenant_id: int("tenant_id").notNull(),
+		});
+		const mItems = mysqlTable("coded_items", {
+			id: int("id").autoincrement().primaryKey(),
+			tenant_id: int("tenant_id").notNull(),
+			code: mysqlVarchar("code", { length: 10 }),
+		});
+		const mLinks = mysqlTable("code_links", {
+			item_id: int("item_id").notNull(),
+			code: mysqlVarchar("code", { length: 10 }).notNull(),
+		});
+		const stub = (matched: unknown[][]) => {
+			const sent: Array<{ sql: string; params: unknown[] }> = [];
+			const client = {
+				query: async (query: any, params: unknown[]) => {
+					const text = typeof query === "string" ? query : query.sql;
+					sent.push({ sql: text, params });
+					if (/^select/.test(text)) {
+						return [/code_links/.test(text) ? [] : matched, []];
+					}
+					return [{ affectedRows: 1, insertId: 0 }, []];
+				},
 			};
-			return { db, inserted };
+			return { db: drizzleMysql({ client: client as any }), sent };
 		};
-		const svcFor = (dialect: "mysql" | "postgresql") =>
+		const svcFor = (db: any) =>
 			new Svc({
-				...(itemsSvc(stub([]).db) as any).config,
-				dialect,
-				sql: { ...base(undefined, codedItems).sql!, useReturning: false },
+				...base(db, mItems),
+				dialect: "mysql",
+				softDelete: undefined,
+				timestamps: undefined,
+				sql: { ...base(db, mItems).sql!, useReturning: false },
+				scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+				relations: {
+					codeRef: { table: mCodes, localKey: "code", references: "code" },
+					links: {
+						table: mCodes,
+						type: "manyToMany",
+						through: mLinks,
+						throughLocalKey: "item_id",
+						throughForeignKey: "code",
+						references: "code",
+					},
+				},
 			}) as any;
-		const stored = [{ id: "US" }];
 
-		const mysql = svcFor("mysql");
-		const keys = stub(stored);
-		expect(
-			(await mysql.keysOutsideScope(keys.db, [{ code: "us" }], t1)).size,
-		).toBe(0);
-		const links = stub(stored);
-		const relation = mysql.config.relations.links;
-		await mysql.linkTargets(links.db, relation, 1, ["us"], t1, true);
-		expect(links.inserted).toEqual([[{ item_id: 1, code: "us" }]]);
+		// A case-insensitive collation: "us" (position 0) matched "US".
+		const ci = stub([[0, "US"]]);
+		const svc = svcFor(ci.db);
+		expect((await svc.keysOutsideScope(ci.db, [{ code: "us" }], t1)).size).toBe(
+			0,
+		);
+		expect(ci.sent[0]!.sql).toContain("(values row(0)) as input");
+		expect(ci.sent[0]!.sql).toContain(
+			"`codes`.`code` = elt(input.column_0 + 1, ?)",
+		);
+		expect(ci.sent[0]!.params).toEqual(["us", 1]);
+		const links = stub([[0, "US"]]);
+		const relation = svc.config.relations.links;
+		await svc.linkTargets(links.db, relation, 1, ["us"], t1, true);
+		// The link holds the key as stored.
+		expect(links.sent.at(-1)!.params).toEqual([1, "US"]);
 
-		// PostgreSQL and SQLite compare exactly: the same answer is a miss.
-		const pg = svcFor("postgresql");
+		// A _bin collation: nothing matched, so "us" is outside the tenant.
+		// ELT gives a string back: an integer key is cast to its column's
+		// type, so a BIGINT past 2^53 is not compared as a double.
+		const { sql: castSql } = ci.db.dialect.sqlToQuery(
+			sql`${svc.keyInput(mItems.id, ["1"]).value}`,
+		);
+		expect(castSql).toBe("cast(elt(input.column_0 + 1, ?) as signed)");
+
+		const bin = stub([]);
 		expect(
-			(await pg.keysOutsideScope(stub(stored).db, [{ code: "us" }], t1)).size,
+			(await svc.keysOutsideScope(bin.db, [{ code: "us" }], t1)).size,
 		).toBe(1);
 		await expect(
-			pg.linkTargets(stub(stored).db, relation, 1, ["us"], t1, true),
+			svc.linkTargets(stub([]).db, relation, 1, ["us"], t1, true),
 		).rejects.toBeInstanceOf(BulkOperationException);
 	});
 });
@@ -4553,7 +4603,7 @@ INSERT INTO scores (score) VALUES (1), (2);`;
 		expect(rows.map((row: any) => row.score)).toEqual([Number.NaN, null]);
 	});
 
-	it("takes an SQL expression as a value, never grouping it", async () => {
+	it("takes an SQL expression as a value", async () => {
 		const db = await freshDb();
 		const svc = postsService(db);
 		const rows = await svc.massUpdate([1, 2], {
@@ -4590,5 +4640,485 @@ describe("3.8.1 D-08: mass trash writes carry the guard's soft delete state", ()
 		reset();
 		await svc.massRestore([2, 5]);
 		expect(writes()[0]).not.toMatch(/"deleted_at" is/);
+	});
+});
+
+describe("3.8.2 G-01: the database decides which key matched", () => {
+	// citext is case-insensitive in the database. A key in the caller's own
+	// tenant in another case is the same row to Postgres, so the check takes it.
+	const users = pgTable("ci_users", {
+		email: customType<{ data: string }>({ dataType: () => "citext" })(
+			"email",
+		).primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+	});
+	const ciNotes = pgTable("ci_notes", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+		owner: customType<{ data: string }>({ dataType: () => "citext" })("owner"),
+	});
+	const ciLinks = pgTable("ci_links", {
+		note_id: integer("note_id").notNull(),
+		email: customType<{ data: string }>({ dataType: () => "citext" })(
+			"email",
+		).notNull(),
+	});
+	const ddl = `CREATE EXTENSION citext;
+CREATE TABLE ci_users (email citext PRIMARY KEY, tenant_id integer NOT NULL);
+CREATE TABLE ci_notes (
+  id serial PRIMARY KEY, tenant_id integer NOT NULL,
+  owner citext REFERENCES ci_users(email)
+);
+CREATE TABLE ci_links (
+  note_id integer NOT NULL REFERENCES ci_notes(id),
+  email citext NOT NULL REFERENCES ci_users(email),
+  PRIMARY KEY (note_id, email)
+);
+INSERT INTO ci_users VALUES ('Ann@X.io', 1), ('Bob@X.io', 2);
+INSERT INTO ci_notes (tenant_id) VALUES (1);`;
+	async function citextDb() {
+		const { citext } = await import("@electric-sql/pglite/contrib/citext");
+		const client = await PGlite.create({ extensions: { citext } });
+		clients.push(client);
+		await client.exec(ddl);
+		return drizzle(client);
+	}
+	const notesSvc = (db: any) =>
+		new Svc({
+			...base(db, ciNotes),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: {
+				ownerRef: { table: users, localKey: "owner", references: "email" },
+				links: {
+					table: users,
+					type: "manyToMany",
+					through: ciLinks,
+					throughLocalKey: "note_id",
+					throughForeignKey: "email",
+					references: "email",
+				},
+			},
+		});
+	const t1 = asTenant(1);
+
+	it("takes a citext key in the caller's tenant in another case", async () => {
+		const db = await citextDb();
+		const svc = notesSvc(db);
+		const created = await svc.create({ owner: "ann@x.io" }, t1);
+		expect(created.owner).toBe("ann@x.io");
+		const batch = await svc.massCreate(
+			[{ owner: "ANN@X.IO" }, { owner: "Ann@X.io" }],
+			t1,
+		);
+		expect(batch).toHaveLength(2);
+		// Another tenant's key is still refused, in any case.
+		await expect400(svc.create({ owner: "bob@x.io" }, t1));
+		const mixed = await caught(
+			svc.massCreate([{ owner: "ann@x.io" }, { owner: "BOB@x.io" }], t1),
+		);
+		expect(mixed.errors.map((e: any) => e.index)).toEqual([1]);
+	});
+
+	it("links a citext key once, however many cases name it", async () => {
+		const db = await citextDb();
+		const svc = notesSvc(db);
+		const row = await svc.attach(1, "links", ["ann@x.io", "ANN@x.io"], t1);
+		expect(row.links.map((u: any) => u.email)).toEqual(["Ann@X.io"]);
+		// Linked already, in yet another case: nothing to add.
+		await svc.attach(1, "links", ["aNN@x.io"], t1);
+		expect(await db.select().from(ciLinks)).toEqual([
+			{ note_id: 1, email: "Ann@X.io" },
+		]);
+		const theirs = await caught(svc.attach(1, "links", ["bob@x.io"], t1));
+		expect(theirs).toBeInstanceOf(BulkOperationException);
+		expect(theirs.errors).toMatchObject([{ id: "bob@x.io" }]);
+	});
+
+	it("still refuses another tenant's text key in another case", async () => {
+		// The D-02 case, through the same join: Postgres text compares exactly.
+		const codes = pgTable("codes", {
+			code: text("code").primaryKey(),
+			tenant_id: integer("tenant_id").notNull(),
+		});
+		const coded = pgTable("coded", {
+			id: serial("id").primaryKey(),
+			tenant_id: integer("tenant_id").notNull(),
+			code: text("code"),
+		});
+		const db =
+			await customDb(`CREATE TABLE codes (code text PRIMARY KEY, tenant_id integer NOT NULL);
+CREATE TABLE coded (id serial PRIMARY KEY, tenant_id integer NOT NULL, code text);
+INSERT INTO codes VALUES ('US', 1), ('us', 2);`);
+		const svc = new Svc({
+			...base(db, coded),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: {
+				codeRef: { table: codes, localKey: "code", references: "code" },
+			},
+		});
+		const batch = await caught(
+			svc.massCreate([{ code: "US" }, { code: "us" }], t1),
+		);
+		expect(batch.errors.map((e: any) => e.index)).toEqual([1]);
+		await expect400(svc.create({ code: "us" }, t1));
+	});
+
+	it("matches a uuid key in any case, as the uuid type does", async () => {
+		const db = await freshDb();
+		const owners = pgTable("uuid_owners", {
+			id: uuid("id").primaryKey(),
+			tenant_id: integer("tenant_id").notNull(),
+		});
+		const owned = pgTable("uuid_owned", {
+			id: serial("id").primaryKey(),
+			tenant_id: integer("tenant_id").notNull(),
+			owner_id: uuid("owner_id"),
+		});
+		await db.$client.exec(`CREATE TABLE uuid_owners (id uuid PRIMARY KEY, tenant_id integer NOT NULL);
+CREATE TABLE uuid_owned (id serial PRIMARY KEY, tenant_id integer NOT NULL, owner_id uuid);
+INSERT INTO uuid_owners VALUES ('0000000a-0000-0000-0000-00000000000a', 1);`);
+		const svc = new Svc({
+			...base(db, owned),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: { owner: { table: owners, localKey: "owner_id" } },
+		});
+		await expect(
+			svc.massCreate(
+				[
+					{ owner_id: "0000000A-0000-0000-0000-00000000000A" },
+					{ owner_id: "0000000a-0000-0000-0000-00000000000a" },
+				],
+				t1,
+			),
+		).resolves.toHaveLength(2);
+		await expect(
+			svc.create({ owner_id: "0000000a-0000-0000-0000-00000000000b" }, t1),
+		).rejects.toBeInstanceOf(BadRequestException);
+	});
+});
+
+describe("3.8.2 G-02: a malformed belongs-to key is a 400 on every path", () => {
+	const cats = pgTable("cats", {
+		id: uuid("id").primaryKey().defaultRandom(),
+		tenant_id: integer("tenant_id").notNull(),
+	});
+	const catPosts = pgTable("cat_posts", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+		title: text("title").notNull(),
+		cat_id: uuid("cat_id"),
+	});
+	const ddl = `CREATE TABLE cats (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id integer NOT NULL);
+CREATE TABLE cat_posts (
+  id serial PRIMARY KEY, tenant_id integer NOT NULL, title text NOT NULL,
+  cat_id uuid REFERENCES cats(id)
+);
+INSERT INTO cat_posts (tenant_id, title) VALUES (1, 'one');`;
+	const postsSvc = (db: any) =>
+		new Svc({
+			...base(db, catPosts),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: { cat: { table: cats, localKey: "cat_id" } },
+		});
+	const A = asTenant(1);
+
+	it("answers the mass writes and an update in a caller's transaction with a 400", async () => {
+		const db = await customDb(ddl);
+		const svc = postsSvc(db);
+		await expect400(svc.create({ title: "t", cat_id: "nope" }, A));
+		await expect400(svc.massCreate([{ title: "a", cat_id: "nope" }], A));
+		await expect400(svc.massUpdate([1], { cat_id: "nope" }, A));
+		await expect400(
+			svc.massUpsert(
+				[{ id: 1, title: "a", cat_id: "nope" }],
+				{ conflictTarget: "id" },
+				A,
+			),
+		);
+		await expect400(
+			db.transaction((tx: any) =>
+				svc.update(1, { cat_id: "nope" }, { ...A, transaction: tx }),
+			),
+		);
+		expect(await db.select().from(catPosts)).toMatchObject([
+			{ id: 1, title: "one", cat_id: null },
+		]);
+	});
+});
+
+describe("3.8.2 G-03: a date string is written as a date", () => {
+	const dated = pgTable("dated", {
+		id: serial("id").primaryKey(),
+		slug: text("slug").notNull().unique(),
+		at: timestamp("at", { withTimezone: true }),
+		day: date("day", { mode: "date" }),
+	});
+	const datedKids = pgTable("dated_kids", {
+		id: serial("id").primaryKey(),
+		dated_id: integer("dated_id").notNull(),
+		at: timestamp("at", { withTimezone: true }),
+	});
+	const ddl = `CREATE TABLE dated (
+  id serial PRIMARY KEY, slug text NOT NULL UNIQUE, at timestamptz, day date
+);
+CREATE TABLE dated_kids (
+  id serial PRIMARY KEY, dated_id integer NOT NULL REFERENCES dated(id), at timestamptz
+);`;
+	const datedSvc = (db: any) =>
+		new Svc({
+			...base(db, dated),
+			softDelete: undefined,
+			timestamps: undefined,
+			relations: {
+				kids: { table: datedKids, type: "hasMany", foreignKey: "dated_id" },
+			},
+			writableRelations: ["kids"],
+		});
+	const jan = "2026-01-01T00:00:00.000Z";
+	const feb = "2026-02-01T10:30:00.000Z";
+
+	it("stores the instant an ISO string names, on every write", async () => {
+		const db = await customDb(ddl);
+		const svc = datedSvc(db);
+		const created = await svc.create({ slug: "a", at: jan, day: "2026-03-04" });
+		expect(created.at.toISOString()).toBe(jan);
+		expect(created.day.toISOString()).toBe("2026-03-04T00:00:00.000Z");
+		const updated = await svc.update(created.id, { at: feb });
+		expect(updated.at.toISOString()).toBe(feb);
+		const upserted = await svc.upsert(
+			{ slug: "a", at: jan },
+			{ conflictTarget: "slug" },
+		);
+		expect(upserted.at.toISOString()).toBe(jan);
+		const [b, c] = await svc.massCreate([
+			{ slug: "b", at: feb },
+			{ slug: "c", at: Date.parse(jan) },
+		]);
+		expect([b.at.toISOString(), c.at.toISOString()]).toEqual([feb, jan]);
+		const moved = await svc.massUpdate([b.id, c.id], { at: jan });
+		expect(moved.map((row: any) => row.at.toISOString())).toEqual([jan, jan]);
+		const [d] = await svc.massUpsert([{ slug: "d", at: feb }], {
+			conflictTarget: "slug",
+		});
+		expect(d.at.toISOString()).toBe(feb);
+		const parent = await svc.create(
+			{ slug: "e", kids: [{ at: feb }] },
+			{ relations: ["kids"] },
+		);
+		expect(parent.kids[0].at.toISOString()).toBe(feb);
+	});
+
+	it("answers a value that is not a date with a 400 naming the column", async () => {
+		const db = await customDb(ddl);
+		const svc = datedSvc(db);
+		const created = await svc.create({ slug: "a" });
+		for (const at of ["nope", new Date("x")]) {
+			const error = await expect400(svc.update(created.id, { at }));
+			expect(error.message).toMatch(/date.*: at$/);
+			expect(error.message).not.toMatch(/Too many values/);
+		}
+		const kid = await expect400(
+			svc.create({ slug: "b", kids: [{ at: "nope" }] }),
+		);
+		expect(kid.message).toMatch(/: at$/);
+		await expect400(svc.massCreate([{ slug: "c", day: "2026-13-45" }]));
+		// A filter answers an Invalid Date the same way, not as a bind limit.
+		const filter = await expect400(svc.findAll({ at: { gte: new Date("x") } }));
+		expect(filter.message).not.toMatch(/Too many values/);
+		expect(await svc.count()).toBe(1);
+	});
+
+	it("calls only a parameter overflow a bind-limit error", async () => {
+		const db = await customDb(ddl);
+		const loud = customType<{ data: string; driverData: string }>({
+			dataType: () => "text",
+			toDriver: () => {
+				throw new RangeError("not a bind limit");
+			},
+		});
+		const odd = pgTable("dated", {
+			id: serial("id").primaryKey(),
+			slug: loud("slug").notNull(),
+		});
+		const svc = new Svc({
+			...base(db, odd),
+			softDelete: undefined,
+			timestamps: undefined,
+		});
+		const error = await caught(svc.create({ slug: "a" }));
+		expect(error).toBeInstanceOf(RangeError);
+		expect(error.message).toBe("not a bind limit");
+	});
+});
+
+describe("3.8.2 G-04: massUpdate groups SETs by their raw values", () => {
+	it("keeps an Invalid Date, a Date, its ISO string and null apart", () => {
+		const svc = postsService({}) as any;
+		const print = (value: unknown) => svc.fingerprint({ v: value });
+		const at = new Date(0);
+		const prints = [
+			print(null),
+			print(new Date("x")),
+			print(at),
+			print(at.toISOString()),
+		];
+		expect(new Set(prints).size).toBe(4);
+		expect(print(new Date(0))).toBe(print(at));
+		expect(print(Buffer.from([1, 2]))).toBe(print(new Uint8Array([1, 2])));
+		expect(print(Buffer.from([1, 2]))).not.toBe(print(Buffer.from([1, 3])));
+	});
+
+	it("answers both orders of a hook's null and Invalid Date alike", async () => {
+		for (const order of [
+			[null, "invalid"],
+			["invalid", null],
+		]) {
+			const db = await freshDb();
+			class Hooked extends Svc {
+				protected override async beforeUpdate(id: any, data: any) {
+					const value = order[Number(id) - 1];
+					return {
+						...data,
+						published_at: value === "invalid" ? new Date("x") : value,
+					};
+				}
+			}
+			const svc = new Hooked(base(db, posts));
+			await expect400(svc.massUpdate([1, 2], { title: "t" }));
+			const rows = await db
+				.select({ at: posts.published_at })
+				.from(posts)
+				.where(sql`${posts.id} in (1, 2)`)
+				.orderBy(posts.id);
+			expect(rows.every((row: any) => row.at !== null)).toBe(true);
+		}
+	});
+});
+
+describe("3.8.2 G-06: the scope memo ends with its call", () => {
+	it("resolves the scope again when kept options are reused later", async () => {
+		const db = await freshDb();
+		const resolved: number[] = [];
+		let kept: any;
+		class Keeper extends Svc {
+			protected override async prepareCreate(data: any, options?: any) {
+				kept = options;
+				return super.prepareCreate(data, options);
+			}
+		}
+		const svc = new Keeper({
+			...base(db, docs),
+			scope: (ctx) => {
+				resolved.push(ctx.tenantId);
+				return { tenant_id: ctx.tenantId };
+			},
+		});
+		const context = { tenantId: 1 };
+		await svc.create({ title: "T", slug: "t" }, { context });
+		expect(resolved).toEqual([1]);
+		// The same context object, now naming tenant 2.
+		context.tenantId = 2;
+		expect((await svc.find(4, kept))?.title).toBe("Four");
+		expect(await svc.find(1, kept)).toBeNull();
+		expect(resolved).toEqual([1, 2, 2]);
+	});
+});
+
+describe("3.8.2 G-07: a massUpdate with an SQL value loads inside its transaction", () => {
+	it("leaves the row as it was when the load fails, so a retry adds once", async () => {
+		const db = await freshDb();
+		let fail = true;
+		class Flaky extends Svc {
+			protected override async loadWriteRelations(
+				...args: Parameters<Svc["loadWriteRelations"]>
+			) {
+				if (fail && args[1].length > 0) throw new Error("load failed");
+				return super.loadWriteRelations(...args);
+			}
+		}
+		const svc = new Flaky({
+			...base(db, posts),
+			relations: { author: { table: authors, localKey: "author_id" } },
+		});
+		const bump = { views: sql`${posts.views} + 10` } as any;
+		const before = (await svc.find(1))!.views;
+		await expect(
+			svc.massUpdate([1], bump, { relations: ["author"] }),
+		).rejects.toThrow("load failed");
+		expect((await svc.find(1))!.views).toBe(before);
+		fail = false;
+		const [row] = await svc.massUpdate([1], bump, { relations: ["author"] });
+		expect(row.views).toBe(before + 10);
+		expect(row.author.name).toBe("Ann");
+	});
+});
+
+describe("3.8.2 G-08: one SQL value shared by every SET is one UPDATE", () => {
+	const counters = pgTable("counters", {
+		id: serial("id").primaryKey(),
+		n: integer("n").notNull(),
+	});
+	const ddl = `CREATE TABLE counters (id serial PRIMARY KEY, n integer NOT NULL);
+INSERT INTO counters (n) SELECT 0 FROM generate_series(1, 50);`;
+
+	it("sends one UPDATE for 50 ids and adds once to each row", async () => {
+		const log: string[] = [];
+		const db = await customDb(ddl, log);
+		const svc = new Svc({
+			...base(db, counters),
+			softDelete: undefined,
+			timestamps: undefined,
+		});
+		const ids = Array.from({ length: 50 }, (_, i) => i + 1);
+		log.length = 0;
+		const rows = await svc.massUpdate(ids, {
+			n: sql`${counters.n} + 1`,
+		} as any);
+		expect(log.filter((query) => /^\s*update\b/i.test(query))).toHaveLength(1);
+		expect(rows.map((row: any) => row.n)).toEqual(ids.map(() => 1));
+	});
+});
+
+describe("3.8.2 G-01: an enum key is cast to its enum type", () => {
+	const statuses = pgTable("tenant_statuses", {
+		code: postStatus("code").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+	});
+	const tagged = pgTable("status_tagged", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+		status: postStatus("status"),
+	});
+	const ddl = `CREATE TABLE tenant_statuses (code post_status PRIMARY KEY, tenant_id integer NOT NULL);
+CREATE TABLE status_tagged (id serial PRIMARY KEY, tenant_id integer NOT NULL, status post_status);
+INSERT INTO tenant_statuses VALUES ('draft', 1), ('published', 2);`;
+
+	it("matches an enum key in the tenant and refuses the rest with a 400", async () => {
+		const db = await customDb(ddl);
+		const svc = new Svc({
+			...base(db, tagged),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: {
+				state: { table: statuses, localKey: "status", references: "code" },
+			},
+		});
+		const t1 = asTenant(1);
+		await expect(svc.create({ status: "draft" }, t1)).resolves.toMatchObject({
+			status: "draft",
+		});
+		// Another tenant's value, and one the enum does not have.
+		await expect400(svc.create({ status: "published" }, t1));
+		await expect400(svc.massCreate([{ status: "bogus" }], t1));
+		expect(await svc.count({}, t1)).toBe(1);
 	});
 });

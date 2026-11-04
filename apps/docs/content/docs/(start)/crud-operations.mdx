@@ -294,6 +294,9 @@ apply to it.
   <Accordion title="Do mass writes stop at the first failure?">
     No. They check every item, then throw one `BulkOperationException` that lists each failed item with its status, and the transaction writes nothing.
   </Accordion>
+  <Accordion title="Can I send a date as an ISO string in a create or update body?">
+    Yes, since 3.8.2. A JSON body carries dates as strings, so every write (`create`, `update`, `upsert`, the mass writes and nested rows) turns a string or a number for a date-mode `timestamp`, `date` or `datetime` column into a `Date`, as filters already do: `{ published_at: "2026-01-01T00:00:00.000Z" }` stores that instant. A value that is not a date, an Invalid Date included, is a 400 that names the column: `Validation failed: a date or time value has an invalid format: published_at`.
+  </Accordion>
   <Accordion title="Can I call executeSqlTransaction from a controller?">
     No, it is a protected method. Add a method to your service that calls it, and call that method from the controller.
   </Accordion>

@@ -100,6 +100,7 @@ export class UsersService extends SqlBaseCrudService<
 - `delete` is a 404 for a row in the trash: purge with `forceDelete(id)` or `massForceDelete(ids)`. `softDelete` on an entity with soft delete off is a 400.
 - Without `writableColumns`, create and update drop the soft delete and version columns from the body, and update also drops the primary key and `createdAt`. With it, any other column is a 400.
 - Writes take `options.relations` and `options.counts` and return the rows with them loaded.
+- An ISO string or a number for a date-mode `timestamp` / `date` / `datetime` column is turned into a `Date` on every write; a value that is not a date is a 400 naming the column. No DTO transform is needed for it.
 - Nested create needs `writableRelations: ["posts"]` and `RETURNING`: an array for has-many, an object for belongs-to, ids or objects for many-to-many, all in one transaction.
 - Use `attach(id, "tags", ids)`, `detach(id, "tags", ids?)` and `sync(id, "tags", ids)` for many-to-many links, never raw inserts into the join table.
 - `upsert(dto, { conflictTarget?, update? }, options?)` and `massUpsert(rows, ...)`: `ON CONFLICT DO UPDATE` on PostgreSQL and SQLite, `ON DUPLICATE KEY UPDATE` on MySQL. A clash on another unique key is a 409.
