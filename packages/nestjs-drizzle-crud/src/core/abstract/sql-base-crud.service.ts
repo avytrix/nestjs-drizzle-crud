@@ -26,6 +26,7 @@ import {
 	notExists,
 	notInArray,
 	or,
+	type SQL,
 	sql,
 } from "drizzle-orm";
 import {
@@ -2891,7 +2892,11 @@ export abstract class SqlBaseCrudService<
 	): Promise<Map<number, ForeignKeyViolationException>> {
 		const failures = new Map<number, ForeignKeyViolationException>();
 		if (!this.resolveScope(options)) return failures;
-		const checks: Array<{ local: string; referenced: any; query: any }> = [];
+		const checks: Array<{
+			local: string;
+			keys: unknown[];
+			query: Promise<Map<number, unknown>>;
+		}> = [];
 		for (const [name, relation] of Object.entries(owner.relations ?? {})) {
 			const local = relation.localKey;
 			if (!local || this.isCollection(relation) || skip.includes(name)) {
@@ -2900,32 +2905,25 @@ export abstract class SqlBaseCrudService<
 			const scope = this.relatedScopeConditions(relation.table, options);
 			const referenced = relation.table[relation.references ?? "id"];
 			if (scope.length === 0 || !referenced) continue;
-			const keys = this.uniqueValues(
+			const keys = this.distinct(
 				rows.map((row) => row[local]).filter((value) => value != null),
-				referenced,
 			);
 			if (keys.length === 0) continue;
 			checks.push({
 				local,
-				referenced,
-				query: db
-					.select({ id: referenced })
-					.from(relation.table)
-					.where(and(inArray(referenced, keys), ...scope)),
+				keys,
+				query: this.matchKeys(db, relation.table, referenced, keys, scope),
 			});
 		}
 		// The SELECTs run together; failures are still named in relation
 		// order, so the error a row gets does not depend on which came first.
 		const found = await Promise.all(checks.map((check) => check.query));
-		checks.forEach(({ local, referenced }, i) => {
-			const present = new Set(
-				(found[i] as any[]).map((row) => this.valueKey(row.id, referenced)),
-			);
+		checks.forEach(({ local, keys }, i) => {
+			const matched = found[i]!;
+			const present = new Set(keys.filter((_, at) => matched.has(at)));
 			rows.forEach((row, index) => {
 				const value = row[local];
-				if (value == null || present.has(this.valueKey(value, referenced))) {
-					return;
-				}
+				if (value == null || present.has(value)) return;
 				if (!failures.has(index)) {
 					failures.set(index, this.missingParentException(local, owner.table));
 				}
@@ -3016,21 +3014,20 @@ export abstract class SqlBaseCrudService<
 	): Promise<void> {
 		const target = relation.table;
 		const referenced = target[relation.references ?? "id"];
-		const wanted = this.uniqueValues(ids, referenced);
+		const wanted = this.distinct(ids);
 		if (wanted.length === 0) return;
 		const through = relation.through;
 		const local = through[relation.throughLocalKey!];
 		const foreign = through[relation.throughForeignKey!];
 
-		const conditions = [inArray(referenced, wanted)];
-		conditions.push(...this.relatedRowScope(target, options));
-		const found: any[] = await tx
-			.select({ id: referenced })
-			.from(target)
-			.where(and(...conditions));
-		const key = (value: unknown) => this.valueKey(value, referenced);
-		const present = new Set(found.map((row) => key(row.id)));
-		const missing = wanted.filter((id) => !present.has(key(id)));
+		const found = await this.matchKeys(
+			tx,
+			target,
+			referenced,
+			wanted,
+			this.relatedRowScope(target, options),
+		);
+		const missing = wanted.filter((_, at) => !found.has(at));
 		if (missing.length > 0) {
 			const name = this.tableName(target);
 			throw new BulkOperationException(
@@ -3042,14 +3039,15 @@ export abstract class SqlBaseCrudService<
 			);
 		}
 
-		const linked: any[] = fresh
-			? []
-			: await tx
-					.select({ id: foreign })
-					.from(through)
-					.where(and(eq(local, parentValue), inArray(foreign, wanted)));
-		const already = new Set(linked.map((row) => key(row.id)));
-		const add = wanted.filter((id) => !already.has(key(id)));
+		// Link the keys as stored: two ids that name one row (in another case,
+		// under a case-insensitive collation) give one link.
+		const stored = this.distinct(wanted.map((_, at) => found.get(at)));
+		const linked = fresh
+			? new Map<number, unknown>()
+			: await this.matchKeys(tx, through, foreign, stored, [
+					eq(local, parentValue),
+				]);
+		const add = stored.filter((_, at) => !linked.has(at));
 		if (add.length > 0) {
 			await tx.insert(through).values(
 				add.map((id) => ({
@@ -3126,10 +3124,7 @@ export abstract class SqlBaseCrudService<
 			throw new BadRequestException(`${operation} takes an array of ids`);
 		}
 		this.checkReadOptions(options);
-		const ids = this.uniqueValues(
-			relatedIds ?? [],
-			relation.table[relation.references ?? "id"],
-		);
+		const ids = this.distinct(relatedIds ?? []);
 		const parentKey = this.parentKeyOf(relation);
 
 		return this.executeSqlTransaction(async (tx) => {
@@ -3193,12 +3188,12 @@ export abstract class SqlBaseCrudService<
 		}, options?.transaction);
 	}
 
-	// A comparable key for a value of `column`: numbers from the driver
-	// against strings from a request. A text key compares exactly, the way
-	// Postgres and SQLite compare it ("US" and "us" are two rows). A uuid
-	// column folds case, as keyOf does for the primary key, and so does
-	// MySQL, whose default collations match "us" to a stored "US" and cannot
-	// hold both as distinct unique values.
+	// A comparable key for a value of `column` that the upsert read-back
+	// compares in code: numbers from the driver against strings from a
+	// request. A text key compares exactly, as Postgres and SQLite text does;
+	// a uuid column folds case, as keyOf does for the primary key, and so does
+	// MySQL, after its default collations. The tenant key check and the links
+	// leave the comparison to the database instead (matchKeys).
 	private valueKey(value: unknown, column?: any): string {
 		const key = String(value);
 		return column?.columnType === "PgUUID" || this.config.dialect === "mysql"
@@ -3206,14 +3201,84 @@ export abstract class SqlBaseCrudService<
 			: key;
 	}
 
-	private uniqueValues(values: unknown[], column?: any): unknown[] {
-		const seen = new Set<string>();
-		return values.filter((value) => {
-			const key = this.valueKey(value, column);
-			if (seen.has(key)) return false;
-			seen.add(key);
-			return true;
-		});
+	// The values with exact duplicates removed, in input order. Whether two
+	// values name one row is the database's call (matchKeys), not this one.
+	private distinct(values: unknown[]): unknown[] {
+		return Array.from(new Set(values));
+	}
+
+	// Which of `values` match a row of `table` on `column` under `conditions`,
+	// as the database compares them: the column's type and collation decide
+	// (citext, SQLite NOCASE, a MySQL _bin collation, a uuid in any case),
+	// never JavaScript. One SELECT joins the values, as an inline VALUES list,
+	// against the table and returns the position of each value that matched,
+	// with the key it matched as stored. It binds the values and the
+	// conditions' own, as an IN list would.
+	private async matchKeys(
+		db: any,
+		table: any,
+		column: any,
+		values: unknown[],
+		conditions: any[],
+	): Promise<Map<number, unknown>> {
+		const input = this.keyInput(column, values);
+		const rows: Array<{ at: unknown; key: unknown }> = await db
+			.select({ at: input.at, key: column })
+			.from(table)
+			.innerJoin(input.list, eq(column, input.value))
+			.where(and(...conditions));
+		return new Map(rows.map((row) => [Number(row.at), row.key]));
+	}
+
+	// The VALUES list matchKeys joins: each value with its position, and the
+	// expressions for both. The column stays on the left of the comparison,
+	// so SQLite takes its collation. Postgres casts each value to the column's
+	// type, so citext and uuid compare with their own operator. MySQL looks
+	// each value up by position with ELT() instead of carrying it in the
+	// list: a derived table's text column has an implicit collation of its
+	// own, and comparing it with a column of another one is an error, where a
+	// bound value takes the column's.
+	private keyInput(
+		column: any,
+		values: unknown[],
+	): { list: SQL; at: SQL; value: SQL } {
+		const params = values.map((value) => sql.param(value, column));
+		if (this.config.dialect === "mysql") {
+			const rows = values.map((_, at) => sql`row(${sql.raw(String(at))})`);
+			return {
+				list: sql`(values ${sql.join(rows, sql`, `)}) as input`,
+				at: sql`input.column_0`,
+				value: sql`elt(input.column_0 + 1, ${sql.join(params, sql`, `)})`,
+			};
+		}
+		const type = this.config.dialect === "postgresql" && this.pgKeyType(column);
+		const rows = params.map(
+			(param, at) =>
+				sql`(${sql.raw(String(at))}, ${type ? sql`cast(${param} as ${type})` : param})`,
+		);
+		return {
+			list: sql`(values ${sql.join(rows, sql`, `)}) as input`,
+			at: sql`input.column1`,
+			value: sql`input.column2`,
+		};
+	}
+
+	// The type a Postgres VALUES list casts a key of `column` to: its SQL
+	// type, a serial's underlying integer, an enum by its (schema) name.
+	private pgKeyType(column: any): SQL {
+		const pgEnum = column.enum;
+		if (pgEnum?.enumName) {
+			return pgEnum.schema
+				? sql`${sql.identifier(pgEnum.schema)}.${sql.identifier(pgEnum.enumName)}`
+				: sql`${sql.identifier(pgEnum.enumName)}`;
+		}
+		const type: string = column.getSQLType();
+		const serials: Record<string, string> = {
+			serial: "integer",
+			bigserial: "bigint",
+			smallserial: "smallint",
+		};
+		return sql.raw(serials[type] ?? type);
 	}
 
 	private tableName(table: any): string {

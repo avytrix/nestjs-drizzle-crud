@@ -23,11 +23,13 @@ import { createPool, type Pool } from "mysql2/promise";
 import { DRIZZLE_DB } from "../src/modules/drizzle-connection";
 import { DrizzleCrudModule } from "../src/modules/drizzle-crud.module";
 import {
+	caught,
 	type DialectSetup,
 	describeDialectContract,
 	expectStatus,
 	seed,
 	services,
+	Svc,
 } from "./dialect-contract";
 
 const MYSQL_URL = process.env.MYSQL_URL;
@@ -179,6 +181,103 @@ run("MySQL integration (MYSQL_URL)", () => {
 			400,
 		);
 		await expectStatus(svc.fullTextSearch("ann", ["name"]), 400);
+	});
+
+	// 3.8.2: the tenant key check leaves the comparison to the column's
+	// collation. utf8mb4_unicode_ci also differs from the server default and
+	// from the connection's, which a derived table's text column could not
+	// be compared with.
+	describe("the tenant key check follows the column's collation", () => {
+		const codes = mysqlTable("key_codes", {
+			code: varchar("code", { length: 10 }).primaryKey(),
+			tenant_id: int("tenant_id").notNull(),
+		});
+		const coded = mysqlTable("key_coded", {
+			id: int("id").autoincrement().primaryKey(),
+			tenant_id: int("tenant_id").notNull(),
+			code: varchar("code", { length: 10 }),
+		});
+		const links = mysqlTable("key_links", {
+			item_id: int("item_id").notNull(),
+			code: varchar("code", { length: 10 }).notNull(),
+		});
+		async function keyed(collation: string, seedRows: Array<[string, number]>) {
+			const db = await emptyDb();
+			for (const statement of [
+				"DROP TABLE IF EXISTS key_links, key_coded, key_codes",
+				`CREATE TABLE key_codes (
+					code varchar(10) COLLATE ${collation} PRIMARY KEY,
+					tenant_id int NOT NULL
+				)`,
+				`CREATE TABLE key_coded (
+					id int AUTO_INCREMENT PRIMARY KEY,
+					tenant_id int NOT NULL,
+					code varchar(10) COLLATE ${collation}
+				)`,
+				`CREATE TABLE key_links (
+					item_id int NOT NULL,
+					code varchar(10) COLLATE ${collation} NOT NULL,
+					PRIMARY KEY (item_id, code)
+				)`,
+			]) {
+				await db.execute(sql.raw(statement));
+			}
+			await db
+				.insert(codes)
+				.values(seedRows.map(([code, tenant_id]) => ({ code, tenant_id })));
+			await db.insert(coded).values({ tenant_id: 1 });
+			return new Svc({
+				dialect: "mysql",
+				db,
+				table: coded,
+				primaryKey: "id",
+				softDelete: undefined,
+				timestamps: undefined,
+				scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+				relations: {
+					codeRef: { table: codes, localKey: "code", references: "code" },
+					links: {
+						table: codes,
+						type: "manyToMany",
+						through: links,
+						throughLocalKey: "item_id",
+						throughForeignKey: "code",
+						references: "code",
+					},
+				},
+			});
+		}
+		const t1 = { context: { tenantId: 1 } };
+
+		it("refuses another tenant's key in another case under _bin", async () => {
+			const svc = await keyed("utf8mb4_bin", [
+				["US", 1],
+				["us", 2],
+			]);
+			const batch = await caught(
+				svc.massCreate([{ code: "US" }, { code: "us" }], t1),
+			);
+			expect(batch.errors.map((e: any) => e.index)).toEqual([1]);
+			await expectStatus(svc.create({ code: "us" }, t1), 400);
+			await expectStatus(svc.attach(1, "links", ["us"], t1), 400);
+			await expect(svc.create({ code: "US" }, t1)).resolves.toBeTruthy();
+		});
+
+		for (const collation of ["utf8mb4_unicode_ci", "utf8mb4_0900_ai_ci"]) {
+			it(`takes the caller's own key in another case under ${collation}`, async () => {
+				const svc = await keyed(collation, [
+					["US", 1],
+					["FR", 2],
+				]);
+				await expect(svc.create({ code: "us" }, t1)).resolves.toBeTruthy();
+				await expect(
+					svc.massCreate([{ code: "Us" }, { code: "uS" }], t1),
+				).resolves.toHaveLength(2);
+				await expectStatus(svc.create({ code: "fr" }, t1), 400);
+				const row = await svc.attach(1, "links", ["us", "US"], t1);
+				expect(row.links.map((c: any) => c.code)).toEqual(["US"]);
+			});
+		}
 	});
 
 	it("builds its own pool from connectionString", async () => {

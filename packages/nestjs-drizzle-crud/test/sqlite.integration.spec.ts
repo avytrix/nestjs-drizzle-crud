@@ -397,6 +397,66 @@ describe("sqlite: sql.caseSensitive (3.7.2)", () => {
 	});
 });
 
+describe("sqlite: the tenant key check follows the column's collation (3.8.2)", () => {
+	const codes = sqliteTable("codes", {
+		code: text("code").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+	});
+	const coded = sqliteTable("coded", {
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		tenant_id: integer("tenant_id").notNull(),
+		code: text("code"),
+		doc_id: integer("doc_id"),
+	});
+	const keyed = async () => {
+		const db = await emptyDb();
+		await seed(db, setup.tables);
+		await db.run(
+			sql.raw(
+				"CREATE TABLE codes (code text PRIMARY KEY COLLATE NOCASE, tenant_id integer NOT NULL)",
+			),
+		);
+		await db.run(
+			sql.raw(
+				"CREATE TABLE coded (id integer PRIMARY KEY AUTOINCREMENT, tenant_id integer NOT NULL, code text REFERENCES codes(code), doc_id integer)",
+			),
+		);
+		await db.insert(codes).values([
+			{ code: "US", tenant_id: 1 },
+			{ code: "FR", tenant_id: 2 },
+		]);
+		return new Svc({
+			dialect: "sqlite",
+			db,
+			table: coded,
+			primaryKey: "id",
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: {
+				codeRef: { table: codes, localKey: "code", references: "code" },
+				doc: { table: docs, localKey: "doc_id" },
+			},
+		});
+	};
+	const t1 = { context: { tenantId: 1 } };
+
+	it("takes a NOCASE key in the caller's tenant in another case", async () => {
+		const svc = await keyed();
+		await expect(svc.create({ code: "us" }, t1)).resolves.toMatchObject({
+			code: "us",
+		});
+		await expect(
+			svc.massCreate([{ code: "Us" }, { code: "US" }], t1),
+		).resolves.toHaveLength(2);
+		// Another tenant's key, in any case, is still refused.
+		await expectStatus(svc.create({ code: "fr" }, t1), 400);
+		// An integer key sent as a string still matches, by column affinity.
+		await expect(svc.create({ doc_id: "1" }, t1)).resolves.toBeTruthy();
+		await expectStatus(svc.create({ doc_id: "3" }, t1), 400);
+	});
+});
+
 describe("sqlite: module wiring", () => {
 	it("turns RETURNING on for sqlite by default", async () => {
 		const db = await emptyDb();

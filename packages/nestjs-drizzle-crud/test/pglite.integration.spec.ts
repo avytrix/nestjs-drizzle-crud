@@ -28,6 +28,12 @@ import {
 	varchar,
 } from "drizzle-orm/pg-core";
 import { eq, sql } from "drizzle-orm";
+import {
+	int,
+	mysqlTable,
+	varchar as mysqlVarchar,
+} from "drizzle-orm/mysql-core";
+import { drizzle as drizzleMysql } from "drizzle-orm/mysql2";
 import { drizzle } from "drizzle-orm/pglite";
 import { Test } from "@nestjs/testing";
 import { SqlBaseCrudService } from "../src/core/abstract/sql-base-crud.service";
@@ -4273,47 +4279,83 @@ INSERT INTO coded_items (tenant_id) VALUES (1);`;
 		expect(row.links.map((c: any) => c.code)).toEqual(["US"]);
 	});
 
-	// MySQL's default collations match "us" to a stored "US", and a unique
-	// key cannot hold both, so the check folds case there. A stubbed db
-	// answers the key SELECT the way such a collation does.
-	it("folds case on MySQL, where the collation does", async () => {
-		const stub = (rows: unknown[]) => {
-			const inserted: unknown[] = [];
-			const db: any = {
-				select: () => ({ from: () => ({ where: async () => rows }) }),
-				insert: () => ({
-					values: async (values: unknown) => {
-						inserted.push(values);
-					},
-				}),
+	// Which key matched is the database's answer, by the position of the
+	// value sent, on MySQL as everywhere: its default collations match "us"
+	// to a stored "US", a _bin collation does not. A stubbed mysql2 client
+	// answers the key SELECT the way each would, and records what was sent.
+	it("takes the database's answer on MySQL, whatever the collation", async () => {
+		const mCodes = mysqlTable("codes", {
+			code: mysqlVarchar("code", { length: 10 }).primaryKey(),
+			tenant_id: int("tenant_id").notNull(),
+		});
+		const mItems = mysqlTable("coded_items", {
+			id: int("id").autoincrement().primaryKey(),
+			tenant_id: int("tenant_id").notNull(),
+			code: mysqlVarchar("code", { length: 10 }),
+		});
+		const mLinks = mysqlTable("code_links", {
+			item_id: int("item_id").notNull(),
+			code: mysqlVarchar("code", { length: 10 }).notNull(),
+		});
+		const stub = (matched: unknown[][]) => {
+			const sent: Array<{ sql: string; params: unknown[] }> = [];
+			const client = {
+				query: async (query: any, params: unknown[]) => {
+					const text = typeof query === "string" ? query : query.sql;
+					sent.push({ sql: text, params });
+					if (/^select/.test(text)) {
+						return [/code_links/.test(text) ? [] : matched, []];
+					}
+					return [{ affectedRows: 1, insertId: 0 }, []];
+				},
 			};
-			return { db, inserted };
+			return { db: drizzleMysql({ client: client as any }), sent };
 		};
-		const svcFor = (dialect: "mysql" | "postgresql") =>
+		const svcFor = (db: any) =>
 			new Svc({
-				...(itemsSvc(stub([]).db) as any).config,
-				dialect,
-				sql: { ...base(undefined, codedItems).sql!, useReturning: false },
+				...base(db, mItems),
+				dialect: "mysql",
+				softDelete: undefined,
+				timestamps: undefined,
+				sql: { ...base(db, mItems).sql!, useReturning: false },
+				scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+				relations: {
+					codeRef: { table: mCodes, localKey: "code", references: "code" },
+					links: {
+						table: mCodes,
+						type: "manyToMany",
+						through: mLinks,
+						throughLocalKey: "item_id",
+						throughForeignKey: "code",
+						references: "code",
+					},
+				},
 			}) as any;
-		const stored = [{ id: "US" }];
 
-		const mysql = svcFor("mysql");
-		const keys = stub(stored);
-		expect(
-			(await mysql.keysOutsideScope(keys.db, [{ code: "us" }], t1)).size,
-		).toBe(0);
-		const links = stub(stored);
-		const relation = mysql.config.relations.links;
-		await mysql.linkTargets(links.db, relation, 1, ["us"], t1, true);
-		expect(links.inserted).toEqual([[{ item_id: 1, code: "us" }]]);
+		// A case-insensitive collation: "us" (position 0) matched "US".
+		const ci = stub([[0, "US"]]);
+		const svc = svcFor(ci.db);
+		expect((await svc.keysOutsideScope(ci.db, [{ code: "us" }], t1)).size).toBe(
+			0,
+		);
+		expect(ci.sent[0]!.sql).toContain("(values row(0)) as input");
+		expect(ci.sent[0]!.sql).toContain(
+			"`codes`.`code` = elt(input.column_0 + 1, ?)",
+		);
+		expect(ci.sent[0]!.params).toEqual(["us", 1]);
+		const links = stub([[0, "US"]]);
+		const relation = svc.config.relations.links;
+		await svc.linkTargets(links.db, relation, 1, ["us"], t1, true);
+		// The link holds the key as stored.
+		expect(links.sent.at(-1)!.params).toEqual([1, "US"]);
 
-		// PostgreSQL and SQLite compare exactly: the same answer is a miss.
-		const pg = svcFor("postgresql");
+		// A _bin collation: nothing matched, so "us" is outside the tenant.
+		const bin = stub([]);
 		expect(
-			(await pg.keysOutsideScope(stub(stored).db, [{ code: "us" }], t1)).size,
+			(await svc.keysOutsideScope(bin.db, [{ code: "us" }], t1)).size,
 		).toBe(1);
 		await expect(
-			pg.linkTargets(stub(stored).db, relation, 1, ["us"], t1, true),
+			svc.linkTargets(stub([]).db, relation, 1, ["us"], t1, true),
 		).rejects.toBeInstanceOf(BulkOperationException);
 	});
 });
@@ -4590,5 +4632,165 @@ describe("3.8.1 D-08: mass trash writes carry the guard's soft delete state", ()
 		reset();
 		await svc.massRestore([2, 5]);
 		expect(writes()[0]).not.toMatch(/"deleted_at" is/);
+	});
+});
+
+describe("3.8.2 G-01: the database decides which key matched", () => {
+	// citext is case-insensitive in the database. A key in the caller's own
+	// tenant in another case is the same row to Postgres, so the check takes it.
+	const users = pgTable("ci_users", {
+		email: customType<{ data: string }>({ dataType: () => "citext" })(
+			"email",
+		).primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+	});
+	const ciNotes = pgTable("ci_notes", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+		owner: customType<{ data: string }>({ dataType: () => "citext" })("owner"),
+	});
+	const ciLinks = pgTable("ci_links", {
+		note_id: integer("note_id").notNull(),
+		email: customType<{ data: string }>({ dataType: () => "citext" })(
+			"email",
+		).notNull(),
+	});
+	const ddl = `CREATE EXTENSION citext;
+CREATE TABLE ci_users (email citext PRIMARY KEY, tenant_id integer NOT NULL);
+CREATE TABLE ci_notes (
+  id serial PRIMARY KEY, tenant_id integer NOT NULL,
+  owner citext REFERENCES ci_users(email)
+);
+CREATE TABLE ci_links (
+  note_id integer NOT NULL REFERENCES ci_notes(id),
+  email citext NOT NULL REFERENCES ci_users(email),
+  PRIMARY KEY (note_id, email)
+);
+INSERT INTO ci_users VALUES ('Ann@X.io', 1), ('Bob@X.io', 2);
+INSERT INTO ci_notes (tenant_id) VALUES (1);`;
+	async function citextDb() {
+		const { citext } = await import("@electric-sql/pglite/contrib/citext");
+		const client = await PGlite.create({ extensions: { citext } });
+		clients.push(client);
+		await client.exec(ddl);
+		return drizzle(client);
+	}
+	const notesSvc = (db: any) =>
+		new Svc({
+			...base(db, ciNotes),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: {
+				ownerRef: { table: users, localKey: "owner", references: "email" },
+				links: {
+					table: users,
+					type: "manyToMany",
+					through: ciLinks,
+					throughLocalKey: "note_id",
+					throughForeignKey: "email",
+					references: "email",
+				},
+			},
+		});
+	const t1 = asTenant(1);
+
+	it("takes a citext key in the caller's tenant in another case", async () => {
+		const db = await citextDb();
+		const svc = notesSvc(db);
+		const created = await svc.create({ owner: "ann@x.io" }, t1);
+		expect(created.owner).toBe("ann@x.io");
+		const batch = await svc.massCreate(
+			[{ owner: "ANN@X.IO" }, { owner: "Ann@X.io" }],
+			t1,
+		);
+		expect(batch).toHaveLength(2);
+		// Another tenant's key is still refused, in any case.
+		await expect400(svc.create({ owner: "bob@x.io" }, t1));
+		const mixed = await caught(
+			svc.massCreate([{ owner: "ann@x.io" }, { owner: "BOB@x.io" }], t1),
+		);
+		expect(mixed.errors.map((e: any) => e.index)).toEqual([1]);
+	});
+
+	it("links a citext key once, however many cases name it", async () => {
+		const db = await citextDb();
+		const svc = notesSvc(db);
+		const row = await svc.attach(1, "links", ["ann@x.io", "ANN@x.io"], t1);
+		expect(row.links.map((u: any) => u.email)).toEqual(["Ann@X.io"]);
+		// Linked already, in yet another case: nothing to add.
+		await svc.attach(1, "links", ["aNN@x.io"], t1);
+		expect(await db.select().from(ciLinks)).toEqual([
+			{ note_id: 1, email: "Ann@X.io" },
+		]);
+		const theirs = await caught(svc.attach(1, "links", ["bob@x.io"], t1));
+		expect(theirs).toBeInstanceOf(BulkOperationException);
+		expect(theirs.errors).toMatchObject([{ id: "bob@x.io" }]);
+	});
+
+	it("still refuses another tenant's text key in another case", async () => {
+		// The D-02 case, through the same join: Postgres text compares exactly.
+		const codes = pgTable("codes", {
+			code: text("code").primaryKey(),
+			tenant_id: integer("tenant_id").notNull(),
+		});
+		const coded = pgTable("coded", {
+			id: serial("id").primaryKey(),
+			tenant_id: integer("tenant_id").notNull(),
+			code: text("code"),
+		});
+		const db =
+			await customDb(`CREATE TABLE codes (code text PRIMARY KEY, tenant_id integer NOT NULL);
+CREATE TABLE coded (id serial PRIMARY KEY, tenant_id integer NOT NULL, code text);
+INSERT INTO codes VALUES ('US', 1), ('us', 2);`);
+		const svc = new Svc({
+			...base(db, coded),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: {
+				codeRef: { table: codes, localKey: "code", references: "code" },
+			},
+		});
+		const batch = await caught(
+			svc.massCreate([{ code: "US" }, { code: "us" }], t1),
+		);
+		expect(batch.errors.map((e: any) => e.index)).toEqual([1]);
+		await expect400(svc.create({ code: "us" }, t1));
+	});
+
+	it("matches a uuid key in any case, as the uuid type does", async () => {
+		const db = await freshDb();
+		const owners = pgTable("uuid_owners", {
+			id: uuid("id").primaryKey(),
+			tenant_id: integer("tenant_id").notNull(),
+		});
+		const owned = pgTable("uuid_owned", {
+			id: serial("id").primaryKey(),
+			tenant_id: integer("tenant_id").notNull(),
+			owner_id: uuid("owner_id"),
+		});
+		await db.$client.exec(`CREATE TABLE uuid_owners (id uuid PRIMARY KEY, tenant_id integer NOT NULL);
+CREATE TABLE uuid_owned (id serial PRIMARY KEY, tenant_id integer NOT NULL, owner_id uuid);
+INSERT INTO uuid_owners VALUES ('0000000a-0000-0000-0000-00000000000a', 1);`);
+		const svc = new Svc({
+			...base(db, owned),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: { owner: { table: owners, localKey: "owner_id" } },
+		});
+		await expect(
+			svc.massCreate(
+				[
+					{ owner_id: "0000000A-0000-0000-0000-00000000000A" },
+					{ owner_id: "0000000a-0000-0000-0000-00000000000a" },
+				],
+				t1,
+			),
+		).resolves.toHaveLength(2);
+		await expect(
+			svc.create({ owner_id: "0000000a-0000-0000-0000-00000000000b" }, t1),
+		).rejects.toBeInstanceOf(BadRequestException);
 	});
 });
