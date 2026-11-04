@@ -90,6 +90,15 @@ const CURSOR_KEY = "__crudCursor";
 // The options key of the per-call tenant scope memo (withScopeMemo).
 const SCOPE_MEMO = Symbol("scopeMemo");
 
+// The memo itself: per service, then per context object, the scope that
+// service resolved for that context. Options handed to another service, or a
+// nested call with another context, never reuse a scope resolved for someone
+// else.
+type ScopeMemo = Map<object, Map<unknown, CrudScopeValues | null>>;
+
+// A counter that makes each SQL value in a massUpdate SET unique (fingerprint).
+let fingerprintTag = 0;
+
 // Thrown inside a savepoint to roll it back on purpose; never escapes.
 const ROLLBACK = Symbol("rollback");
 
@@ -366,23 +375,22 @@ export abstract class SqlBaseCrudService<
 	): CrudScopeValues | null {
 		const scope = this.config.scope;
 		if (!scope || options?.skipScope) return null;
-		const memo: { values?: CrudScopeValues | null } | undefined = (
-			options as any
-		)?.[SCOPE_MEMO];
-		if (memo && Object.hasOwn(memo, "values")) return memo.values!;
-		const values =
-			typeof scope === "function"
-				? scope(options?.context ?? CrudContext.current() ?? {})
-				: scope;
+		const context = options?.context ?? CrudContext.current();
+		const memo: ScopeMemo | undefined = (options as any)?.[SCOPE_MEMO];
+		const mine = memo?.get(this);
+		if (mine?.has(context)) return mine.get(context)!;
+		const values = typeof scope === "function" ? scope(context ?? {}) : scope;
 		const checked = this.checkScope(values);
-		if (memo) memo.values = checked;
+		if (mine) mine.set(context, checked);
+		else memo?.set(this, new Map([[context, checked]]));
 		return checked;
 	}
 
 	// The options of one public call, carrying a memo so a scope function runs
-	// once for the whole call, however many statements and relations it
-	// builds. Nested calls spread the options and share the memo; each new
-	// public call starts a new one.
+	// once per service and context for the whole call, however many statements
+	// and relations it builds. Nested calls spread the options and share the
+	// memo, keyed by service and context (ScopeMemo); each new public call
+	// starts a new one.
 	private withScopeMemo<O extends object>(options?: O): O | undefined {
 		if (
 			typeof this.config.scope !== "function" ||
@@ -390,7 +398,7 @@ export abstract class SqlBaseCrudService<
 		) {
 			return options;
 		}
-		return { ...options, [SCOPE_MEMO]: {} } as O;
+		return { ...options, [SCOPE_MEMO]: new Map() as ScopeMemo } as O;
 	}
 
 	// A scope resolver's result, checked: null, or column values with none
@@ -1897,8 +1905,9 @@ export abstract class SqlBaseCrudService<
 	// the guard's whole WHERE, and "no row came back" is then answered by the
 	// guard after the fact, so the read is only needed first when something a
 	// caller can observe runs between the guard and the write: a hook or
-	// mapping a subclass overrides (named in `methods`), or a before event.
-	// Without RETURNING (MySQL) the guard always runs first.
+	// mapping a subclass overrides (named in `methods`), an emitEvent
+	// override, or a before event. Without RETURNING (MySQL) the guard always
+	// runs first.
 	private skipsGuard(
 		options: SqlOperationOptions | undefined,
 		...methods: string[]
@@ -1906,7 +1915,9 @@ export abstract class SqlBaseCrudService<
 		if (!this.config.sql?.useReturning) return false;
 		if (this.config.events && !options?.skipEvents) return false;
 		const base = SqlBaseCrudService.prototype as any;
-		return methods.every((name) => (this as any)[name] === base[name]);
+		return ["emitEvent", ...methods].every(
+			(name) => (this as any)[name] === base[name],
+		);
 	}
 
 	// Run the part of a guardless write that comes before its statement. An
@@ -2537,9 +2548,15 @@ export abstract class SqlBaseCrudService<
 	// its transaction commits, which holds the row locks for less time. Only
 	// in a transaction it opened itself, and only when the load cannot fail on
 	// a valid write: a count with a filter can (a bad filter value), and that
-	// failure has to roll the write back, as it always did.
-	private loadsAfterCommit(options?: SqlOperationOptions): boolean {
-		if (options?.transaction) return false;
+	// failure has to roll the write back, as it always did. A create never
+	// loads after the commit: it is not idempotent, so a load that fails then
+	// (a pool timeout, a dropped connection) would answer an error for rows
+	// that are stored, and a retry would store them twice.
+	private loadsAfterCommit(
+		operation: CrudWriteOperation,
+		options?: SqlOperationOptions,
+	): boolean {
+		if (operation === "create" || options?.transaction) return false;
 		try {
 			return this.countPlan(options?.counts).every((count) => !count.filter);
 		} catch {
@@ -2552,10 +2569,11 @@ export abstract class SqlBaseCrudService<
 	// the transaction, or after it commits when loadsAfterCommit allows. The
 	// rows come back the same either way.
 	private async writeThenLoad<R extends T[]>(
+		operation: CrudWriteOperation,
 		options: SqlOperationOptions | undefined,
 		write: (tx: any, load: (tx: any, rows: T[]) => Promise<void>) => Promise<R>,
 	): Promise<R> {
-		const late = this.loadsAfterCommit(options);
+		const late = this.loadsAfterCommit(operation, options);
 		const rows = await this.executeSqlTransaction(
 			(tx) =>
 				write(tx, (inTx, written) =>
@@ -2756,9 +2774,11 @@ export abstract class SqlBaseCrudService<
 					`the relation "${name}" takes an object to create`,
 				);
 			}
+			const parentRow = this.relatedRow(relation.table, value, options);
+			await this.assertNestedKeysInScope(tx, relation, [parentRow], options);
 			const [parent] = await tx
 				.insert(relation.table)
-				.values(this.relatedRow(relation.table, value, options))
+				.values(parentRow)
 				.returning();
 			row[relation.localKey!] = parent[relation.references ?? "id"];
 		}
@@ -2783,6 +2803,7 @@ export abstract class SqlBaseCrudService<
 						[relation.foreignKey!]: parentValue,
 					};
 				});
+				await this.assertNestedKeysInScope(tx, relation, children, options);
 				if (children.length > 0) {
 					await tx.insert(relation.table).values(children);
 				}
@@ -2792,11 +2813,13 @@ export abstract class SqlBaseCrudService<
 			const ids = value.filter((item) => !isPlainObject(item));
 			const fresh = value.filter((item) => isPlainObject(item));
 			if (fresh.length > 0) {
+				const freshRows = fresh.map((item) =>
+					this.relatedRow(relation.table, item, options),
+				);
+				await this.assertNestedKeysInScope(tx, relation, freshRows, options);
 				const inserted = await tx
 					.insert(relation.table)
-					.values(
-						fresh.map((item) => this.relatedRow(relation.table, item, options)),
-					)
+					.values(freshRows)
 					.returning();
 				ids.push(...inserted.map((r: any) => r[relation.references ?? "id"]));
 			}
@@ -2853,18 +2876,23 @@ export abstract class SqlBaseCrudService<
 	// SELECT per relation for every row, whatever their number. A key that is
 	// not found, missing or another tenant's, gets the error a missing parent
 	// gives, so the answer never tells the two apart. `skip` names relations
-	// a nested create fills in itself.
+	// a nested create fills in itself. `owner` is the table the rows go to
+	// and its declared relations: the service's own, or a nested relation's
+	// for the rows a nested create writes there.
 	private async keysOutsideScope(
 		db: any,
 		rows: Array<Record<string, any>>,
 		options?: SqlOperationOptions,
 		skip: string[] = [],
+		owner: { table: any; relations?: RelationsConfig } = {
+			table: this.config.table,
+			relations: this.config.relations,
+		},
 	): Promise<Map<number, ForeignKeyViolationException>> {
 		const failures = new Map<number, ForeignKeyViolationException>();
 		if (!this.resolveScope(options)) return failures;
-		for (const [name, relation] of Object.entries(
-			this.config.relations ?? {},
-		)) {
+		const checks: Array<{ local: string; referenced: any; query: any }> = [];
+		for (const [name, relation] of Object.entries(owner.relations ?? {})) {
 			const local = relation.localKey;
 			if (!local || this.isCollection(relation) || skip.includes(name)) {
 				continue;
@@ -2874,21 +2902,35 @@ export abstract class SqlBaseCrudService<
 			if (scope.length === 0 || !referenced) continue;
 			const keys = this.uniqueValues(
 				rows.map((row) => row[local]).filter((value) => value != null),
+				referenced,
 			);
 			if (keys.length === 0) continue;
-			const found: any[] = await db
-				.select({ id: referenced })
-				.from(relation.table)
-				.where(and(inArray(referenced, keys), ...scope));
-			const present = new Set(found.map((row) => this.valueKey(row.id)));
-			rows.forEach((row, index) => {
-				const value = row[local];
-				if (value == null || present.has(this.valueKey(value))) return;
-				if (!failures.has(index)) {
-					failures.set(index, this.missingParentException(local));
-				}
+			checks.push({
+				local,
+				referenced,
+				query: db
+					.select({ id: referenced })
+					.from(relation.table)
+					.where(and(inArray(referenced, keys), ...scope)),
 			});
 		}
+		// The SELECTs run together; failures are still named in relation
+		// order, so the error a row gets does not depend on which came first.
+		const found = await Promise.all(checks.map((check) => check.query));
+		checks.forEach(({ local, referenced }, i) => {
+			const present = new Set(
+				(found[i] as any[]).map((row) => this.valueKey(row.id, referenced)),
+			);
+			rows.forEach((row, index) => {
+				const value = row[local];
+				if (value == null || present.has(this.valueKey(value, referenced))) {
+					return;
+				}
+				if (!failures.has(index)) {
+					failures.set(index, this.missingParentException(local, owner.table));
+				}
+			});
+		});
 		return failures;
 	}
 
@@ -2922,15 +2964,36 @@ export abstract class SqlBaseCrudService<
 		if (failure) throw failure;
 	}
 
+	// keysOutsideScope for the rows a nested create writes to `relation`'s
+	// table, against the relations that relation declares: throws the error of
+	// the first failing row. A key the nested relation does not declare is
+	// left to the database's foreign key, as on the service's own table.
+	private async assertNestedKeysInScope(
+		tx: any,
+		relation: RelationConfig,
+		rows: Array<Record<string, any>>,
+		options?: SqlOperationOptions,
+	): Promise<void> {
+		if (!relation.relations || rows.length === 0) return;
+		const failures = await this.keysOutsideScope(tx, rows, options, [], {
+			table: relation.table,
+			relations: relation.relations,
+		});
+		if (failures.size === 0) return;
+		const first = [...failures.keys()].reduce((a, b) => Math.min(a, b));
+		throw failures.get(first)!;
+	}
+
 	// The exception toForeignKeyException builds for a parent that does not
 	// exist: Postgres names the column (from the driver's detail), MySQL and
 	// SQLite cannot.
 	private missingParentException(
 		localKey: string,
+		table: any = this.config.table,
 	): ForeignKeyViolationException {
 		const field =
 			this.config.dialect === "postgresql"
-				? (this.columnOf(this.config.table, localKey)?.name ?? localKey)
+				? (this.columnOf(table, localKey)?.name ?? localKey)
 				: "reference";
 		return new ForeignKeyViolationException(this.getEntityName(), field);
 	}
@@ -2951,10 +3014,10 @@ export abstract class SqlBaseCrudService<
 		options?: SqlOperationOptions,
 		fresh = false,
 	): Promise<void> {
-		const wanted = this.uniqueValues(ids);
-		if (wanted.length === 0) return;
 		const target = relation.table;
 		const referenced = target[relation.references ?? "id"];
+		const wanted = this.uniqueValues(ids, referenced);
+		if (wanted.length === 0) return;
 		const through = relation.through;
 		const local = through[relation.throughLocalKey!];
 		const foreign = through[relation.throughForeignKey!];
@@ -2965,8 +3028,9 @@ export abstract class SqlBaseCrudService<
 			.select({ id: referenced })
 			.from(target)
 			.where(and(...conditions));
-		const present = new Set(found.map((row) => this.valueKey(row.id)));
-		const missing = wanted.filter((id) => !present.has(this.valueKey(id)));
+		const key = (value: unknown) => this.valueKey(value, referenced);
+		const present = new Set(found.map((row) => key(row.id)));
+		const missing = wanted.filter((id) => !present.has(key(id)));
 		if (missing.length > 0) {
 			const name = this.tableName(target);
 			throw new BulkOperationException(
@@ -2984,8 +3048,8 @@ export abstract class SqlBaseCrudService<
 					.select({ id: foreign })
 					.from(through)
 					.where(and(eq(local, parentValue), inArray(foreign, wanted)));
-		const already = new Set(linked.map((row) => this.valueKey(row.id)));
-		const add = wanted.filter((id) => !already.has(this.valueKey(id)));
+		const already = new Set(linked.map((row) => key(row.id)));
+		const add = wanted.filter((id) => !already.has(key(id)));
 		if (add.length > 0) {
 			await tx.insert(through).values(
 				add.map((id) => ({
@@ -3062,7 +3126,10 @@ export abstract class SqlBaseCrudService<
 			throw new BadRequestException(`${operation} takes an array of ids`);
 		}
 		this.checkReadOptions(options);
-		const ids = this.uniqueValues(relatedIds ?? []);
+		const ids = this.uniqueValues(
+			relatedIds ?? [],
+			relation.table[relation.references ?? "id"],
+		);
 		const parentKey = this.parentKeyOf(relation);
 
 		return this.executeSqlTransaction(async (tx) => {
@@ -3126,16 +3193,23 @@ export abstract class SqlBaseCrudService<
 		}, options?.transaction);
 	}
 
-	// A comparable key for any id: numbers from the driver against strings
-	// from a request, uuids in either case.
-	private valueKey(value: unknown): string {
-		return String(value).toLowerCase();
+	// A comparable key for a value of `column`: numbers from the driver
+	// against strings from a request. A text key compares exactly, the way
+	// Postgres and SQLite compare it ("US" and "us" are two rows). A uuid
+	// column folds case, as keyOf does for the primary key, and so does
+	// MySQL, whose default collations match "us" to a stored "US" and cannot
+	// hold both as distinct unique values.
+	private valueKey(value: unknown, column?: any): string {
+		const key = String(value);
+		return column?.columnType === "PgUUID" || this.config.dialect === "mysql"
+			? key.toLowerCase()
+			: key;
 	}
 
-	private uniqueValues(values: unknown[]): unknown[] {
+	private uniqueValues(values: unknown[], column?: any): unknown[] {
 		const seen = new Set<string>();
 		return values.filter((value) => {
-			const key = this.valueKey(value);
+			const key = this.valueKey(value, column);
 			if (seen.has(key)) return false;
 			seen.add(key);
 			return true;
@@ -3189,6 +3263,7 @@ export abstract class SqlBaseCrudService<
 			options,
 			"validateUpdate",
 			"mapUpdateDtoToEntity",
+			"prepareUpdate",
 			...(hooks.skipBefore ? [] : ["beforeUpdate"]),
 		);
 		if (guarded) await this.guardRow(id, opts);
@@ -3218,13 +3293,22 @@ export abstract class SqlBaseCrudService<
 				this.assertKeysInScope(db, entityData, opts),
 			);
 			// The guard's soft delete predicate rides on the UPDATE, so a row
-			// deleted after the guard read is not written.
-			const [updatedEntity] = await this.updateWhereIn(
-				db,
-				this.withVersionBump(entityData),
-				[id],
+			// deleted after the guard read is not written. A value the database
+			// refuses is answered by the guard too, so a missing row is still a
+			// 404 ahead of it; inside a caller's transaction the failed
+			// statement has aborted it (Postgres), so the error stands.
+			const [updatedEntity] = await this.guardOnError(
+				guarded || !!transaction,
+				id,
 				opts,
-				this.softDeleteScope(opts),
+				() =>
+					this.updateWhereIn(
+						db,
+						this.withVersionBump(entityData),
+						[id],
+						opts,
+						this.softDeleteScope(opts),
+					),
 			);
 			if (!updatedEntity) {
 				await this.guardRow(id, opts);
@@ -3588,7 +3672,9 @@ export abstract class SqlBaseCrudService<
 		if (written.length >= rows.length) return written;
 		const keys = this.conflictKeys(upsert);
 		const keyOf = (row: Record<string, any>) =>
-			keys.map((k) => this.valueKey(row[k])).join("|");
+			keys
+				.map((k) => this.valueKey(row[k], this.columnOf(this.config.table, k)))
+				.join("|");
 		const seen = new Set(written.map(keyOf));
 		throw new BulkOperationException(
 			message,
@@ -3849,7 +3935,7 @@ export abstract class SqlBaseCrudService<
 			return ids ? this.inIdOrder(written, ids) : written;
 		};
 		return spec.returnsRows
-			? this.writeThenLoad(options, body)
+			? this.writeThenLoad(spec.operation, options, body)
 			: this.executeSqlTransaction(
 					(tx) => body(tx, async () => {}),
 					options?.transaction,
@@ -4117,11 +4203,15 @@ export abstract class SqlBaseCrudService<
 					: unique.map((id) => ({ id, run: () => this.beforeSoftDelete(id) })),
 			write: (tx, _prepared, opts, unique) => {
 				const set = this.softDeleteSet(new Date());
+				// Only a live row, as the guard read found it: a row trashed
+				// since is not stamped again.
 				const update = (db: any, keys: any[]) =>
 					db
 						.update(this.config.table)
 						.set(set)
-						.where(this.writeWhere(keys, opts));
+						.where(
+							and(this.writeWhere(keys, opts), this.softDeleteScope(opts)),
+						);
 				return this.runSet(
 					tx,
 					message,
@@ -4163,13 +4253,17 @@ export abstract class SqlBaseCrudService<
 					: unique.map((id) => ({ id, run: () => this.beforeRestore(id) })),
 			write: (tx, _prepared, opts, unique) => {
 				const set = this.softDeleteSet(null);
+				// The guard's soft delete state rides on the UPDATE, as on the
+				// other trash writes. massRestore takes live and trashed rows
+				// alike, so today that adds no predicate.
+				const state = this.softDeleteScope(opts);
 				return this.runSet(
 					tx,
 					message,
-					(sp) => this.updateWhereIn(sp, set, unique, opts),
+					(sp) => this.updateWhereIn(sp, set, unique, opts, state),
 					unique.map((id) => ({
 						id,
-						run: (sp: any) => this.updateWhereIn(sp, set, [id], opts),
+						run: (sp: any) => this.updateWhereIn(sp, set, [id], opts, state),
 					})),
 					"write",
 				);
@@ -4207,8 +4301,14 @@ export abstract class SqlBaseCrudService<
 					? undefined
 					: unique.map((id) => ({ id, run: () => this.beforeDelete(id) })),
 			write: (tx, _prepared, opts, unique) => {
+				// massDelete only removes a live row, as the guard read found it;
+				// massForceDelete any row.
 				const remove = (db: any, keys: any[]) =>
-					db.delete(this.config.table).where(this.writeWhere(keys, opts));
+					db
+						.delete(this.config.table)
+						.where(
+							and(this.writeWhere(keys, opts), this.softDeleteScope(opts)),
+						);
 				return this.runSet(
 					tx,
 					message,
@@ -4248,11 +4348,25 @@ export abstract class SqlBaseCrudService<
 		});
 	}
 
-	// A stable string for comparing two SET objects (Dates and bigints included).
+	// A stable string for comparing two SET objects. Strings (Dates included,
+	// as JSON) are prefixed, so the tags below never equal a real value:
+	// bigints, NaN and Infinity (which JSON writes as null), and any value
+	// that is not plain data (Drizzle's SQL, Param, a Column), which gets a
+	// tag of its own so a SET carrying one never shares an UPDATE and is never
+	// walked (an SQL object is circular).
 	private fingerprint(value: unknown): string {
-		return JSON.stringify(value, (_key, v) =>
-			typeof v === "bigint" ? `${v}n` : v,
-		);
+		return JSON.stringify(value, (_key, v) => {
+			if (typeof v === "string") return `s:${v}`;
+			if (typeof v === "bigint") return `bigint:${v}`;
+			if (typeof v === "number" && !Number.isFinite(v)) return `number:${v}`;
+			if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+				const proto = Object.getPrototypeOf(v);
+				if (proto !== Object.prototype && proto !== null) {
+					return `opaque:${++fingerprintTag}`;
+				}
+			}
+			return v;
+		});
 	}
 
 	// One SELECT for every id, in the soft delete scope of `options`. Every id

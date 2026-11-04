@@ -121,7 +121,7 @@ Any change to behaviour must, in the same PR:
 
 - add an entry to `packages/nestjs-drizzle-crud/CHANGELOG.md` (Keep a Changelog style) and bump `package.json` per semver when the change ships in the package,
 - update every doc surface that describes the thing: the package `README.md`, the consumer agent guide `AGENT.md`, and the matching page under `apps/docs/content/docs/`,
-- mirror the changelog entry into `apps/docs/content/docs/(reference)/changelog.mdx`.
+- mirror the changelog entry into `apps/docs/content/docs/(support)/changelog.mdx`.
 
 Then re-read what you wrote and humanize it: plain language, no filler, and no em
 dashes used as punctuation. The full rules, including the SEO and AEO

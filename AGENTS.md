@@ -38,7 +38,7 @@ Node >= 20, pnpm 10, TypeScript 7 (except `apps/docs`, which pins 5.9). Lint and
 
 - **Public API surface** goes in `src/index.ts`. If it is not exported there, consumers do not have it, so adding a class or type without touching that file is an incomplete change.
 - **Config defaults and merge order** live in `drizzle-crud.module.ts` (`normalizeConfig`, `buildEntityConfig`) and the `defaultConfig` field on `SqlBaseCrudService`. Do not add a fourth place that decides a default.
-- **Release history** is `packages/nestjs-drizzle-crud/CHANGELOG.md`. The docs page `apps/docs/content/docs/(reference)/changelog.mdx` mirrors it; it is a copy, not a second record.
+- **Release history** is `packages/nestjs-drizzle-crud/CHANGELOG.md`. The docs page `apps/docs/content/docs/(support)/changelog.mdx` mirrors it; it is a copy, not a second record.
 - **Documented package version** is `apps/docs/lib/seo.ts` (`siteConfig.version`), plus the home page snapshot in `apps/docs/components/home/latest-releases.tsx`.
 - **Connection ownership** is `DrizzleConnection`. Nothing else opens or closes a driver.
 
@@ -93,7 +93,7 @@ Any change that adds, changes, removes or fixes behaviour **must** update the do
 2. **Every doc surface that describes the thing.** They are single sources; do not let them drift.
    - `packages/nestjs-drizzle-crud/README.md` (npm facing) and `packages/nestjs-drizzle-crud/AGENT.md` (the guide for agents consuming the package) for anything user facing.
    - The docs site under `apps/docs/content/docs/**`: the matching page, plus the section `meta.json` if you add a page, plus `(reference)/api.mdx`, `(reference)/exports.mdx` and `(reference)/config-types.mdx` when the surface changes.
-   - `(reference)/changelog.mdx`, which mirrors the package changelog.
+   - `(support)/changelog.mdx`, which mirrors the package changelog.
    - The reference docs for the workflow itself (`README.md`, `CONTRIBUTING.md`, this file) when the rules change.
 3. **A release also syncs the version references**: `apps/docs/lib/seo.ts` (`siteConfig.version`) and `apps/docs/components/home/latest-releases.tsx`, in the same change as the package bump.
 4. **After writing any docs, check and humanize them (mandatory).** Once the prose is drafted (README, changelog entries, docs pages, reader facing comments, this file), re-read it before committing and rewrite anything that sounds machine generated. This is a required final pass, not optional. In that pass:

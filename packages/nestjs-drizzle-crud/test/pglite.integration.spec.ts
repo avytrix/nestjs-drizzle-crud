@@ -15,6 +15,7 @@ import {
 	bigint,
 	boolean,
 	customType,
+	doublePrecision,
 	integer,
 	jsonb,
 	numeric,
@@ -26,7 +27,7 @@ import {
 	uuid,
 	varchar,
 } from "drizzle-orm/pg-core";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { Test } from "@nestjs/testing";
 import { SqlBaseCrudService } from "../src/core/abstract/sql-base-crud.service";
@@ -4070,5 +4071,524 @@ describe("3.8.0: protected override points still win", () => {
 			"keysetCondition",
 			"runSet",
 		]);
+	});
+});
+
+// 3.8.1: the findings of the 3.8.0 audit (D-01 to D-11).
+
+// A fresh database with the standard fixture plus `ddl`, for a finding that
+// needs a table of its own.
+async function customDb(ddl: string, log?: string[]): Promise<any> {
+	const db = await freshDb(log);
+	await db.$client.exec(ddl);
+	return db;
+}
+
+describe("3.8.1 D-01: the scope memo stays with its service", () => {
+	// A table scoped by org_id, a different column from the docs' tenant_id.
+	const orgItems = pgTable("org_items", {
+		id: serial("id").primaryKey(),
+		org_id: integer("org_id"),
+		name: text("name").notNull(),
+	});
+	const orgDdl = `CREATE TABLE org_items (
+  id serial PRIMARY KEY, org_id integer, name text NOT NULL
+);
+INSERT INTO org_items (org_id, name) VALUES (7, 'seven'), (8, 'eight');`;
+	const orgService = (db: any) =>
+		new Svc({
+			...base(db, orgItems),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ org_id: ctx.orgId }),
+		});
+
+	it("a service with a null scope does not hand it to a scoped one", async () => {
+		const db = await freshDb();
+		const orders = docsService(db);
+		let seen: string[] = [];
+		class NotesService extends Svc {
+			protected override async prepareCreate(data: any, options?: any) {
+				const row = await super.prepareCreate(data, options);
+				const page = await orders.findAll({}, {}, options);
+				seen = page.data.map((doc: any) => `${doc.tenant_id}:${doc.title}`);
+				return row;
+			}
+		}
+		const notesSvc = new NotesService({
+			...base(db, notes),
+			softDelete: { enabled: true, column: "deletedAt" },
+			timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" },
+			scope: () => null,
+		});
+		await notesSvc.create({ body: "x" }, asTenant(1));
+		const direct = await orders.findAll({}, {}, asTenant(1));
+		expect(direct.data).toHaveLength(3);
+		expect(seen).toEqual(
+			direct.data.map((doc: any) => `${doc.tenant_id}:${doc.title}`),
+		);
+	});
+
+	it("a second scoped service resolves its own scope, once per call", async () => {
+		const db = await customDb(orgDdl);
+		const resolved: string[] = [];
+		const other = new Svc({
+			...base(db, orgItems),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => {
+				resolved.push("org");
+				return { org_id: ctx.orgId };
+			},
+		});
+		let listed: unknown[] = [];
+		let created: any;
+		class Orders extends Svc {
+			protected override async prepareCreate(data: any, options?: any) {
+				const row = await super.prepareCreate(data, options);
+				created = await other.create({ name: "from docs" }, options);
+				listed = (await other.findAll({}, {}, options)).data.map(
+					(item: any) => item.name,
+				);
+				return row;
+			}
+		}
+		const orders = new Orders({
+			...base(db, docs),
+			scope: (ctx) => {
+				resolved.push("docs");
+				return { tenant_id: ctx.tenantId };
+			},
+			versionColumn: "version",
+		});
+		const ctx = { context: { tenantId: 1, orgId: 7 } };
+		await orders.create({ title: "T", slug: "t" }, ctx);
+		expect(created).toMatchObject({ org_id: 7, name: "from docs" });
+		expect(listed).toEqual(["seven", "from docs"]);
+		// Each service resolves its own scope once for the whole call.
+		expect(resolved.sort()).toEqual(["docs", "org"]);
+		expect(await orgService(db).count({}, { context: { orgId: 7 } })).toBe(2);
+	});
+
+	it("a nested call with another context resolves that context", async () => {
+		const db = await freshDb();
+		let theirs: string[] = [];
+		class Orders extends Svc {
+			protected override async prepareCreate(data: any, options?: any) {
+				const row = await super.prepareCreate(data, options);
+				const page = await this.findAll(
+					{},
+					{},
+					{
+						...options,
+						context: { tenantId: 2 },
+					},
+				);
+				theirs = page.data.map((doc: any) => doc.title);
+				return row;
+			}
+		}
+		const orders = new Orders({
+			...base(db, docs),
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+		});
+		const created = await orders.create({ title: "T", slug: "t" }, asTenant(1));
+		expect(created.tenant_id).toBe(1);
+		expect(theirs).toEqual(["Four", "Five"]);
+	});
+});
+
+describe("3.8.1 D-02: a text key compares exactly", () => {
+	// Two tenants own codes that differ only in case.
+	const codes = pgTable("codes", {
+		code: text("code").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+	});
+	const codedItems = pgTable("coded_items", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+		code: text("code"),
+	});
+	const codeLinks = pgTable("code_links", {
+		item_id: integer("item_id").notNull(),
+		code: text("code").notNull(),
+	});
+	const ddl = `CREATE TABLE codes (code text PRIMARY KEY, tenant_id integer NOT NULL);
+CREATE TABLE coded_items (
+  id serial PRIMARY KEY, tenant_id integer NOT NULL,
+  code text REFERENCES codes(code)
+);
+CREATE TABLE code_links (
+  item_id integer NOT NULL REFERENCES coded_items(id),
+  code text NOT NULL REFERENCES codes(code),
+  PRIMARY KEY (item_id, code)
+);
+INSERT INTO codes VALUES ('US', 1), ('us', 2);
+INSERT INTO coded_items (tenant_id) VALUES (1);`;
+	const itemsSvc = (db: any) =>
+		new Svc({
+			...base(db, codedItems),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: {
+				codeRef: { table: codes, localKey: "code", references: "code" },
+				links: {
+					table: codes,
+					type: "manyToMany",
+					through: codeLinks,
+					throughLocalKey: "item_id",
+					throughForeignKey: "code",
+					references: "code",
+				},
+			},
+		});
+	const t1 = asTenant(1);
+
+	it("refuses a batch that names another tenant's key in another case", async () => {
+		const db = await customDb(ddl);
+		const svc = itemsSvc(db);
+		await expect400(svc.create({ code: "us" }, t1));
+		const batch = await caught(
+			svc.massCreate([{ code: "US" }, { code: "us" }], t1),
+		);
+		expect(batch).toBeInstanceOf(BulkOperationException);
+		expect(batch.errors.map((e: any) => e.index)).toEqual([1]);
+		// The same answer as a key that is not there at all.
+		const missing = await caught(
+			svc.massCreate([{ code: "US" }, { code: "uS" }], t1),
+		);
+		expect(batch.getResponse()).toEqual(missing.getResponse());
+		expect(await svc.count({}, t1)).toBe(1);
+		await expect(svc.massCreate([{ code: "US" }], t1)).resolves.toHaveLength(1);
+	});
+
+	it("refuses to link another tenant's key in another case", async () => {
+		const db = await customDb(ddl);
+		const svc = itemsSvc(db);
+		const linked = await caught(svc.attach(1, "links", ["US", "us"], t1));
+		expect(linked).toBeInstanceOf(BulkOperationException);
+		expect(linked.errors).toMatchObject([{ id: "us" }]);
+		const row = await svc.attach(1, "links", ["US"], t1);
+		expect(row.links.map((c: any) => c.code)).toEqual(["US"]);
+	});
+
+	// MySQL's default collations match "us" to a stored "US", and a unique
+	// key cannot hold both, so the check folds case there. A stubbed db
+	// answers the key SELECT the way such a collation does.
+	it("folds case on MySQL, where the collation does", async () => {
+		const stub = (rows: unknown[]) => {
+			const inserted: unknown[] = [];
+			const db: any = {
+				select: () => ({ from: () => ({ where: async () => rows }) }),
+				insert: () => ({
+					values: async (values: unknown) => {
+						inserted.push(values);
+					},
+				}),
+			};
+			return { db, inserted };
+		};
+		const svcFor = (dialect: "mysql" | "postgresql") =>
+			new Svc({
+				...(itemsSvc(stub([]).db) as any).config,
+				dialect,
+				sql: { ...base(undefined, codedItems).sql!, useReturning: false },
+			}) as any;
+		const stored = [{ id: "US" }];
+
+		const mysql = svcFor("mysql");
+		const keys = stub(stored);
+		expect(
+			(await mysql.keysOutsideScope(keys.db, [{ code: "us" }], t1)).size,
+		).toBe(0);
+		const links = stub(stored);
+		const relation = mysql.config.relations.links;
+		await mysql.linkTargets(links.db, relation, 1, ["us"], t1, true);
+		expect(links.inserted).toEqual([[{ item_id: 1, code: "us" }]]);
+
+		// PostgreSQL and SQLite compare exactly: the same answer is a miss.
+		const pg = svcFor("postgresql");
+		expect(
+			(await pg.keysOutsideScope(stub(stored).db, [{ code: "us" }], t1)).size,
+		).toBe(1);
+		await expect(
+			pg.linkTargets(stub(stored).db, relation, 1, ["us"], t1, true),
+		).rejects.toBeInstanceOf(BulkOperationException);
+	});
+});
+
+describe("3.8.1 D-03: nested children get the tenant key check", () => {
+	const tAuthors = pgTable("t_authors", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+		name: text("name").notNull(),
+	});
+	const tCategories = pgTable("t_categories", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+	});
+	const tPosts = pgTable("t_posts", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+		author_id: integer("author_id").notNull(),
+		category_id: integer("category_id"),
+		title: text("title").notNull(),
+	});
+	const ddl = `CREATE TABLE t_authors (
+  id serial PRIMARY KEY, tenant_id integer NOT NULL, name text NOT NULL
+);
+CREATE TABLE t_categories (id serial PRIMARY KEY, tenant_id integer NOT NULL);
+CREATE TABLE t_posts (
+  id serial PRIMARY KEY, tenant_id integer NOT NULL,
+  author_id integer NOT NULL REFERENCES t_authors(id),
+  category_id integer REFERENCES t_categories(id),
+  title text NOT NULL
+);
+INSERT INTO t_categories (tenant_id) VALUES (1), (2);`;
+	// With `declare` off, posts.category is not declared and only the
+	// database's foreign key sees a bad category_id.
+	const authorsSvc = (db: any, declare = true) =>
+		new Svc({
+			...base(db, tAuthors),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: {
+				posts: {
+					type: "hasMany",
+					table: tPosts,
+					foreignKey: "author_id",
+					...(declare && {
+						relations: {
+							category: { table: tCategories, localKey: "category_id" },
+						},
+					}),
+				},
+			},
+			writableRelations: ["posts"],
+		});
+	const t1 = asTenant(1);
+	const withPost = (name: string, category_id: number) => ({
+		name,
+		posts: [{ title: "n", category_id }],
+	});
+
+	it("refuses a child key to another tenant's row like a missing one", async () => {
+		const db = await customDb(ddl);
+		const svc = authorsSvc(db);
+		const theirs = await expect400(svc.create(withPost("a", 2), t1));
+		const missing = await expect400(svc.create(withPost("b", 999), t1));
+		expect(theirs.getResponse()).toEqual(missing.getResponse());
+		// The same answer the database's own foreign key gives.
+		const undeclared = await expect400(
+			authorsSvc(db, false).create(withPost("c", 999), t1),
+		);
+		expect(theirs.getResponse()).toEqual(undeclared.getResponse());
+		expect(await db.select().from(tAuthors)).toEqual([]);
+		expect(await db.select().from(tPosts)).toEqual([]);
+		const mine = await svc.create(withPost("d", 1), t1);
+		expect(await db.select().from(tPosts)).toMatchObject([
+			{ author_id: mine.id, category_id: 1, tenant_id: 1 },
+		]);
+	});
+});
+
+describe("3.8.1 D-11: the tenant key check sends its SELECTs together", () => {
+	const pairs = pgTable("doc_pairs", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+		doc_id: integer("doc_id").notNull(),
+		other_id: integer("other_id").notNull(),
+	});
+	const ddl = `CREATE TABLE doc_pairs (
+  id serial PRIMARY KEY, tenant_id integer NOT NULL,
+  doc_id integer NOT NULL, other_id integer NOT NULL
+);`;
+
+	it("starts every relation's SELECT before awaiting the first", async () => {
+		const db = await customDb(ddl);
+		const svc = new Svc({
+			...base(db, pairs),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: {
+				doc: { table: docs, localKey: "doc_id" },
+				other: { table: docs, localKey: "other_id" },
+			},
+		});
+		const trace: string[] = [];
+		const client = db.$client;
+		const query = client.query.bind(client);
+		client.query = async (text: string, ...rest: any[]) => {
+			const checked = /from "docs"/.test(text);
+			if (checked) trace.push("start");
+			try {
+				return await query(text, ...rest);
+			} finally {
+				if (checked) trace.push("end");
+			}
+		};
+		await svc.create({ doc_id: 1, other_id: 2 }, asTenant(1));
+		expect(trace).toEqual(["start", "start", "end", "end"]);
+		// A failure is still named by the first relation that refuses it.
+		const failed = await expect400(
+			svc.create({ doc_id: 4, other_id: 5 }, asTenant(1)),
+		);
+		expect(failed.message).toContain("doc_id");
+	});
+});
+
+describe("3.8.1 D-04: a missing row is a 404 ahead of a value the database refuses", () => {
+	it("answers update(999) with a bad value as a 404, and a real row with the 400", async () => {
+		const db = await freshDb();
+		const svc = postsService(db);
+		// One statement: the UPDATE itself fails on "abc", before any row.
+		const missing = await caught(svc.update(999, { views: "abc" } as any));
+		expect(missing.getStatus()).toBe(404);
+		// The row exists: the value error stands.
+		await expect400(svc.update(1, { views: "abc" } as any));
+	});
+});
+
+describe("3.8.1 D-05: emitEvent and prepareUpdate overrides keep the read first", () => {
+	it("never shows an emitEvent override a write to another tenant's row", async () => {
+		const db = await freshDb();
+		const seen: string[] = [];
+		class Watched extends Svc {
+			protected override async emitEvent(
+				...args: Parameters<Svc["emitEvent"]>
+			) {
+				const [phase, operation, , payload] = args;
+				seen.push(`${phase}:${operation}:${payload.ids?.join(",")}`);
+				return super.emitEvent(...args);
+			}
+		}
+		const svc = new Watched({
+			...base(db, docs),
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+		});
+		const t1 = asTenant(1);
+		for (const run of [
+			() => svc.update(4, { title: "x" }, t1),
+			() => svc.softDelete(4, t1),
+			() => svc.delete(4, t1),
+		]) {
+			expect((await caught(run())).getStatus()).toBe(404);
+		}
+		expect(seen).toEqual([]);
+	});
+
+	it("reads first when a subclass overrides prepareUpdate", async () => {
+		const { db, reset, statements } = await countingDb();
+		const prepared: unknown[] = [];
+		class Prepared extends Svc {
+			protected override prepareUpdate(data: any, options?: any) {
+				prepared.push(data);
+				return super.prepareUpdate(data, options);
+			}
+		}
+		const svc = new Prepared(base(db, posts));
+		reset();
+		expect((await caught(svc.update(999, { title: "x" }))).getStatus()).toBe(
+			404,
+		);
+		expect(prepared).toEqual([]);
+		expect(statements()).toHaveLength(1);
+	});
+});
+
+describe("3.8.1 D-06: massCreate loads its relations inside its transaction", () => {
+	it("stores nothing when the relation load fails", async () => {
+		const db = await freshDb();
+		let fail = true;
+		class Flaky extends Svc {
+			protected override async loadWriteRelations(
+				...args: Parameters<Svc["loadWriteRelations"]>
+			) {
+				// A transient read failure: a pool timeout, a dropped connection.
+				if (fail && args[1].length > 0) throw new Error("load failed");
+				return super.loadWriteRelations(...args);
+			}
+		}
+		const svc = new Flaky({
+			...base(db, posts),
+			relations: { author: { table: authors, localKey: "author_id" } },
+		});
+		const row = { title: "once", author_id: 1, status: "draft", views: 0 };
+		await expect(
+			svc.massCreate([row], { relations: ["author"] }),
+		).rejects.toThrow("load failed");
+		expect(await svc.count({ title: "once" })).toBe(0);
+		// The retry stores the row once.
+		fail = false;
+		const [created] = await svc.massCreate([row], { relations: ["author"] });
+		expect(created.author.name).toBe("Ann");
+		expect(await svc.count({ title: "once" })).toBe(1);
+	});
+});
+
+describe("3.8.1 D-07: massUpdate groups SETs by value, not by JSON", () => {
+	const scores = pgTable("scores", {
+		id: serial("id").primaryKey(),
+		score: doublePrecision("score"),
+	});
+	const ddl = `CREATE TABLE scores (id serial PRIMARY KEY, score double precision);
+INSERT INTO scores (score) VALUES (1), (2);`;
+
+	it("keeps NaN and null apart", async () => {
+		const db = await customDb(ddl);
+		class Hooked extends Svc {
+			protected override async beforeUpdate(id: any, data: any) {
+				return { ...data, score: Number(id) === 1 ? Number.NaN : null };
+			}
+		}
+		const svc = new Hooked({
+			...base(db, scores),
+			softDelete: undefined,
+			timestamps: undefined,
+		});
+		const rows = await svc.massUpdate([1, 2], { score: 0 });
+		expect(rows.map((row: any) => row.score)).toEqual([Number.NaN, null]);
+	});
+
+	it("takes an SQL expression as a value, never grouping it", async () => {
+		const db = await freshDb();
+		const svc = postsService(db);
+		const rows = await svc.massUpdate([1, 2], {
+			views: sql`${posts.views} + 10`,
+		} as any);
+		expect(rows.map((row: any) => row.views)).toEqual([11, 12]);
+	});
+});
+
+describe("3.8.1 D-08: mass trash writes carry the guard's soft delete state", () => {
+	// A row trashed between the guard read and the write cannot be raced in
+	// a single-connection PGlite, so the statement's shape is asserted.
+	it("puts deleted_at IS NULL in the WHERE of massSoftDelete and massDelete", async () => {
+		const { db, reset, statements } = await countingDb();
+		const svc = postsService(db);
+		const live = /"posts"\."deleted_at" is null/;
+		const writes = () =>
+			statements().filter((query) => /^\s*(update|delete)\b/i.test(query));
+
+		reset();
+		await svc.massSoftDelete([1, 2]);
+		expect(writes()).toHaveLength(1);
+		expect(writes()[0]).toMatch(live);
+
+		reset();
+		await svc.massDelete([3, 4]);
+		expect(writes()).toHaveLength(1);
+		expect(writes()[0]).toMatch(live);
+
+		// The purge and the restore take a row in either state.
+		reset();
+		await svc.massForceDelete([1]);
+		expect(writes()[0]).not.toMatch(/deleted_at/);
+		reset();
+		await svc.massRestore([2, 5]);
+		expect(writes()[0]).not.toMatch(/"deleted_at" is/);
 	});
 });
