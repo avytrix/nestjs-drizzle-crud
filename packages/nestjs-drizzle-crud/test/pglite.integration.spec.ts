@@ -4272,3 +4272,79 @@ INSERT INTO coded_items (tenant_id) VALUES (1);`;
 		expect(row.links.map((c: any) => c.code)).toEqual(["US"]);
 	});
 });
+
+describe("3.8.1 D-03: nested children get the tenant key check", () => {
+	const tAuthors = pgTable("t_authors", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+		name: text("name").notNull(),
+	});
+	const tCategories = pgTable("t_categories", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+	});
+	const tPosts = pgTable("t_posts", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+		author_id: integer("author_id").notNull(),
+		category_id: integer("category_id"),
+		title: text("title").notNull(),
+	});
+	const ddl = `CREATE TABLE t_authors (
+  id serial PRIMARY KEY, tenant_id integer NOT NULL, name text NOT NULL
+);
+CREATE TABLE t_categories (id serial PRIMARY KEY, tenant_id integer NOT NULL);
+CREATE TABLE t_posts (
+  id serial PRIMARY KEY, tenant_id integer NOT NULL,
+  author_id integer NOT NULL REFERENCES t_authors(id),
+  category_id integer REFERENCES t_categories(id),
+  title text NOT NULL
+);
+INSERT INTO t_categories (tenant_id) VALUES (1), (2);`;
+	// With `declare` off, posts.category is not declared and only the
+	// database's foreign key sees a bad category_id.
+	const authorsSvc = (db: any, declare = true) =>
+		new Svc({
+			...base(db, tAuthors),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: {
+				posts: {
+					type: "hasMany",
+					table: tPosts,
+					foreignKey: "author_id",
+					...(declare && {
+						relations: {
+							category: { table: tCategories, localKey: "category_id" },
+						},
+					}),
+				},
+			},
+			writableRelations: ["posts"],
+		});
+	const t1 = asTenant(1);
+	const withPost = (name: string, category_id: number) => ({
+		name,
+		posts: [{ title: "n", category_id }],
+	});
+
+	it("refuses a child key to another tenant's row like a missing one", async () => {
+		const db = await customDb(ddl);
+		const svc = authorsSvc(db);
+		const theirs = await expect400(svc.create(withPost("a", 2), t1));
+		const missing = await expect400(svc.create(withPost("b", 999), t1));
+		expect(theirs.getResponse()).toEqual(missing.getResponse());
+		// The same answer the database's own foreign key gives.
+		const undeclared = await expect400(
+			authorsSvc(db, false).create(withPost("c", 999), t1),
+		);
+		expect(theirs.getResponse()).toEqual(undeclared.getResponse());
+		expect(await db.select().from(tAuthors)).toEqual([]);
+		expect(await db.select().from(tPosts)).toEqual([]);
+		const mine = await svc.create(withPost("d", 1), t1);
+		expect(await db.select().from(tPosts)).toMatchObject([
+			{ author_id: mine.id, category_id: 1, tenant_id: 1 },
+		]);
+	});
+});

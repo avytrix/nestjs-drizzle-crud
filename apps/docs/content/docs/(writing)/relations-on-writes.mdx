@@ -115,6 +115,7 @@ A few rules apply to every shape:
 - Nested writes run on `create` only, and go one level deep.
 - Only the related table's own columns are written, never its soft delete column. Other keys in a child object are dropped.
 - The timestamps and the [tenant scope](/docs/multi-tenancy) are set on a child row when the related table has those columns.
+- On a scoped entity, a child's belongs-to key that the nested relation declares in its own `relations` must point at a row of the caller's tenant, or the create is a 400 and nothing is written. An undeclared child key is left to the database's foreign key.
 - A relation key set to `null` is skipped.
 - A wrong shape (an object for has-many, an array for belongs-to) is a 400.
 - On MySQL, which has no `RETURNING`, a nested create is a 400.

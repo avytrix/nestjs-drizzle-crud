@@ -2761,9 +2761,11 @@ export abstract class SqlBaseCrudService<
 					`the relation "${name}" takes an object to create`,
 				);
 			}
+			const parentRow = this.relatedRow(relation.table, value, options);
+			await this.assertNestedKeysInScope(tx, relation, [parentRow], options);
 			const [parent] = await tx
 				.insert(relation.table)
-				.values(this.relatedRow(relation.table, value, options))
+				.values(parentRow)
 				.returning();
 			row[relation.localKey!] = parent[relation.references ?? "id"];
 		}
@@ -2788,6 +2790,7 @@ export abstract class SqlBaseCrudService<
 						[relation.foreignKey!]: parentValue,
 					};
 				});
+				await this.assertNestedKeysInScope(tx, relation, children, options);
 				if (children.length > 0) {
 					await tx.insert(relation.table).values(children);
 				}
@@ -2797,11 +2800,13 @@ export abstract class SqlBaseCrudService<
 			const ids = value.filter((item) => !isPlainObject(item));
 			const fresh = value.filter((item) => isPlainObject(item));
 			if (fresh.length > 0) {
+				const freshRows = fresh.map((item) =>
+					this.relatedRow(relation.table, item, options),
+				);
+				await this.assertNestedKeysInScope(tx, relation, freshRows, options);
 				const inserted = await tx
 					.insert(relation.table)
-					.values(
-						fresh.map((item) => this.relatedRow(relation.table, item, options)),
-					)
+					.values(freshRows)
 					.returning();
 				ids.push(...inserted.map((r: any) => r[relation.references ?? "id"]));
 			}
@@ -2858,18 +2863,22 @@ export abstract class SqlBaseCrudService<
 	// SELECT per relation for every row, whatever their number. A key that is
 	// not found, missing or another tenant's, gets the error a missing parent
 	// gives, so the answer never tells the two apart. `skip` names relations
-	// a nested create fills in itself.
+	// a nested create fills in itself. `owner` is the table the rows go to
+	// and its declared relations: the service's own, or a nested relation's
+	// for the rows a nested create writes there.
 	private async keysOutsideScope(
 		db: any,
 		rows: Array<Record<string, any>>,
 		options?: SqlOperationOptions,
 		skip: string[] = [],
+		owner: { table: any; relations?: RelationsConfig } = {
+			table: this.config.table,
+			relations: this.config.relations,
+		},
 	): Promise<Map<number, ForeignKeyViolationException>> {
 		const failures = new Map<number, ForeignKeyViolationException>();
 		if (!this.resolveScope(options)) return failures;
-		for (const [name, relation] of Object.entries(
-			this.config.relations ?? {},
-		)) {
+		for (const [name, relation] of Object.entries(owner.relations ?? {})) {
 			const local = relation.localKey;
 			if (!local || this.isCollection(relation) || skip.includes(name)) {
 				continue;
@@ -2895,7 +2904,7 @@ export abstract class SqlBaseCrudService<
 					return;
 				}
 				if (!failures.has(index)) {
-					failures.set(index, this.missingParentException(local));
+					failures.set(index, this.missingParentException(local, owner.table));
 				}
 			});
 		}
@@ -2932,15 +2941,36 @@ export abstract class SqlBaseCrudService<
 		if (failure) throw failure;
 	}
 
+	// keysOutsideScope for the rows a nested create writes to `relation`'s
+	// table, against the relations that relation declares: throws the error of
+	// the first failing row. A key the nested relation does not declare is
+	// left to the database's foreign key, as on the service's own table.
+	private async assertNestedKeysInScope(
+		tx: any,
+		relation: RelationConfig,
+		rows: Array<Record<string, any>>,
+		options?: SqlOperationOptions,
+	): Promise<void> {
+		if (!relation.relations || rows.length === 0) return;
+		const failures = await this.keysOutsideScope(tx, rows, options, [], {
+			table: relation.table,
+			relations: relation.relations,
+		});
+		if (failures.size === 0) return;
+		const first = [...failures.keys()].reduce((a, b) => Math.min(a, b));
+		throw failures.get(first)!;
+	}
+
 	// The exception toForeignKeyException builds for a parent that does not
 	// exist: Postgres names the column (from the driver's detail), MySQL and
 	// SQLite cannot.
 	private missingParentException(
 		localKey: string,
+		table: any = this.config.table,
 	): ForeignKeyViolationException {
 		const field =
 			this.config.dialect === "postgresql"
-				? (this.columnOf(this.config.table, localKey)?.name ?? localKey)
+				? (this.columnOf(table, localKey)?.name ?? localKey)
 				: "reference";
 		return new ForeignKeyViolationException(this.getEntityName(), field);
 	}

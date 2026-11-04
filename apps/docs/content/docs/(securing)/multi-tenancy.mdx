@@ -136,7 +136,7 @@ The scope is ANDed into the existence check and into the `UPDATE` or `DELETE` st
 
 `create`, `massCreate` and `upsert` write the scope values onto the row, over whatever the body said, so a client cannot create a row in another tenant. `update` never sets the scope columns: they are dropped from the `SET`, so a body cannot move a row to another tenant. An update whose only column was the scope column is a 400 (nothing to update).
 
-With [nested create](/docs/relations-on-writes), child rows get the scope values too when their table has the same columns, and `attach` only links targets in the caller's tenant when the related table has the scope column.
+With [nested create](/docs/relations-on-writes), child rows get the scope values too when their table has the same columns, their declared belongs-to keys are checked like the parent's (see below), and `attach` only links targets in the caller's tenant when the related table has the scope column.
 
 ## Are related tables scoped?
 
@@ -153,6 +153,20 @@ await notes.create({ docId: 4, body: 'x' }, { context: { tenantId: 1 } });
 ```
 
 The check costs one `SELECT` per relation for the whole call, whatever the number of rows; a mass write lists the failing items in a `BulkOperationException`. A related table without the scope columns is shared and not checked, and neither is a call with `skipScope: true`. A key to a row that does not exist at all is refused the same way, even without a database foreign key.
+
+Since 3.8.1 the same check runs on the rows a [nested create](/docs/relations-on-writes) writes. A child key is checked when the nested relation declares it in its own `relations`, with the same 400:
+
+```ts
+relations: {
+  posts: {
+    type: 'hasMany', table: posts, foreignKey: 'author_id',
+    // declared here, so a post's category_id is checked against the tenant
+    relations: { category: { table: categories, localKey: 'category_id' } },
+  },
+},
+```
+
+Only declared relations are checked. A child column that no nested relation names is left to the database's foreign key, which knows nothing about tenants, so declare every belongs-to a nested child can set.
 
 A composite foreign key such as `(tenant_id, author_id)` still makes the database itself refuse a cross-tenant reference, for writes that do not go through the service.
 

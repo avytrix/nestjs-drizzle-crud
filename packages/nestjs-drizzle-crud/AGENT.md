@@ -395,7 +395,9 @@ restore, force delete, attach included) and written onto every created row, so
 another tenant's id is a 404. A missing context value is a 403, never an
 unscoped query. A belongs-to key a write sets must point at a row of the
 caller's tenant when the related table has the scope columns; another tenant's
-row is the same 400 as a missing one. Do not add `tenant_id` to filters or DTOs
+row is the same 400 as a missing one. Nested create children get the same check
+for the keys their nested relation declares in its own `relations`; declare
+every belongs-to a child can set. Do not add `tenant_id` to filters or DTOs
 by hand, and use `skipScope: true` only in trusted server code.
 
 # Optimistic locking
