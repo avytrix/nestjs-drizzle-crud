@@ -2545,9 +2545,15 @@ export abstract class SqlBaseCrudService<
 	// its transaction commits, which holds the row locks for less time. Only
 	// in a transaction it opened itself, and only when the load cannot fail on
 	// a valid write: a count with a filter can (a bad filter value), and that
-	// failure has to roll the write back, as it always did.
-	private loadsAfterCommit(options?: SqlOperationOptions): boolean {
-		if (options?.transaction) return false;
+	// failure has to roll the write back, as it always did. A create never
+	// loads after the commit: it is not idempotent, so a load that fails then
+	// (a pool timeout, a dropped connection) would answer an error for rows
+	// that are stored, and a retry would store them twice.
+	private loadsAfterCommit(
+		operation: CrudWriteOperation,
+		options?: SqlOperationOptions,
+	): boolean {
+		if (operation === "create" || options?.transaction) return false;
 		try {
 			return this.countPlan(options?.counts).every((count) => !count.filter);
 		} catch {
@@ -2560,10 +2566,11 @@ export abstract class SqlBaseCrudService<
 	// the transaction, or after it commits when loadsAfterCommit allows. The
 	// rows come back the same either way.
 	private async writeThenLoad<R extends T[]>(
+		operation: CrudWriteOperation,
 		options: SqlOperationOptions | undefined,
 		write: (tx: any, load: (tx: any, rows: T[]) => Promise<void>) => Promise<R>,
 	): Promise<R> {
-		const late = this.loadsAfterCommit(options);
+		const late = this.loadsAfterCommit(operation, options);
 		const rows = await this.executeSqlTransaction(
 			(tx) =>
 				write(tx, (inTx, written) =>
@@ -3921,7 +3928,7 @@ export abstract class SqlBaseCrudService<
 			return ids ? this.inIdOrder(written, ids) : written;
 		};
 		return spec.returnsRows
-			? this.writeThenLoad(options, body)
+			? this.writeThenLoad(spec.operation, options, body)
 			: this.executeSqlTransaction(
 					(tx) => body(tx, async () => {}),
 					options?.transaction,

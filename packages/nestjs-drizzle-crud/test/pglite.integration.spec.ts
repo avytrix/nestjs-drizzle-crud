@@ -4453,3 +4453,33 @@ describe("3.8.1 D-05: emitEvent and prepareUpdate overrides keep the read first"
 		expect(statements()).toHaveLength(1);
 	});
 });
+
+describe("3.8.1 D-06: massCreate loads its relations inside its transaction", () => {
+	it("stores nothing when the relation load fails", async () => {
+		const db = await freshDb();
+		let fail = true;
+		class Flaky extends Svc {
+			protected override async loadWriteRelations(
+				...args: Parameters<Svc["loadWriteRelations"]>
+			) {
+				// A transient read failure: a pool timeout, a dropped connection.
+				if (fail && args[1].length > 0) throw new Error("load failed");
+				return super.loadWriteRelations(...args);
+			}
+		}
+		const svc = new Flaky({
+			...base(db, posts),
+			relations: { author: { table: authors, localKey: "author_id" } },
+		});
+		const row = { title: "once", author_id: 1, status: "draft", views: 0 };
+		await expect(
+			svc.massCreate([row], { relations: ["author"] }),
+		).rejects.toThrow("load failed");
+		expect(await svc.count({ title: "once" })).toBe(0);
+		// The retry stores the row once.
+		fail = false;
+		const [created] = await svc.massCreate([row], { relations: ["author"] });
+		expect(created.author.name).toBe("Ann");
+		expect(await svc.count({ title: "once" })).toBe(1);
+	});
+});

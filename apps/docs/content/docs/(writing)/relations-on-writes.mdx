@@ -23,7 +23,7 @@ post.author.name; // 'Bob'
 post.tags;        // []
 ```
 
-That is one `INSERT` plus one query per relation. A mass write loads the relations of every row it wrote in one query per relation too, so `massCreate` of 10 posts with `relations: ['author']` is an `INSERT` and one `SELECT`, not ten. Since 3.8.0 a mass write that opened its own transaction loads them after it commits, so its row locks are held for less time; inside your transaction, or with a `counts` filter (whose value could fail and must roll the write back), they load inside it as before.
+That is one `INSERT` plus one query per relation. A mass write loads the relations of every row it wrote in one query per relation too, so `massCreate` of 10 posts with `relations: ['author']` is an `INSERT` and one `SELECT`, not ten. Since 3.8.0 a mass write that opened its own transaction loads them after it commits, so its row locks are held for less time; inside your transaction, or with a `counts` filter (whose value could fail and must roll the write back), they load inside it as before. `massCreate` always loads inside its transaction since 3.8.1, so a failed load stores nothing (see [bulk operations](/docs/bulk-operations#do-bulk-writes-work-with-relations-scope-and-versions)).
 
 ```ts title="posts.create.ts"
 const created = await posts.massCreate(dtos, { relations: ['author'], counts: ['tags'] });
