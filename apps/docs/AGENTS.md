@@ -76,7 +76,7 @@ name fails the build.
 
 1. **Docs mirror package version exactly.** On each release, in order: bump
    `lib/seo.ts::siteConfig.version`, sweep page-level version refs, update
-   `content/docs/(reference)/changelog.mdx` (mirrors upstream `CHANGELOG.md`),
+   `content/docs/(support)/changelog.mdx` (mirrors upstream `CHANGELOG.md`),
    update `components/home/latest-releases.tsx` snapshot.
 2. **Feature pages describe current behavior only.** Historical record lives in
    `/docs/changelog`.
@@ -193,7 +193,7 @@ below `sm` and never opens by itself there.
 | Documented package version | `lib/seo.ts::siteConfig.version` |
 | Site / GitHub / npm / org URLs, git paths | `lib/seo.ts::siteConfig` |
 | Nav structure | `lib/layout.shared.tsx::baseOptions()` |
-| Release history | `content/docs/(reference)/changelog.mdx` |
+| Release history | `content/docs/(support)/changelog.mdx` |
 | Latest releases shown on home | `components/home/latest-releases.tsx` |
 | Color and type tokens | `app/global.css` |
 | MDX components | `components/mdx.tsx` |
