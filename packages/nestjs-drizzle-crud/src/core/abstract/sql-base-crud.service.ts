@@ -3275,13 +3275,22 @@ export abstract class SqlBaseCrudService<
 				this.assertKeysInScope(db, entityData, opts),
 			);
 			// The guard's soft delete predicate rides on the UPDATE, so a row
-			// deleted after the guard read is not written.
-			const [updatedEntity] = await this.updateWhereIn(
-				db,
-				this.withVersionBump(entityData),
-				[id],
+			// deleted after the guard read is not written. A value the database
+			// refuses is answered by the guard too, so a missing row is still a
+			// 404 ahead of it; inside a caller's transaction the failed
+			// statement has aborted it (Postgres), so the error stands.
+			const [updatedEntity] = await this.guardOnError(
+				guarded || !!transaction,
+				id,
 				opts,
-				this.softDeleteScope(opts),
+				() =>
+					this.updateWhereIn(
+						db,
+						this.withVersionBump(entityData),
+						[id],
+						opts,
+						this.softDeleteScope(opts),
+					),
 			);
 			if (!updatedEntity) {
 				await this.guardRow(id, opts);

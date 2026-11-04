@@ -4394,3 +4394,15 @@ describe("3.8.1 D-11: the tenant key check sends its SELECTs together", () => {
 		expect(failed.message).toContain("doc_id");
 	});
 });
+
+describe("3.8.1 D-04: a missing row is a 404 ahead of a value the database refuses", () => {
+	it("answers update(999) with a bad value as a 404, and a real row with the 400", async () => {
+		const db = await freshDb();
+		const svc = postsService(db);
+		// One statement: the UPDATE itself fails on "abc", before any row.
+		const missing = await caught(svc.update(999, { views: "abc" } as any));
+		expect(missing.getStatus()).toBe(404);
+		// The row exists: the value error stands.
+		await expect400(svc.update(1, { views: "abc" } as any));
+	});
+});
