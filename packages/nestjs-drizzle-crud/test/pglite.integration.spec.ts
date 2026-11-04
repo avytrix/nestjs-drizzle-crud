@@ -4072,3 +4072,127 @@ describe("3.8.0: protected override points still win", () => {
 		]);
 	});
 });
+
+// 3.8.1: the findings of the 3.8.0 audit (D-01 to D-11).
+
+// A fresh database with the standard fixture plus `ddl`, for a finding that
+// needs a table of its own.
+async function customDb(ddl: string, log?: string[]): Promise<any> {
+	const db = await freshDb(log);
+	await db.$client.exec(ddl);
+	return db;
+}
+
+describe("3.8.1 D-01: the scope memo stays with its service", () => {
+	// A table scoped by org_id, a different column from the docs' tenant_id.
+	const orgItems = pgTable("org_items", {
+		id: serial("id").primaryKey(),
+		org_id: integer("org_id"),
+		name: text("name").notNull(),
+	});
+	const orgDdl = `CREATE TABLE org_items (
+  id serial PRIMARY KEY, org_id integer, name text NOT NULL
+);
+INSERT INTO org_items (org_id, name) VALUES (7, 'seven'), (8, 'eight');`;
+	const orgService = (db: any) =>
+		new Svc({
+			...base(db, orgItems),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ org_id: ctx.orgId }),
+		});
+
+	it("a service with a null scope does not hand it to a scoped one", async () => {
+		const db = await freshDb();
+		const orders = docsService(db);
+		let seen: string[] = [];
+		class NotesService extends Svc {
+			protected override async prepareCreate(data: any, options?: any) {
+				const row = await super.prepareCreate(data, options);
+				const page = await orders.findAll({}, {}, options);
+				seen = page.data.map((doc: any) => `${doc.tenant_id}:${doc.title}`);
+				return row;
+			}
+		}
+		const notesSvc = new NotesService({
+			...base(db, notes),
+			softDelete: { enabled: true, column: "deletedAt" },
+			timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" },
+			scope: () => null,
+		});
+		await notesSvc.create({ body: "x" }, asTenant(1));
+		const direct = await orders.findAll({}, {}, asTenant(1));
+		expect(direct.data).toHaveLength(3);
+		expect(seen).toEqual(
+			direct.data.map((doc: any) => `${doc.tenant_id}:${doc.title}`),
+		);
+	});
+
+	it("a second scoped service resolves its own scope, once per call", async () => {
+		const db = await customDb(orgDdl);
+		const resolved: string[] = [];
+		const other = new Svc({
+			...base(db, orgItems),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => {
+				resolved.push("org");
+				return { org_id: ctx.orgId };
+			},
+		});
+		let listed: unknown[] = [];
+		let created: any;
+		class Orders extends Svc {
+			protected override async prepareCreate(data: any, options?: any) {
+				const row = await super.prepareCreate(data, options);
+				created = await other.create({ name: "from docs" }, options);
+				listed = (await other.findAll({}, {}, options)).data.map(
+					(item: any) => item.name,
+				);
+				return row;
+			}
+		}
+		const orders = new Orders({
+			...base(db, docs),
+			scope: (ctx) => {
+				resolved.push("docs");
+				return { tenant_id: ctx.tenantId };
+			},
+			versionColumn: "version",
+		});
+		const ctx = { context: { tenantId: 1, orgId: 7 } };
+		await orders.create({ title: "T", slug: "t" }, ctx);
+		expect(created).toMatchObject({ org_id: 7, name: "from docs" });
+		expect(listed).toEqual(["seven", "from docs"]);
+		// Each service resolves its own scope once for the whole call.
+		expect(resolved.sort()).toEqual(["docs", "org"]);
+		expect(await orgService(db).count({}, { context: { orgId: 7 } })).toBe(2);
+	});
+
+	it("a nested call with another context resolves that context", async () => {
+		const db = await freshDb();
+		let theirs: string[] = [];
+		class Orders extends Svc {
+			protected override async prepareCreate(data: any, options?: any) {
+				const row = await super.prepareCreate(data, options);
+				const page = await this.findAll(
+					{},
+					{},
+					{
+						...options,
+						context: { tenantId: 2 },
+					},
+				);
+				theirs = page.data.map((doc: any) => doc.title);
+				return row;
+			}
+		}
+		const orders = new Orders({
+			...base(db, docs),
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+		});
+		const created = await orders.create({ title: "T", slug: "t" }, asTenant(1));
+		expect(created.tenant_id).toBe(1);
+		expect(theirs).toEqual(["Four", "Five"]);
+	});
+});

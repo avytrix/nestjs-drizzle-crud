@@ -90,6 +90,12 @@ const CURSOR_KEY = "__crudCursor";
 // The options key of the per-call tenant scope memo (withScopeMemo).
 const SCOPE_MEMO = Symbol("scopeMemo");
 
+// The memo itself: per service, then per context object, the scope that
+// service resolved for that context. Options handed to another service, or a
+// nested call with another context, never reuse a scope resolved for someone
+// else.
+type ScopeMemo = Map<object, Map<unknown, CrudScopeValues | null>>;
+
 // Thrown inside a savepoint to roll it back on purpose; never escapes.
 const ROLLBACK = Symbol("rollback");
 
@@ -366,23 +372,22 @@ export abstract class SqlBaseCrudService<
 	): CrudScopeValues | null {
 		const scope = this.config.scope;
 		if (!scope || options?.skipScope) return null;
-		const memo: { values?: CrudScopeValues | null } | undefined = (
-			options as any
-		)?.[SCOPE_MEMO];
-		if (memo && Object.hasOwn(memo, "values")) return memo.values!;
-		const values =
-			typeof scope === "function"
-				? scope(options?.context ?? CrudContext.current() ?? {})
-				: scope;
+		const context = options?.context ?? CrudContext.current();
+		const memo: ScopeMemo | undefined = (options as any)?.[SCOPE_MEMO];
+		const mine = memo?.get(this);
+		if (mine?.has(context)) return mine.get(context)!;
+		const values = typeof scope === "function" ? scope(context ?? {}) : scope;
 		const checked = this.checkScope(values);
-		if (memo) memo.values = checked;
+		if (mine) mine.set(context, checked);
+		else memo?.set(this, new Map([[context, checked]]));
 		return checked;
 	}
 
 	// The options of one public call, carrying a memo so a scope function runs
-	// once for the whole call, however many statements and relations it
-	// builds. Nested calls spread the options and share the memo; each new
-	// public call starts a new one.
+	// once per service and context for the whole call, however many statements
+	// and relations it builds. Nested calls spread the options and share the
+	// memo, keyed by service and context (ScopeMemo); each new public call
+	// starts a new one.
 	private withScopeMemo<O extends object>(options?: O): O | undefined {
 		if (
 			typeof this.config.scope !== "function" ||
@@ -390,7 +395,7 @@ export abstract class SqlBaseCrudService<
 		) {
 			return options;
 		}
-		return { ...options, [SCOPE_MEMO]: {} } as O;
+		return { ...options, [SCOPE_MEMO]: new Map() as ScopeMemo } as O;
 	}
 
 	// A scope resolver's result, checked: null, or column values with none
