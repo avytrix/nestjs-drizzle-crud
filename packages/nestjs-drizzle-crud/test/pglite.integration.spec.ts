@@ -15,6 +15,7 @@ import {
 	bigint,
 	boolean,
 	customType,
+	doublePrecision,
 	integer,
 	jsonb,
 	numeric,
@@ -26,7 +27,7 @@ import {
 	uuid,
 	varchar,
 } from "drizzle-orm/pg-core";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { Test } from "@nestjs/testing";
 import { SqlBaseCrudService } from "../src/core/abstract/sql-base-crud.service";
@@ -4481,5 +4482,39 @@ describe("3.8.1 D-06: massCreate loads its relations inside its transaction", ()
 		const [created] = await svc.massCreate([row], { relations: ["author"] });
 		expect(created.author.name).toBe("Ann");
 		expect(await svc.count({ title: "once" })).toBe(1);
+	});
+});
+
+describe("3.8.1 D-07: massUpdate groups SETs by value, not by JSON", () => {
+	const scores = pgTable("scores", {
+		id: serial("id").primaryKey(),
+		score: doublePrecision("score"),
+	});
+	const ddl = `CREATE TABLE scores (id serial PRIMARY KEY, score double precision);
+INSERT INTO scores (score) VALUES (1), (2);`;
+
+	it("keeps NaN and null apart", async () => {
+		const db = await customDb(ddl);
+		class Hooked extends Svc {
+			protected override async beforeUpdate(id: any, data: any) {
+				return { ...data, score: Number(id) === 1 ? Number.NaN : null };
+			}
+		}
+		const svc = new Hooked({
+			...base(db, scores),
+			softDelete: undefined,
+			timestamps: undefined,
+		});
+		const rows = await svc.massUpdate([1, 2], { score: 0 });
+		expect(rows.map((row: any) => row.score)).toEqual([Number.NaN, null]);
+	});
+
+	it("takes an SQL expression as a value, never grouping it", async () => {
+		const db = await freshDb();
+		const svc = postsService(db);
+		const rows = await svc.massUpdate([1, 2], {
+			views: sql`${posts.views} + 10`,
+		} as any);
+		expect(rows.map((row: any) => row.views)).toEqual([11, 12]);
 	});
 });

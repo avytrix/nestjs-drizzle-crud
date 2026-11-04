@@ -96,6 +96,9 @@ const SCOPE_MEMO = Symbol("scopeMemo");
 // else.
 type ScopeMemo = Map<object, Map<unknown, CrudScopeValues | null>>;
 
+// A counter that makes each SQL value in a massUpdate SET unique (fingerprint).
+let fingerprintTag = 0;
+
 // Thrown inside a savepoint to roll it back on purpose; never escapes.
 const ROLLBACK = Symbol("rollback");
 
@@ -4327,11 +4330,25 @@ export abstract class SqlBaseCrudService<
 		});
 	}
 
-	// A stable string for comparing two SET objects (Dates and bigints included).
+	// A stable string for comparing two SET objects. Strings (Dates included,
+	// as JSON) are prefixed, so the tags below never equal a real value:
+	// bigints, NaN and Infinity (which JSON writes as null), and any value
+	// that is not plain data (Drizzle's SQL, Param, a Column), which gets a
+	// tag of its own so a SET carrying one never shares an UPDATE and is never
+	// walked (an SQL object is circular).
 	private fingerprint(value: unknown): string {
-		return JSON.stringify(value, (_key, v) =>
-			typeof v === "bigint" ? `${v}n` : v,
-		);
+		return JSON.stringify(value, (_key, v) => {
+			if (typeof v === "string") return `s:${v}`;
+			if (typeof v === "bigint") return `bigint:${v}`;
+			if (typeof v === "number" && !Number.isFinite(v)) return `number:${v}`;
+			if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+				const proto = Object.getPrototypeOf(v);
+				if (proto !== Object.prototype && proto !== null) {
+					return `opaque:${++fingerprintTag}`;
+				}
+			}
+			return v;
+		});
 	}
 
 	// One SELECT for every id, in the soft delete scope of `options`. Every id
