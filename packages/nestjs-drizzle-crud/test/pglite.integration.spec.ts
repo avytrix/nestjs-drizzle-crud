@@ -4995,3 +4995,32 @@ describe("3.8.2 G-04: massUpdate groups SETs by their raw values", () => {
 		}
 	});
 });
+
+describe("3.8.2 G-06: the scope memo ends with its call", () => {
+	it("resolves the scope again when kept options are reused later", async () => {
+		const db = await freshDb();
+		const resolved: number[] = [];
+		let kept: any;
+		class Keeper extends Svc {
+			protected override async prepareCreate(data: any, options?: any) {
+				kept = options;
+				return super.prepareCreate(data, options);
+			}
+		}
+		const svc = new Keeper({
+			...base(db, docs),
+			scope: (ctx) => {
+				resolved.push(ctx.tenantId);
+				return { tenant_id: ctx.tenantId };
+			},
+		});
+		const context = { tenantId: 1 };
+		await svc.create({ title: "T", slug: "t" }, { context });
+		expect(resolved).toEqual([1]);
+		// The same context object, now naming tenant 2.
+		context.tenantId = 2;
+		expect((await svc.find(4, kept))?.title).toBe("Four");
+		expect(await svc.find(1, kept)).toBeNull();
+		expect(resolved).toEqual([1, 2, 2]);
+	});
+});

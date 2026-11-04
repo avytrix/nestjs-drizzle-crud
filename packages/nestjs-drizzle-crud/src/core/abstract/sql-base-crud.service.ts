@@ -95,7 +95,10 @@ const SCOPE_MEMO = Symbol("scopeMemo");
 // service resolved for that context. Options handed to another service, or a
 // nested call with another context, never reuse a scope resolved for someone
 // else.
-type ScopeMemo = Map<object, Map<unknown, CrudScopeValues | null>>;
+// `ended` is set when the public call that started it returns (scopedCall).
+type ScopeMemo = Map<object, Map<unknown, CrudScopeValues | null>> & {
+	ended?: boolean;
+};
 
 // A counter that makes each SQL value in a massUpdate SET unique (fingerprint).
 let fingerprintTag = 0;
@@ -420,7 +423,8 @@ export abstract class SqlBaseCrudService<
 		const scope = this.config.scope;
 		if (!scope || options?.skipScope) return null;
 		const context = options?.context ?? CrudContext.current();
-		const memo: ScopeMemo | undefined = (options as any)?.[SCOPE_MEMO];
+		const found: ScopeMemo | undefined = (options as any)?.[SCOPE_MEMO];
+		const memo = found?.ended ? undefined : found;
 		const mine = memo?.get(this);
 		if (mine?.has(context)) return mine.get(context)!;
 		const values = typeof scope === "function" ? scope(context ?? {}) : scope;
@@ -434,15 +438,31 @@ export abstract class SqlBaseCrudService<
 	// once per service and context for the whole call, however many statements
 	// and relations it builds. Nested calls spread the options and share the
 	// memo, keyed by service and context (ScopeMemo); each new public call
-	// starts a new one.
+	// starts a new one, and so does a call handed a memo that has ended.
 	private withScopeMemo<O extends object>(options?: O): O | undefined {
-		if (
-			typeof this.config.scope !== "function" ||
-			(options as any)?.[SCOPE_MEMO]
-		) {
+		const memo: ScopeMemo | undefined = (options as any)?.[SCOPE_MEMO];
+		if (typeof this.config.scope !== "function" || (memo && !memo.ended)) {
 			return options;
 		}
 		return { ...options, [SCOPE_MEMO]: new Map() as ScopeMemo } as O;
+	}
+
+	// Run a public call with the options withScopeMemo gives it. A memo the
+	// call started ends with it, in a finally: options a hook keeps past the
+	// call and passes to a later one start a new memo there, so the scope is
+	// resolved again, for the context as it is then.
+	private async scopedCall<O extends object, R>(
+		options: O | undefined,
+		run: (options: O | undefined) => Promise<R>,
+	): Promise<R> {
+		const scoped = this.withScopeMemo(options);
+		const started: ScopeMemo | undefined =
+			scoped === options ? undefined : (scoped as any)[SCOPE_MEMO];
+		try {
+			return await run(scoped);
+		} finally {
+			if (started) started.ended = true;
+		}
 	}
 
 	// A scope resolver's result, checked: null, or column values with none
@@ -2042,21 +2062,26 @@ export abstract class SqlBaseCrudService<
 
 	// Single Operations
 	async find(id: any, options?: SqlOperationOptions): Promise<T | null> {
-		options = this.withScopeMemo(options);
-		this.checkReadOptions(options);
-		return this.findFirst(
-			[eq(this.config.table[this.config.primaryKey], id)],
-			options,
-		);
+		return this.scopedCall(options, async (options) => {
+			this.checkReadOptions(options);
+			return this.findFirst(
+				[eq(this.config.table[this.config.primaryKey], id)],
+				options,
+			);
+		});
 	}
 
 	async findOne(
 		where: Partial<T>,
 		options?: SqlOperationOptions,
 	): Promise<T | null> {
-		options = this.withScopeMemo(options);
-		this.checkReadOptions(options);
-		return this.findFirst(this.buildWhereConditionsFromPartial(where), options);
+		return this.scopedCall(options, async (options) => {
+			this.checkReadOptions(options);
+			return this.findFirst(
+				this.buildWhereConditionsFromPartial(where),
+				options,
+			);
+		});
 	}
 
 	// The first row matching `conditions`, with the soft delete scope, joins,
@@ -2231,72 +2256,73 @@ export abstract class SqlBaseCrudService<
 		pagination?: PaginationOptions,
 		options?: SqlOperationOptions,
 	): Promise<CrudPage<T, number | null>> {
-		options = this.withScopeMemo(options);
-		const { sortBy, sortOrder = "asc" } = pagination || {};
-		const withCount = pagination?.withCount !== false;
-		const {
-			page,
-			limit: safeLimit,
-			offset,
-		} = this.resolvePagination(pagination?.page, pagination?.limit);
-		const plan = this.planList(filters, sortBy, sortOrder, options);
-
-		let dataQuery = this.startSelect(
-			plan.db,
-			plan.baseSelect,
-			plan.joined,
-			plan.joinRelations.length > 0,
-			plan.selection,
-		);
-		dataQuery = this.applyJoins(dataQuery, plan.joinRelations, options);
-		if (plan.conditions.length > 0) {
-			dataQuery = dataQuery.where(and(...plan.conditions));
-		}
-		if (plan.sort.length > 0) {
-			dataQuery = dataQuery.orderBy(
-				...plan.sort.map((spec) => this.orderOf(spec)),
-			);
-		}
-		dataQuery = dataQuery
-			.limit(withCount ? safeLimit : safeLimit + 1)
-			.offset(offset);
-		dataQuery = this.applyLock(dataQuery, options);
-
-		const countQuery = withCount
-			? this.buildCountQuery(
-					plan.db,
-					plan.conditions,
-					plan.filterRelations,
-					options,
-				)
-			: Promise.resolve(undefined);
-		const [fetched, totalResult] = await this.runRead(
-			Promise.all([dataQuery, countQuery]),
-		);
-		const data = (fetched as any[]).slice(0, safeLimit);
-
-		// One batched query per relation for the whole page, never one per row.
-		const rows = this.normalizeRelations(
-			data,
-			plan.joined.map((node) => node.name),
-		);
-		await this.hydrate(plan.db, rows, plan.nodes, plan.selection, options);
-
-		if (!withCount) {
-			return {
-				data: rows,
-				total: null,
+		return this.scopedCall(options, async (options) => {
+			const { sortBy, sortOrder = "asc" } = pagination || {};
+			const withCount = pagination?.withCount !== false;
+			const {
 				page,
 				limit: safeLimit,
-				hasMore: (fetched as any[]).length > safeLimit,
+				offset,
+			} = this.resolvePagination(pagination?.page, pagination?.limit);
+			const plan = this.planList(filters, sortBy, sortOrder, options);
+
+			let dataQuery = this.startSelect(
+				plan.db,
+				plan.baseSelect,
+				plan.joined,
+				plan.joinRelations.length > 0,
+				plan.selection,
+			);
+			dataQuery = this.applyJoins(dataQuery, plan.joinRelations, options);
+			if (plan.conditions.length > 0) {
+				dataQuery = dataQuery.where(and(...plan.conditions));
+			}
+			if (plan.sort.length > 0) {
+				dataQuery = dataQuery.orderBy(
+					...plan.sort.map((spec) => this.orderOf(spec)),
+				);
+			}
+			dataQuery = dataQuery
+				.limit(withCount ? safeLimit : safeLimit + 1)
+				.offset(offset);
+			dataQuery = this.applyLock(dataQuery, options);
+
+			const countQuery = withCount
+				? this.buildCountQuery(
+						plan.db,
+						plan.conditions,
+						plan.filterRelations,
+						options,
+					)
+				: Promise.resolve(undefined);
+			const [fetched, totalResult] = await this.runRead(
+				Promise.all([dataQuery, countQuery]),
+			);
+			const data = (fetched as any[]).slice(0, safeLimit);
+
+			// One batched query per relation for the whole page, never one per row.
+			const rows = this.normalizeRelations(
+				data,
+				plan.joined.map((node) => node.name),
+			);
+			await this.hydrate(plan.db, rows, plan.nodes, plan.selection, options);
+
+			if (!withCount) {
+				return {
+					data: rows,
+					total: null,
+					page,
+					limit: safeLimit,
+					hasMore: (fetched as any[]).length > safeLimit,
+				};
+			}
+			return {
+				data: rows,
+				total: this.parseCount(totalResult as any[]),
+				page,
+				limit: safeLimit,
 			};
-		}
-		return {
-			data: rows,
-			total: this.parseCount(totalResult as any[]),
-			page,
-			limit: safeLimit,
-		};
+		});
 	}
 
 	// Keyset pagination. Each page is `WHERE (sort columns) > (last row's
@@ -2309,90 +2335,92 @@ export abstract class SqlBaseCrudService<
 		pagination?: CursorPaginationOptions,
 		options?: SqlOperationOptions,
 	): Promise<CursorPage<T>> {
-		options = this.withScopeMemo(options);
-		const { sortBy, sortOrder = "asc", count = false } = pagination || {};
-		const { limit } = this.resolvePagination(1, pagination?.limit);
-		const plan = this.planList(filters, sortBy, sortOrder, options);
-		const signature = plan.sort
-			.map((spec) => `${spec.key}:${spec.order}`)
-			.join(",");
+		return this.scopedCall(options, async (options) => {
+			const { sortBy, sortOrder = "asc", count = false } = pagination || {};
+			const { limit } = this.resolvePagination(1, pagination?.limit);
+			const plan = this.planList(filters, sortBy, sortOrder, options);
+			const signature = plan.sort
+				.map((spec) => `${spec.key}:${spec.order}`)
+				.join(",");
 
-		const cursor = pagination?.cursor ?? pagination?.after;
-		const conditions = [...plan.conditions];
-		if (cursor !== undefined && cursor !== null && cursor !== "") {
-			if (typeof cursor !== "string") {
-				throw new BadRequestException("Invalid cursor");
+			const cursor = pagination?.cursor ?? pagination?.after;
+			const conditions = [...plan.conditions];
+			if (cursor !== undefined && cursor !== null && cursor !== "") {
+				if (typeof cursor !== "string") {
+					throw new BadRequestException("Invalid cursor");
+				}
+				const values = decodeCursor(cursor, signature, plan.sort.length);
+				conditions.push(this.keysetCondition(plan.sort, values));
 			}
-			const values = decodeCursor(cursor, signature, plan.sort.length);
-			conditions.push(this.keysetCondition(plan.sort, values));
-		}
 
-		// The sort values travel in hidden fields so the cursor can be built
-		// whatever `select` narrowed the row to. They are removed below. A
-		// column the row already carries as is is read from the row instead of
-		// being selected twice; a date column is always hidden, cast to text.
-		const fields = this.buildSelection(
-			plan.baseSelect,
-			plan.joined,
-			plan.selection,
-		);
-		const cursorKeys = plan.sort.map((spec, i) => {
-			const field = this.cursorField(spec.column);
-			const projected =
-				field === spec.column && !spec.relation
-					? Object.keys(fields).find((key) => fields[key] === spec.column)
-					: undefined;
-			if (projected) return projected;
-			fields[`${CURSOR_KEY}${i}`] = field;
-			return `${CURSOR_KEY}${i}`;
-		});
-		const hidden = cursorKeys.filter((key) => key.startsWith(CURSOR_KEY));
-		let dataQuery = plan.db.select(fields).from(this.config.table);
-		dataQuery = this.applyJoins(dataQuery, plan.joinRelations, options);
-		if (conditions.length > 0) dataQuery = dataQuery.where(and(...conditions));
-		dataQuery = dataQuery
-			.orderBy(...plan.sort.map((spec) => this.orderOf(spec)))
-			// One row more than the page shows whether there is a next page.
-			.limit(limit + 1);
-		dataQuery = this.applyLock(dataQuery, options);
+			// The sort values travel in hidden fields so the cursor can be built
+			// whatever `select` narrowed the row to. They are removed below. A
+			// column the row already carries as is is read from the row instead of
+			// being selected twice; a date column is always hidden, cast to text.
+			const fields = this.buildSelection(
+				plan.baseSelect,
+				plan.joined,
+				plan.selection,
+			);
+			const cursorKeys = plan.sort.map((spec, i) => {
+				const field = this.cursorField(spec.column);
+				const projected =
+					field === spec.column && !spec.relation
+						? Object.keys(fields).find((key) => fields[key] === spec.column)
+						: undefined;
+				if (projected) return projected;
+				fields[`${CURSOR_KEY}${i}`] = field;
+				return `${CURSOR_KEY}${i}`;
+			});
+			const hidden = cursorKeys.filter((key) => key.startsWith(CURSOR_KEY));
+			let dataQuery = plan.db.select(fields).from(this.config.table);
+			dataQuery = this.applyJoins(dataQuery, plan.joinRelations, options);
+			if (conditions.length > 0)
+				dataQuery = dataQuery.where(and(...conditions));
+			dataQuery = dataQuery
+				.orderBy(...plan.sort.map((spec) => this.orderOf(spec)))
+				// One row more than the page shows whether there is a next page.
+				.limit(limit + 1);
+			dataQuery = this.applyLock(dataQuery, options);
 
-		const [data, totalResult] = await this.runRead(
-			Promise.all([
-				dataQuery,
-				count
-					? this.buildCountQuery(
-							plan.db,
-							plan.conditions,
-							plan.filterRelations,
-							options,
+			const [data, totalResult] = await this.runRead(
+				Promise.all([
+					dataQuery,
+					count
+						? this.buildCountQuery(
+								plan.db,
+								plan.conditions,
+								plan.filterRelations,
+								options,
+							)
+						: Promise.resolve(undefined),
+				]),
+			);
+			const page: any[] = (data as any[]).slice(0, limit);
+			const last = page[page.length - 1];
+			const nextCursor =
+				(data as any[]).length > limit && last
+					? encodeCursor(
+							cursorKeys.map((key) => last[key]),
+							signature,
 						)
-					: Promise.resolve(undefined),
-			]),
-		);
-		const page: any[] = (data as any[]).slice(0, limit);
-		const last = page[page.length - 1];
-		const nextCursor =
-			(data as any[]).length > limit && last
-				? encodeCursor(
-						cursorKeys.map((key) => last[key]),
-						signature,
-					)
-				: null;
-		for (const row of page) {
-			for (const key of hidden) delete row[key];
-		}
+					: null;
+			for (const row of page) {
+				for (const key of hidden) delete row[key];
+			}
 
-		const rows = this.normalizeRelations(
-			page,
-			plan.joined.map((node) => node.name),
-		);
-		await this.hydrate(plan.db, rows, plan.nodes, plan.selection, options);
+			const rows = this.normalizeRelations(
+				page,
+				plan.joined.map((node) => node.name),
+			);
+			await this.hydrate(plan.db, rows, plan.nodes, plan.selection, options);
 
-		const out: CursorPage<T> = { data: rows, limit, nextCursor };
-		if (count) {
-			out.total = this.parseCount(totalResult as any[]);
-		}
-		return out;
+			const out: CursorPage<T> = { data: rows, limit, nextCursor };
+			if (count) {
+				out.total = this.parseCount(totalResult as any[]);
+			}
+			return out;
+		});
 	}
 
 	// The value a cursor stores for a sort column. A date column is read as
@@ -2713,57 +2741,58 @@ export abstract class SqlBaseCrudService<
 	}
 
 	async create(data: CreateDto, options?: SqlOperationOptions): Promise<T> {
-		options = this.withScopeMemo(options);
-		const { transaction, hooks = {} } = options || {};
-		this.checkReadOptions(options);
-		const entityData = await this.prepareCreate(data, options);
-		const nested = this.takeNested(entityData, options);
-		const db = this.dbFor(transaction);
-		await this.emitEvent(
-			"before",
-			"create",
-			false,
-			{ input: data, transaction },
-			options,
-		);
-		try {
-			await this.assertKeysInScope(
-				db,
-				entityData,
-				options,
-				nested.map((entry) => entry.name),
-			);
-			const createdEntity =
-				nested.length === 0
-					? await this.insertOne(db, entityData, options)
-					: await this.executeSqlTransaction(
-							(tx) =>
-								this.insertNested(tx, entityData, nested, {
-									...options,
-									transaction: tx,
-								}),
-							transaction,
-						);
-			if (!hooks.skipAfter) await this.afterCreate(createdEntity);
+		return this.scopedCall(options, async (options) => {
+			const { transaction, hooks = {} } = options || {};
+			this.checkReadOptions(options);
+			const entityData = await this.prepareCreate(data, options);
+			const nested = this.takeNested(entityData, options);
+			const db = this.dbFor(transaction);
 			await this.emitEvent(
-				"after",
+				"before",
 				"create",
 				false,
-				{
-					ids: this.idsOf([createdEntity]),
-					input: data,
-					rows: [createdEntity],
-					transaction,
-				},
+				{ input: data, transaction },
 				options,
 			);
-			await this.loadWriteRelations(db, [createdEntity], options);
-			return createdEntity;
-		} catch (error) {
-			// Unique violation -> 409, bad input (too long, failed check, wrong
-			// type) -> 400, a reference to a row that does not exist -> 400.
-			throw this.toClientError(error, "write");
-		}
+			try {
+				await this.assertKeysInScope(
+					db,
+					entityData,
+					options,
+					nested.map((entry) => entry.name),
+				);
+				const createdEntity =
+					nested.length === 0
+						? await this.insertOne(db, entityData, options)
+						: await this.executeSqlTransaction(
+								(tx) =>
+									this.insertNested(tx, entityData, nested, {
+										...options,
+										transaction: tx,
+									}),
+								transaction,
+							);
+				if (!hooks.skipAfter) await this.afterCreate(createdEntity);
+				await this.emitEvent(
+					"after",
+					"create",
+					false,
+					{
+						ids: this.idsOf([createdEntity]),
+						input: data,
+						rows: [createdEntity],
+						transaction,
+					},
+					options,
+				);
+				await this.loadWriteRelations(db, [createdEntity], options);
+				return createdEntity;
+			} catch (error) {
+				// Unique violation -> 409, bad input (too long, failed check, wrong
+				// type) -> 400, a reference to a row that does not exist -> 400.
+				throw this.toClientError(error, "write");
+			}
+		});
 	}
 
 	// ---- Nested create ----
@@ -3124,8 +3153,9 @@ export abstract class SqlBaseCrudService<
 		relatedIds: unknown[],
 		options?: SqlOperationOptions,
 	): Promise<T> {
-		options = this.withScopeMemo(options);
-		return this.changeLinks("attach", id, relation, relatedIds, options);
+		return this.scopedCall(options, async (options) => {
+			return this.changeLinks("attach", id, relation, relatedIds, options);
+		});
 	}
 
 	// Unlink related rows, or every related row when `relatedIds` is left out.
@@ -3136,8 +3166,9 @@ export abstract class SqlBaseCrudService<
 		relatedIds?: unknown[],
 		options?: SqlOperationOptions,
 	): Promise<T> {
-		options = this.withScopeMemo(options);
-		return this.changeLinks("detach", id, relation, relatedIds, options);
+		return this.scopedCall(options, async (options) => {
+			return this.changeLinks("detach", id, relation, relatedIds, options);
+		});
 	}
 
 	// Make the links exactly `relatedIds`: add the missing, remove the rest.
@@ -3147,8 +3178,9 @@ export abstract class SqlBaseCrudService<
 		relatedIds: unknown[],
 		options?: SqlOperationOptions,
 	): Promise<T> {
-		options = this.withScopeMemo(options);
-		return this.changeLinks("sync", id, relation, relatedIds, options);
+		return this.scopedCall(options, async (options) => {
+			return this.changeLinks("sync", id, relation, relatedIds, options);
+		});
 	}
 
 	private async changeLinks(
@@ -3379,85 +3411,94 @@ export abstract class SqlBaseCrudService<
 		data: UpdateDto,
 		options?: SqlOperationOptions,
 	): Promise<T> {
-		options = this.withScopeMemo(options);
-		const { transaction, hooks = {} } = options || {};
-		this.checkReadOptions(options);
-		const expected = this.expectedVersionOf(data, options);
-		const opts: SqlOperationOptions = { ...options, expectedVersion: expected };
-		const guarded = !this.skipsGuard(
-			options,
-			"validateUpdate",
-			"mapUpdateDtoToEntity",
-			"prepareUpdate",
-			...(hooks.skipBefore ? [] : ["beforeUpdate"]),
-		);
-		if (guarded) await this.guardRow(id, opts);
-
-		const entityData = await this.guardOnError(guarded, id, opts, async () => {
-			await this.validateUpdate(id, data);
-			const processedData = hooks.skipBefore
-				? data
-				: await this.beforeUpdate(id, data);
-			return this.prepareUpdate(processedData, opts);
-		});
-
-		if (this.config.timestamps?.updatedAt) {
-			entityData[this.config.timestamps.updatedAt] = new Date();
-		}
-
-		const db = this.dbFor(transaction);
-		await this.emitEvent(
-			"before",
-			"update",
-			false,
-			{ ids: [id], input: data, transaction },
-			options,
-		);
-		try {
-			// Inside a caller's transaction a failed key SELECT has aborted it
-			// (Postgres), so the guard read cannot run after it: the error
-			// stands, as for the UPDATE below.
-			await this.guardOnError(guarded || !!transaction, id, opts, () =>
-				this.assertKeysInScope(db, entityData, opts),
+		return this.scopedCall(options, async (options) => {
+			const { transaction, hooks = {} } = options || {};
+			this.checkReadOptions(options);
+			const expected = this.expectedVersionOf(data, options);
+			const opts: SqlOperationOptions = {
+				...options,
+				expectedVersion: expected,
+			};
+			const guarded = !this.skipsGuard(
+				options,
+				"validateUpdate",
+				"mapUpdateDtoToEntity",
+				"prepareUpdate",
+				...(hooks.skipBefore ? [] : ["beforeUpdate"]),
 			);
-			// The guard's soft delete predicate rides on the UPDATE, so a row
-			// deleted after the guard read is not written. A value the database
-			// refuses is answered by the guard too, so a missing row is still a
-			// 404 ahead of it; inside a caller's transaction the failed
-			// statement has aborted it (Postgres), so the error stands.
-			const [updatedEntity] = await this.guardOnError(
-				guarded || !!transaction,
+			if (guarded) await this.guardRow(id, opts);
+
+			const entityData = await this.guardOnError(
+				guarded,
 				id,
 				opts,
-				() =>
-					this.updateWhereIn(
-						db,
-						this.withVersionBump(entityData),
-						[id],
-						opts,
-						this.softDeleteScope(opts),
-					),
+				async () => {
+					await this.validateUpdate(id, data);
+					const processedData = hooks.skipBefore
+						? data
+						: await this.beforeUpdate(id, data);
+					return this.prepareUpdate(processedData, opts);
+				},
 			);
-			if (!updatedEntity) {
-				await this.guardRow(id, opts);
-				if (expected !== undefined) {
-					throw new StaleVersionException(this.getEntityName(), id);
-				}
-				throw new Error("Failed to update entity");
+
+			if (this.config.timestamps?.updatedAt) {
+				entityData[this.config.timestamps.updatedAt] = new Date();
 			}
-			if (!hooks.skipAfter) await this.afterUpdate(updatedEntity);
+
+			const db = this.dbFor(transaction);
 			await this.emitEvent(
-				"after",
+				"before",
 				"update",
 				false,
-				{ ids: [id], input: data, rows: [updatedEntity], transaction },
+				{ ids: [id], input: data, transaction },
 				options,
 			);
-			await this.loadWriteRelations(db, [updatedEntity], options);
-			return updatedEntity;
-		} catch (error) {
-			throw this.toClientError(error, "write");
-		}
+			try {
+				// Inside a caller's transaction a failed key SELECT has aborted it
+				// (Postgres), so the guard read cannot run after it: the error
+				// stands, as for the UPDATE below.
+				await this.guardOnError(guarded || !!transaction, id, opts, () =>
+					this.assertKeysInScope(db, entityData, opts),
+				);
+				// The guard's soft delete predicate rides on the UPDATE, so a row
+				// deleted after the guard read is not written. A value the database
+				// refuses is answered by the guard too, so a missing row is still a
+				// 404 ahead of it; inside a caller's transaction the failed
+				// statement has aborted it (Postgres), so the error stands.
+				const [updatedEntity] = await this.guardOnError(
+					guarded || !!transaction,
+					id,
+					opts,
+					() =>
+						this.updateWhereIn(
+							db,
+							this.withVersionBump(entityData),
+							[id],
+							opts,
+							this.softDeleteScope(opts),
+						),
+				);
+				if (!updatedEntity) {
+					await this.guardRow(id, opts);
+					if (expected !== undefined) {
+						throw new StaleVersionException(this.getEntityName(), id);
+					}
+					throw new Error("Failed to update entity");
+				}
+				if (!hooks.skipAfter) await this.afterUpdate(updatedEntity);
+				await this.emitEvent(
+					"after",
+					"update",
+					false,
+					{ ids: [id], input: data, rows: [updatedEntity], transaction },
+					options,
+				);
+				await this.loadWriteRelations(db, [updatedEntity], options);
+				return updatedEntity;
+			} catch (error) {
+				throw this.toClientError(error, "write");
+			}
+		});
 	}
 
 	// UPDATE ... WHERE pk IN (ids) AND <scope> [AND version] [AND extra],
@@ -3579,31 +3620,32 @@ export abstract class SqlBaseCrudService<
 	}
 
 	async softDelete(id: any, options?: SqlOperationOptions): Promise<boolean> {
-		options = this.withScopeMemo(options);
-		if (!this.config.softDelete?.enabled) {
-			throw new BadRequestException(
-				"Soft delete is not enabled for this entity",
-			);
-		}
-		// Only a live row is soft deleted, also when it changed after the guard.
-		const live = { ...options, withDeleted: false, onlyDeleted: false };
-		return this.guardedWrite(id, options, {
-			operation: "softDelete",
-			state: live,
-			hook: "beforeSoftDelete",
-			before: () => this.beforeSoftDelete(id),
-			write: async (db) => {
-				let query = db
-					.update(this.config.table)
-					.set(this.softDeleteSet(new Date()))
-					.where(
-						and(this.writeWhere([id], options), this.softDeleteScope(live)),
-					);
-				if (this.config.sql?.useReturning) query = query.returning();
-				return this.wasAffected(await this.runRead(query)) || undefined;
-			},
-			miss: () => this.staleOrFalse(id, options),
-			after: () => this.afterSoftDelete(id),
+		return this.scopedCall(options, async (options) => {
+			if (!this.config.softDelete?.enabled) {
+				throw new BadRequestException(
+					"Soft delete is not enabled for this entity",
+				);
+			}
+			// Only a live row is soft deleted, also when it changed after the guard.
+			const live = { ...options, withDeleted: false, onlyDeleted: false };
+			return this.guardedWrite(id, options, {
+				operation: "softDelete",
+				state: live,
+				hook: "beforeSoftDelete",
+				before: () => this.beforeSoftDelete(id),
+				write: async (db) => {
+					let query = db
+						.update(this.config.table)
+						.set(this.softDeleteSet(new Date()))
+						.where(
+							and(this.writeWhere([id], options), this.softDeleteScope(live)),
+						);
+					if (this.config.sql?.useReturning) query = query.returning();
+					return this.wasAffected(await this.runRead(query)) || undefined;
+				},
+				miss: () => this.staleOrFalse(id, options),
+				after: () => this.afterSoftDelete(id),
+			});
 		});
 	}
 
@@ -3619,76 +3661,78 @@ export abstract class SqlBaseCrudService<
 	}
 
 	async restore(id: any, options?: SqlOperationOptions): Promise<T> {
-		options = this.withScopeMemo(options);
-		if (!this.config.softDelete?.enabled) {
-			throw new BadRequestException(
-				"Soft delete is not enabled for this entity",
+		return this.scopedCall(options, async (options) => {
+			if (!this.config.softDelete?.enabled) {
+				throw new BadRequestException(
+					"Soft delete is not enabled for this entity",
+				);
+			}
+			// Only a row in the trash can be restored. A live row is a 404, before
+			// any hook or event runs, rather than a write that changes nothing.
+			// `deleted_at IS NOT NULL` rides on the UPDATE too: a row restored after
+			// the guard read is not written twice.
+			const trashed = { ...options, withDeleted: false, onlyDeleted: true };
+			const restored = await this.guardedWrite<T>(id, options, {
+				operation: "restore",
+				state: trashed,
+				hook: "beforeRestore",
+				before: () => this.beforeRestore(id),
+				write: async (db) =>
+					(
+						await this.runRead(
+							this.updateWhereIn(
+								db,
+								this.softDeleteSet(null),
+								[id],
+								options,
+								this.softDeleteScope(trashed),
+							),
+						)
+					)[0],
+				miss: () => {
+					if (options?.expectedVersion != null && this.config.versionColumn) {
+						throw new StaleVersionException(this.getEntityName(), id);
+					}
+					throw new EntityNotFoundException(this.getEntityName(), id);
+				},
+				after: (entity) => this.afterRestore(entity),
+				rows: (entity) => [entity],
+			});
+			await this.loadWriteRelations(
+				this.dbFor(options?.transaction),
+				[restored],
+				options,
 			);
-		}
-		// Only a row in the trash can be restored. A live row is a 404, before
-		// any hook or event runs, rather than a write that changes nothing.
-		// `deleted_at IS NOT NULL` rides on the UPDATE too: a row restored after
-		// the guard read is not written twice.
-		const trashed = { ...options, withDeleted: false, onlyDeleted: true };
-		const restored = await this.guardedWrite<T>(id, options, {
-			operation: "restore",
-			state: trashed,
-			hook: "beforeRestore",
-			before: () => this.beforeRestore(id),
-			write: async (db) =>
-				(
-					await this.runRead(
-						this.updateWhereIn(
-							db,
-							this.softDeleteSet(null),
-							[id],
-							options,
-							this.softDeleteScope(trashed),
-						),
-					)
-				)[0],
-			miss: () => {
-				if (options?.expectedVersion != null && this.config.versionColumn) {
-					throw new StaleVersionException(this.getEntityName(), id);
-				}
-				throw new EntityNotFoundException(this.getEntityName(), id);
-			},
-			after: (entity) => this.afterRestore(entity),
-			rows: (entity) => [entity],
+			return restored;
 		});
-		await this.loadWriteRelations(
-			this.dbFor(options?.transaction),
-			[restored],
-			options,
-		);
-		return restored;
 	}
 
 	async delete(id: any, options?: SqlOperationOptions): Promise<boolean> {
-		options = this.withScopeMemo(options);
-		// The guard's soft delete predicate rides on the DELETE: delete() only
-		// removes a live row, forceDelete() any row.
-		return this.guardedWrite(id, options, {
-			operation: "delete",
-			state: options,
-			hook: "beforeDelete",
-			before: () => this.beforeDelete(id),
-			write: async (db) =>
-				this.wasAffected(
-					await db
-						.delete(this.config.table)
-						.where(
-							and(
-								this.writeWhere([id], options),
-								this.softDeleteScope(options),
+		return this.scopedCall(options, async (options) => {
+			// The guard's soft delete predicate rides on the DELETE: delete() only
+			// removes a live row, forceDelete() any row.
+			return this.guardedWrite(id, options, {
+				operation: "delete",
+				state: options,
+				hook: "beforeDelete",
+				before: () => this.beforeDelete(id),
+				write: async (db) =>
+					this.wasAffected(
+						await db
+							.delete(this.config.table)
+							.where(
+								and(
+									this.writeWhere([id], options),
+									this.softDeleteScope(options),
+								),
 							),
-						),
-				) || undefined,
-			miss: () => this.staleOrFalse(id, options),
-			after: () => this.afterDelete(id),
-			// Dependent rows still reference this one (ON DELETE RESTRICT /
-			// NO ACTION), which is a conflict, not a server fault -> 409.
-			errors: "delete",
+					) || undefined,
+				miss: () => this.staleOrFalse(id, options),
+				after: () => this.afterDelete(id),
+				// Dependent rows still reference this one (ON DELETE RESTRICT /
+				// NO ACTION), which is a conflict, not a server fault -> 409.
+				errors: "delete",
+			});
 		});
 	}
 
@@ -3712,44 +3756,45 @@ export abstract class SqlBaseCrudService<
 		upsert: UpsertOptions = {},
 		options?: SqlOperationOptions,
 	): Promise<T> {
-		options = this.withScopeMemo(options);
-		this.checkReadOptions(options);
-		const entityData = await this.prepareCreate(data, options);
-		const db = this.dbFor(options?.transaction);
-		await this.emitEvent(
-			"before",
-			"upsert",
-			false,
-			{ input: data, transaction: options?.transaction },
-			options,
-		);
-		let row: T | undefined;
-		try {
-			await this.assertKeysInScope(db, entityData, options);
-			[row] = await this.upsertRows(db, [entityData], upsert, options);
-		} catch (error) {
-			throw this.toClientError(error, "write");
-		}
-		if (!row) {
-			throw new EntityNotFoundException(
-				this.getEntityName(),
-				this.conflictValue(entityData, upsert),
+		return this.scopedCall(options, async (options) => {
+			this.checkReadOptions(options);
+			const entityData = await this.prepareCreate(data, options);
+			const db = this.dbFor(options?.transaction);
+			await this.emitEvent(
+				"before",
+				"upsert",
+				false,
+				{ input: data, transaction: options?.transaction },
+				options,
 			);
-		}
-		await this.emitEvent(
-			"after",
-			"upsert",
-			false,
-			{
-				ids: this.idsOf([row]),
-				input: data,
-				rows: [row],
-				transaction: options?.transaction,
-			},
-			options,
-		);
-		await this.loadWriteRelations(db, [row], options);
-		return row;
+			let row: T | undefined;
+			try {
+				await this.assertKeysInScope(db, entityData, options);
+				[row] = await this.upsertRows(db, [entityData], upsert, options);
+			} catch (error) {
+				throw this.toClientError(error, "write");
+			}
+			if (!row) {
+				throw new EntityNotFoundException(
+					this.getEntityName(),
+					this.conflictValue(entityData, upsert),
+				);
+			}
+			await this.emitEvent(
+				"after",
+				"upsert",
+				false,
+				{
+					ids: this.idsOf([row]),
+					input: data,
+					rows: [row],
+					transaction: options?.transaction,
+				},
+				options,
+			);
+			await this.loadWriteRelations(db, [row], options);
+			return row;
+		});
 	}
 
 	// One INSERT ... ON CONFLICT for the whole batch, in a transaction.
@@ -3758,22 +3803,23 @@ export abstract class SqlBaseCrudService<
 		upsert: UpsertOptions = {},
 		options?: SqlOperationOptions,
 	): Promise<T[]> {
-		options = this.withScopeMemo(options);
-		const message = "Mass upsert errors";
-		return this.massWrite<Record<string, any>>({
-			operation: "upsert",
-			message,
-			options,
-			input: data,
-			returnsRows: true,
-			prepare: (opts) =>
-				data.map((item, index) => ({
-					index,
-					run: () => this.prepareCreate(item, opts),
-				})),
-			keys: true,
-			write: (tx, rows, opts) =>
-				this.upsertSet(tx, rows, upsert, opts, message),
+		return this.scopedCall(options, async (options) => {
+			const message = "Mass upsert errors";
+			return this.massWrite<Record<string, any>>({
+				operation: "upsert",
+				message,
+				options,
+				input: data,
+				returnsRows: true,
+				prepare: (opts) =>
+					data.map((item, index) => ({
+						index,
+						run: () => this.prepareCreate(item, opts),
+					})),
+				keys: true,
+				write: (tx, rows, opts) =>
+					this.upsertSet(tx, rows, upsert, opts, message),
+			});
 		});
 	}
 
@@ -4074,42 +4120,43 @@ export abstract class SqlBaseCrudService<
 		data: CreateDto[],
 		options?: SqlOperationOptions,
 	): Promise<T[]> {
-		options = this.withScopeMemo(options);
-		if (options?.bulkMode === "perItem") {
-			return this.eachInSavepoint(
-				data.map((item, index) => ({ index, item })),
-				"Mass create errors",
+		return this.scopedCall(options, async (options) => {
+			if (options?.bulkMode === "perItem") {
+				return this.eachInSavepoint(
+					data.map((item, index) => ({ index, item })),
+					"Mass create errors",
+					options,
+					({ item }, opts) => this.create(item, opts),
+				);
+			}
+			const message = "Mass create errors";
+			return this.massWrite<Record<string, any>>({
+				operation: "create",
+				message,
 				options,
-				({ item }, opts) => this.create(item, opts),
-			);
-		}
-		const message = "Mass create errors";
-		return this.massWrite<Record<string, any>>({
-			operation: "create",
-			message,
-			options,
-			input: data,
-			returnsRows: true,
-			prepare: (opts) =>
-				data.map((item, index) => ({
-					index,
-					run: () => this.prepareCreate(item, opts),
-				})),
-			keys: true,
-			write: (tx, rows, opts) =>
-				this.runSet(
-					tx,
-					message,
-					(sp) => this.insertMany(sp, rows, opts),
-					rows.map((row, index) => ({
+				input: data,
+				returnsRows: true,
+				prepare: (opts) =>
+					data.map((item, index) => ({
 						index,
-						run: (sp: any) => this.insertOne(sp, row, opts),
+						run: () => this.prepareCreate(item, opts),
 					})),
-					"write",
-				),
-			after: async (created) => {
-				for (const entity of created) await this.afterCreate(entity);
-			},
+				keys: true,
+				write: (tx, rows, opts) =>
+					this.runSet(
+						tx,
+						message,
+						(sp) => this.insertMany(sp, rows, opts),
+						rows.map((row, index) => ({
+							index,
+							run: (sp: any) => this.insertOne(sp, row, opts),
+						})),
+						"write",
+					),
+				after: async (created) => {
+					for (const entity of created) await this.afterCreate(entity);
+				},
+			});
 		});
 	}
 
@@ -4201,41 +4248,42 @@ export abstract class SqlBaseCrudService<
 		data: UpdateDto,
 		options?: SqlOperationOptions,
 	): Promise<T[]> {
-		options = this.withScopeMemo(options);
-		if (options?.bulkMode === "perItem") {
-			return this.eachInSavepoint(
-				ids.map((id) => ({ id })),
-				"Mass update errors",
+		return this.scopedCall(options, async (options) => {
+			if (options?.bulkMode === "perItem") {
+				return this.eachInSavepoint(
+					ids.map((id) => ({ id })),
+					"Mass update errors",
+					options,
+					({ id }, opts) => this.update(id, data, opts),
+				);
+			}
+			const message = "Mass update errors";
+			const skipBefore = options?.hooks?.skipBefore;
+			return this.massWrite<Record<string, any>>({
+				operation: "update",
+				message,
 				options,
-				({ id }, opts) => this.update(id, data, opts),
-			);
-		}
-		const message = "Mass update errors";
-		const skipBefore = options?.hooks?.skipBefore;
-		return this.massWrite<Record<string, any>>({
-			operation: "update",
-			message,
-			options,
-			ids,
-			input: data,
-			returnsRows: true,
-			prepare: (opts, unique) =>
-				unique.map((id) => ({
-					id,
-					run: async () => {
-						await this.validateUpdate(id, data);
-						const processed = skipBefore
-							? data
-							: await this.beforeUpdate(id, data);
-						return this.prepareUpdate(processed, opts);
-					},
-				})),
-			keys: true,
-			write: (tx, sets, opts, unique) =>
-				this.updateSets(tx, sets, unique, opts, message),
-			after: async (updated) => {
-				for (const entity of updated) await this.afterUpdate(entity);
-			},
+				ids,
+				input: data,
+				returnsRows: true,
+				prepare: (opts, unique) =>
+					unique.map((id) => ({
+						id,
+						run: async () => {
+							await this.validateUpdate(id, data);
+							const processed = skipBefore
+								? data
+								: await this.beforeUpdate(id, data);
+							return this.prepareUpdate(processed, opts);
+						},
+					})),
+				keys: true,
+				write: (tx, sets, opts, unique) =>
+					this.updateSets(tx, sets, unique, opts, message),
+				after: async (updated) => {
+					for (const entity of updated) await this.afterUpdate(entity);
+				},
+			});
 		});
 	}
 
@@ -4305,100 +4353,105 @@ export abstract class SqlBaseCrudService<
 		ids: any[],
 		options?: SqlOperationOptions,
 	): Promise<boolean> {
-		options = this.withScopeMemo(options);
-		if (!this.config.softDelete?.enabled)
-			throw new BadRequestException("Soft delete not enabled");
-		if (options?.bulkMode === "perItem") {
-			await this.eachInSavepoint(
-				ids.map((id) => ({ id })),
-				"Mass soft delete errors",
-				options,
-				({ id }, opts) => this.softDelete(id, opts),
-			);
-			return true;
-		}
-		const message = "Mass soft delete errors";
-		await this.massWrite<void>({
-			operation: "softDelete",
-			message,
-			options,
-			ids,
-			state: { withDeleted: false, onlyDeleted: false },
-			returnsRows: false,
-			prepare: (_opts, unique) =>
-				options?.hooks?.skipBefore
-					? undefined
-					: unique.map((id) => ({ id, run: () => this.beforeSoftDelete(id) })),
-			write: (tx, _prepared, opts, unique) => {
-				const set = this.softDeleteSet(new Date());
-				// Only a live row, as the guard read found it: a row trashed
-				// since is not stamped again.
-				const update = (db: any, keys: any[]) =>
-					db
-						.update(this.config.table)
-						.set(set)
-						.where(
-							and(this.writeWhere(keys, opts), this.softDeleteScope(opts)),
-						);
-				return this.runSet(
-					tx,
-					message,
-					(sp) => this.runKeyed(update(sp, unique), unique),
-					unique.map((id) => ({ id, run: (sp: any) => update(sp, [id]) })),
-					"write",
+		return this.scopedCall(options, async (options) => {
+			if (!this.config.softDelete?.enabled)
+				throw new BadRequestException("Soft delete not enabled");
+			if (options?.bulkMode === "perItem") {
+				await this.eachInSavepoint(
+					ids.map((id) => ({ id })),
+					"Mass soft delete errors",
+					options,
+					({ id }, opts) => this.softDelete(id, opts),
 				);
-			},
-			after: async (_written, unique) => {
-				for (const id of unique) await this.afterSoftDelete(id);
-			},
+				return true;
+			}
+			const message = "Mass soft delete errors";
+			await this.massWrite<void>({
+				operation: "softDelete",
+				message,
+				options,
+				ids,
+				state: { withDeleted: false, onlyDeleted: false },
+				returnsRows: false,
+				prepare: (_opts, unique) =>
+					options?.hooks?.skipBefore
+						? undefined
+						: unique.map((id) => ({
+								id,
+								run: () => this.beforeSoftDelete(id),
+							})),
+				write: (tx, _prepared, opts, unique) => {
+					const set = this.softDeleteSet(new Date());
+					// Only a live row, as the guard read found it: a row trashed
+					// since is not stamped again.
+					const update = (db: any, keys: any[]) =>
+						db
+							.update(this.config.table)
+							.set(set)
+							.where(
+								and(this.writeWhere(keys, opts), this.softDeleteScope(opts)),
+							);
+					return this.runSet(
+						tx,
+						message,
+						(sp) => this.runKeyed(update(sp, unique), unique),
+						unique.map((id) => ({ id, run: (sp: any) => update(sp, [id]) })),
+						"write",
+					);
+				},
+				after: async (_written, unique) => {
+					for (const id of unique) await this.afterSoftDelete(id);
+				},
+			});
+			return true;
 		});
-		return true;
 	}
 
 	async massRestore(ids: any[], options?: SqlOperationOptions): Promise<T[]> {
-		options = this.withScopeMemo(options);
-		if (!this.config.softDelete?.enabled)
-			throw new BadRequestException("Soft delete not enabled");
-		if (options?.bulkMode === "perItem") {
-			return this.eachInSavepoint(
-				ids.map((id) => ({ id })),
-				"Mass restore errors",
-				options,
-				({ id }, opts) => this.restore(id, opts),
-			);
-		}
-		const message = "Mass restore errors";
-		return this.massWrite<void>({
-			operation: "restore",
-			message,
-			options,
-			ids,
-			state: { withDeleted: true, onlyDeleted: false },
-			returnsRows: true,
-			prepare: (_opts, unique) =>
-				options?.hooks?.skipBefore
-					? undefined
-					: unique.map((id) => ({ id, run: () => this.beforeRestore(id) })),
-			write: (tx, _prepared, opts, unique) => {
-				const set = this.softDeleteSet(null);
-				// The guard's soft delete state rides on the UPDATE, as on the
-				// other trash writes. massRestore takes live and trashed rows
-				// alike, so today that adds no predicate.
-				const state = this.softDeleteScope(opts);
-				return this.runSet(
-					tx,
-					message,
-					(sp) => this.updateWhereIn(sp, set, unique, opts, state),
-					unique.map((id) => ({
-						id,
-						run: (sp: any) => this.updateWhereIn(sp, set, [id], opts, state),
-					})),
-					"write",
+		return this.scopedCall(options, async (options) => {
+			if (!this.config.softDelete?.enabled)
+				throw new BadRequestException("Soft delete not enabled");
+			if (options?.bulkMode === "perItem") {
+				return this.eachInSavepoint(
+					ids.map((id) => ({ id })),
+					"Mass restore errors",
+					options,
+					({ id }, opts) => this.restore(id, opts),
 				);
-			},
-			after: async (restored) => {
-				for (const entity of restored) await this.afterRestore(entity);
-			},
+			}
+			const message = "Mass restore errors";
+			return this.massWrite<void>({
+				operation: "restore",
+				message,
+				options,
+				ids,
+				state: { withDeleted: true, onlyDeleted: false },
+				returnsRows: true,
+				prepare: (_opts, unique) =>
+					options?.hooks?.skipBefore
+						? undefined
+						: unique.map((id) => ({ id, run: () => this.beforeRestore(id) })),
+				write: (tx, _prepared, opts, unique) => {
+					const set = this.softDeleteSet(null);
+					// The guard's soft delete state rides on the UPDATE, as on the
+					// other trash writes. massRestore takes live and trashed rows
+					// alike, so today that adds no predicate.
+					const state = this.softDeleteScope(opts);
+					return this.runSet(
+						tx,
+						message,
+						(sp) => this.updateWhereIn(sp, set, unique, opts, state),
+						unique.map((id) => ({
+							id,
+							run: (sp: any) => this.updateWhereIn(sp, set, [id], opts, state),
+						})),
+						"write",
+					);
+				},
+				after: async (restored) => {
+					for (const entity of restored) await this.afterRestore(entity);
+				},
+			});
 		});
 	}
 
@@ -4406,51 +4459,52 @@ export abstract class SqlBaseCrudService<
 		ids: any[],
 		options?: SqlOperationOptions,
 	): Promise<boolean> {
-		options = this.withScopeMemo(options);
-		if (options?.bulkMode === "perItem") {
-			await this.eachInSavepoint(
-				ids.map((id) => ({ id })),
-				"Mass delete errors",
-				options,
-				({ id }, opts) => this.delete(id, opts),
-				"delete",
-			);
-			return true;
-		}
-		const message = "Mass delete errors";
-		await this.massWrite<void>({
-			operation: "delete",
-			message,
-			options,
-			ids,
-			returnsRows: false,
-			prepare: (_opts, unique) =>
-				options?.hooks?.skipBefore
-					? undefined
-					: unique.map((id) => ({ id, run: () => this.beforeDelete(id) })),
-			write: (tx, _prepared, opts, unique) => {
-				// massDelete only removes a live row, as the guard read found it;
-				// massForceDelete any row.
-				const remove = (db: any, keys: any[]) =>
-					db
-						.delete(this.config.table)
-						.where(
-							and(this.writeWhere(keys, opts), this.softDeleteScope(opts)),
-						);
-				return this.runSet(
-					tx,
-					message,
-					(sp) => this.runKeyed(remove(sp, unique), unique),
-					unique.map((id) => ({ id, run: (sp: any) => remove(sp, [id]) })),
-					// Dependent rows still reference an id -> 409 for that id.
+		return this.scopedCall(options, async (options) => {
+			if (options?.bulkMode === "perItem") {
+				await this.eachInSavepoint(
+					ids.map((id) => ({ id })),
+					"Mass delete errors",
+					options,
+					({ id }, opts) => this.delete(id, opts),
 					"delete",
 				);
-			},
-			after: async (_written, unique) => {
-				for (const id of unique) await this.afterDelete(id);
-			},
+				return true;
+			}
+			const message = "Mass delete errors";
+			await this.massWrite<void>({
+				operation: "delete",
+				message,
+				options,
+				ids,
+				returnsRows: false,
+				prepare: (_opts, unique) =>
+					options?.hooks?.skipBefore
+						? undefined
+						: unique.map((id) => ({ id, run: () => this.beforeDelete(id) })),
+				write: (tx, _prepared, opts, unique) => {
+					// massDelete only removes a live row, as the guard read found it;
+					// massForceDelete any row.
+					const remove = (db: any, keys: any[]) =>
+						db
+							.delete(this.config.table)
+							.where(
+								and(this.writeWhere(keys, opts), this.softDeleteScope(opts)),
+							);
+					return this.runSet(
+						tx,
+						message,
+						(sp) => this.runKeyed(remove(sp, unique), unique),
+						unique.map((id) => ({ id, run: (sp: any) => remove(sp, [id]) })),
+						// Dependent rows still reference an id -> 409 for that id.
+						"delete",
+					);
+				},
+				after: async (_written, unique) => {
+					for (const id of unique) await this.afterDelete(id);
+				},
+			});
+			return true;
 		});
-		return true;
 	}
 
 	// Hard delete a set of rows, soft-deleted or not, in one statement.
@@ -4746,34 +4800,36 @@ export abstract class SqlBaseCrudService<
 	// still checked against the allowlists, but nothing is loaded for a
 	// boolean.
 	async exists(id: any, options?: SqlOperationOptions): Promise<boolean> {
-		options = this.withScopeMemo(options);
-		this.checkReadOptions({ ...options, select: undefined });
-		const entity = await this.find(id, {
-			...options,
-			relations: [],
-			counts: undefined,
-			select: [this.config.primaryKey],
+		return this.scopedCall(options, async (options) => {
+			this.checkReadOptions({ ...options, select: undefined });
+			const entity = await this.find(id, {
+				...options,
+				relations: [],
+				counts: undefined,
+				select: [this.config.primaryKey],
+			});
+			return !!entity;
 		});
-		return !!entity;
 	}
 
 	async count(
 		filters?: FilterDto,
 		options?: SqlOperationOptions,
 	): Promise<number> {
-		options = this.withScopeMemo(options);
-		this.checkReadOptions(options);
-		const db = this.dbFor(options?.transaction);
-		const { conditions, relations: filterRelations } = this.listConditions(
-			filters,
-			db,
-			options,
-		);
+		return this.scopedCall(options, async (options) => {
+			this.checkReadOptions(options);
+			const db = this.dbFor(options?.transaction);
+			const { conditions, relations: filterRelations } = this.listConditions(
+				filters,
+				db,
+				options,
+			);
 
-		const result = await this.runRead<any[]>(
-			this.buildCountQuery(db, conditions, filterRelations, options),
-		);
-		return this.parseCount(result);
+			const result = await this.runRead<any[]>(
+				this.buildCountQuery(db, conditions, filterRelations, options),
+			);
+			return this.parseCount(result);
+		});
 	}
 
 	// Grouped counts: how many rows have each value of `column`, after filters,
@@ -4785,30 +4841,34 @@ export abstract class SqlBaseCrudService<
 		filters?: FilterDto,
 		options?: SqlOperationOptions,
 	): Promise<CountByRow<V>[]> {
-		options = this.withScopeMemo(options);
-		this.checkReadOptions(options);
-		const db = this.dbFor(options?.transaction);
-		const spec = this.resolveGroupColumn(column, options);
-		const { conditions, relations: filterRelations } = this.listConditions(
-			filters,
-			db,
-			options,
-		);
-		const joins = Array.from(
-			new Set([...filterRelations, ...(spec.relation ? [spec.relation] : [])]),
-		);
-		const total = sql<number>`count(*)`;
-		let query = db
-			.select({ value: spec.column, count: total })
-			.from(this.config.table);
-		query = this.applyJoins(query, joins, options);
-		if (conditions.length > 0) query = query.where(and(...conditions));
-		query = query.groupBy(spec.column).orderBy(desc(total), asc(spec.column));
-		const rows = await this.runRead<any[]>(query);
-		return rows.map((row) => ({
-			value: row.value as V,
-			count: Number(row.count),
-		}));
+		return this.scopedCall(options, async (options) => {
+			this.checkReadOptions(options);
+			const db = this.dbFor(options?.transaction);
+			const spec = this.resolveGroupColumn(column, options);
+			const { conditions, relations: filterRelations } = this.listConditions(
+				filters,
+				db,
+				options,
+			);
+			const joins = Array.from(
+				new Set([
+					...filterRelations,
+					...(spec.relation ? [spec.relation] : []),
+				]),
+			);
+			const total = sql<number>`count(*)`;
+			let query = db
+				.select({ value: spec.column, count: total })
+				.from(this.config.table);
+			query = this.applyJoins(query, joins, options);
+			if (conditions.length > 0) query = query.where(and(...conditions));
+			query = query.groupBy(spec.column).orderBy(desc(total), asc(spec.column));
+			const rows = await this.runRead<any[]>(query);
+			return rows.map((row) => ({
+				value: row.value as V,
+				count: Number(row.count),
+			}));
+		});
 	}
 
 	private resolveGroupColumn(
@@ -5725,78 +5785,85 @@ export abstract class SqlBaseCrudService<
 		pagination?: PaginationOptions,
 		options?: FullTextSearchOptions<FilterDto>,
 	): Promise<{ data: T[]; total: number; page: number; limit: number }> {
-		options = this.withScopeMemo(options);
-		if (this.config.dialect !== "postgresql") {
-			throw new BadRequestException(
-				"Full-text search only supported in PostgreSQL",
-			);
-		}
-
-		if (!Array.isArray(searchColumns) || searchColumns.length === 0) {
-			throw new BadRequestException(
-				"Full-text search needs at least one column",
-			);
-		}
-		const columns = searchColumns.map((name) => {
-			const column = this.columnOf(this.config.table, name);
-			if (!column) {
-				throw new BadRequestException(`Unknown search column: ${name}`);
+		return this.scopedCall(options, async (options) => {
+			if (this.config.dialect !== "postgresql") {
+				throw new BadRequestException(
+					"Full-text search only supported in PostgreSQL",
+				);
 			}
-			this.assertAllowed("searchableColumns", name, options);
-			return column;
+
+			if (!Array.isArray(searchColumns) || searchColumns.length === 0) {
+				throw new BadRequestException(
+					"Full-text search needs at least one column",
+				);
+			}
+			const columns = searchColumns.map((name) => {
+				const column = this.columnOf(this.config.table, name);
+				if (!column) {
+					throw new BadRequestException(`Unknown search column: ${name}`);
+				}
+				this.assertAllowed("searchableColumns", name, options);
+				return column;
+			});
+
+			const { filters, language, queryMode, ...readOptions } = options ?? {};
+			const { vector, query } = this.fullTextParts(columns, searchTerm, {
+				language,
+				queryMode,
+			});
+			// The page and limit always apply, with or without `pagination`, so the
+			// envelope matches what came back.
+			const { page, limit, offset } = this.resolvePagination(
+				pagination?.page,
+				pagination?.limit,
+			);
+			const plan = this.planList(filters, undefined, "asc", readOptions);
+			const conditions = [sql`${vector} @@ ${query}`, ...plan.conditions];
+			const joins = Array.from(
+				new Set([
+					...plan.joined.map((node) => node.name),
+					...plan.filterRelations,
+				]),
+			);
+			const pk = this.columnOf(this.config.table, this.config.primaryKey);
+			const orderBy = [sql`ts_rank(${vector}, ${query}) DESC`];
+			if (pk) orderBy.push(asc(pk));
+
+			let dataQuery = this.startSelect(
+				plan.db,
+				plan.baseSelect,
+				plan.joined,
+				joins.length > 0,
+				plan.selection,
+			);
+			dataQuery = this.applyJoins(dataQuery, joins, readOptions)
+				.where(and(...conditions))
+				.orderBy(...orderBy)
+				.limit(limit)
+				.offset(offset);
+			const countQuery = this.buildCountQuery(
+				plan.db,
+				conditions,
+				plan.filterRelations,
+				readOptions,
+			);
+			const [fetched, totalResult] = await this.runRead(
+				Promise.all([dataQuery, countQuery]),
+			);
+			const total = this.parseCount(totalResult);
+
+			const rows = this.normalizeRelations(
+				fetched,
+				plan.joined.map((node) => node.name),
+			);
+			await this.hydrate(
+				plan.db,
+				rows,
+				plan.nodes,
+				plan.selection,
+				readOptions,
+			);
+			return { data: rows, total, page, limit };
 		});
-
-		const { filters, language, queryMode, ...readOptions } = options ?? {};
-		const { vector, query } = this.fullTextParts(columns, searchTerm, {
-			language,
-			queryMode,
-		});
-		// The page and limit always apply, with or without `pagination`, so the
-		// envelope matches what came back.
-		const { page, limit, offset } = this.resolvePagination(
-			pagination?.page,
-			pagination?.limit,
-		);
-		const plan = this.planList(filters, undefined, "asc", readOptions);
-		const conditions = [sql`${vector} @@ ${query}`, ...plan.conditions];
-		const joins = Array.from(
-			new Set([
-				...plan.joined.map((node) => node.name),
-				...plan.filterRelations,
-			]),
-		);
-		const pk = this.columnOf(this.config.table, this.config.primaryKey);
-		const orderBy = [sql`ts_rank(${vector}, ${query}) DESC`];
-		if (pk) orderBy.push(asc(pk));
-
-		let dataQuery = this.startSelect(
-			plan.db,
-			plan.baseSelect,
-			plan.joined,
-			joins.length > 0,
-			plan.selection,
-		);
-		dataQuery = this.applyJoins(dataQuery, joins, readOptions)
-			.where(and(...conditions))
-			.orderBy(...orderBy)
-			.limit(limit)
-			.offset(offset);
-		const countQuery = this.buildCountQuery(
-			plan.db,
-			conditions,
-			plan.filterRelations,
-			readOptions,
-		);
-		const [fetched, totalResult] = await this.runRead(
-			Promise.all([dataQuery, countQuery]),
-		);
-		const total = this.parseCount(totalResult);
-
-		const rows = this.normalizeRelations(
-			fetched,
-			plan.joined.map((node) => node.name),
-		);
-		await this.hydrate(plan.db, rows, plan.nodes, plan.selection, readOptions);
-		return { data: rows, total, page, limit };
 	}
 }
