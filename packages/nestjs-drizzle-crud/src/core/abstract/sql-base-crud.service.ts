@@ -1902,8 +1902,9 @@ export abstract class SqlBaseCrudService<
 	// the guard's whole WHERE, and "no row came back" is then answered by the
 	// guard after the fact, so the read is only needed first when something a
 	// caller can observe runs between the guard and the write: a hook or
-	// mapping a subclass overrides (named in `methods`), or a before event.
-	// Without RETURNING (MySQL) the guard always runs first.
+	// mapping a subclass overrides (named in `methods`), an emitEvent
+	// override, or a before event. Without RETURNING (MySQL) the guard always
+	// runs first.
 	private skipsGuard(
 		options: SqlOperationOptions | undefined,
 		...methods: string[]
@@ -1911,7 +1912,9 @@ export abstract class SqlBaseCrudService<
 		if (!this.config.sql?.useReturning) return false;
 		if (this.config.events && !options?.skipEvents) return false;
 		const base = SqlBaseCrudService.prototype as any;
-		return methods.every((name) => (this as any)[name] === base[name]);
+		return ["emitEvent", ...methods].every(
+			(name) => (this as any)[name] === base[name],
+		);
 	}
 
 	// Run the part of a guardless write that comes before its statement. An
@@ -3246,6 +3249,7 @@ export abstract class SqlBaseCrudService<
 			options,
 			"validateUpdate",
 			"mapUpdateDtoToEntity",
+			"prepareUpdate",
 			...(hooks.skipBefore ? [] : ["beforeUpdate"]),
 		);
 		if (guarded) await this.guardRow(id, opts);

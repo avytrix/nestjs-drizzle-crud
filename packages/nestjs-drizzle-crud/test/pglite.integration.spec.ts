@@ -4406,3 +4406,50 @@ describe("3.8.1 D-04: a missing row is a 404 ahead of a value the database refus
 		await expect400(svc.update(1, { views: "abc" } as any));
 	});
 });
+
+describe("3.8.1 D-05: emitEvent and prepareUpdate overrides keep the read first", () => {
+	it("never shows an emitEvent override a write to another tenant's row", async () => {
+		const db = await freshDb();
+		const seen: string[] = [];
+		class Watched extends Svc {
+			protected override async emitEvent(
+				...args: Parameters<Svc["emitEvent"]>
+			) {
+				const [phase, operation, , payload] = args;
+				seen.push(`${phase}:${operation}:${payload.ids?.join(",")}`);
+				return super.emitEvent(...args);
+			}
+		}
+		const svc = new Watched({
+			...base(db, docs),
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+		});
+		const t1 = asTenant(1);
+		for (const run of [
+			() => svc.update(4, { title: "x" }, t1),
+			() => svc.softDelete(4, t1),
+			() => svc.delete(4, t1),
+		]) {
+			expect((await caught(run())).getStatus()).toBe(404);
+		}
+		expect(seen).toEqual([]);
+	});
+
+	it("reads first when a subclass overrides prepareUpdate", async () => {
+		const { db, reset, statements } = await countingDb();
+		const prepared: unknown[] = [];
+		class Prepared extends Svc {
+			protected override prepareUpdate(data: any, options?: any) {
+				prepared.push(data);
+				return super.prepareUpdate(data, options);
+			}
+		}
+		const svc = new Prepared(base(db, posts));
+		reset();
+		expect((await caught(svc.update(999, { title: "x" }))).getStatus()).toBe(
+			404,
+		);
+		expect(prepared).toEqual([]);
+		expect(statements()).toHaveLength(1);
+	});
+});
