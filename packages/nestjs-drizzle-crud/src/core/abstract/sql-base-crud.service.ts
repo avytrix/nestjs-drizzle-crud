@@ -2917,7 +2917,14 @@ export abstract class SqlBaseCrudService<
 		}
 		// The SELECTs run together; failures are still named in relation
 		// order, so the error a row gets does not depend on which came first.
-		const found = await Promise.all(checks.map((check) => check.query));
+		// A key the column's type refuses ("nope" for a uuid) fails the
+		// SELECT: translated here, so every caller answers it with a 400.
+		let found: Array<Map<number, unknown>>;
+		try {
+			found = await Promise.all(checks.map((check) => check.query));
+		} catch (error) {
+			throw this.toClientError(error, "write");
+		}
 		checks.forEach(({ local, keys }, i) => {
 			const matched = found[i]!;
 			const present = new Set(keys.filter((_, at) => matched.has(at)));
@@ -3354,7 +3361,10 @@ export abstract class SqlBaseCrudService<
 			options,
 		);
 		try {
-			await this.guardOnError(guarded, id, opts, () =>
+			// Inside a caller's transaction a failed key SELECT has aborted it
+			// (Postgres), so the guard read cannot run after it: the error
+			// stands, as for the UPDATE below.
+			await this.guardOnError(guarded || !!transaction, id, opts, () =>
 				this.assertKeysInScope(db, entityData, opts),
 			);
 			// The guard's soft delete predicate rides on the UPDATE, so a row

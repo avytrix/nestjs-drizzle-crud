@@ -4794,3 +4794,54 @@ INSERT INTO uuid_owners VALUES ('0000000a-0000-0000-0000-00000000000a', 1);`);
 		).rejects.toBeInstanceOf(BadRequestException);
 	});
 });
+
+describe("3.8.2 G-02: a malformed belongs-to key is a 400 on every path", () => {
+	const cats = pgTable("cats", {
+		id: uuid("id").primaryKey().defaultRandom(),
+		tenant_id: integer("tenant_id").notNull(),
+	});
+	const catPosts = pgTable("cat_posts", {
+		id: serial("id").primaryKey(),
+		tenant_id: integer("tenant_id").notNull(),
+		title: text("title").notNull(),
+		cat_id: uuid("cat_id"),
+	});
+	const ddl = `CREATE TABLE cats (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id integer NOT NULL);
+CREATE TABLE cat_posts (
+  id serial PRIMARY KEY, tenant_id integer NOT NULL, title text NOT NULL,
+  cat_id uuid REFERENCES cats(id)
+);
+INSERT INTO cat_posts (tenant_id, title) VALUES (1, 'one');`;
+	const postsSvc = (db: any) =>
+		new Svc({
+			...base(db, catPosts),
+			softDelete: undefined,
+			timestamps: undefined,
+			scope: (ctx) => ({ tenant_id: ctx.tenantId }),
+			relations: { cat: { table: cats, localKey: "cat_id" } },
+		});
+	const A = asTenant(1);
+
+	it("answers the mass writes and an update in a caller's transaction with a 400", async () => {
+		const db = await customDb(ddl);
+		const svc = postsSvc(db);
+		await expect400(svc.create({ title: "t", cat_id: "nope" }, A));
+		await expect400(svc.massCreate([{ title: "a", cat_id: "nope" }], A));
+		await expect400(svc.massUpdate([1], { cat_id: "nope" }, A));
+		await expect400(
+			svc.massUpsert(
+				[{ id: 1, title: "a", cat_id: "nope" }],
+				{ conflictTarget: "id" },
+				A,
+			),
+		);
+		await expect400(
+			db.transaction((tx: any) =>
+				svc.update(1, { cat_id: "nope" }, { ...A, transaction: tx }),
+			),
+		);
+		expect(await db.select().from(catPosts)).toMatchObject([
+			{ id: 1, title: "one", cat_id: null },
+		]);
+	});
+});
