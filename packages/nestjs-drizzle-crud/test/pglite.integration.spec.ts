@@ -4272,6 +4272,50 @@ INSERT INTO coded_items (tenant_id) VALUES (1);`;
 		const row = await svc.attach(1, "links", ["US"], t1);
 		expect(row.links.map((c: any) => c.code)).toEqual(["US"]);
 	});
+
+	// MySQL's default collations match "us" to a stored "US", and a unique
+	// key cannot hold both, so the check folds case there. A stubbed db
+	// answers the key SELECT the way such a collation does.
+	it("folds case on MySQL, where the collation does", async () => {
+		const stub = (rows: unknown[]) => {
+			const inserted: unknown[] = [];
+			const db: any = {
+				select: () => ({ from: () => ({ where: async () => rows }) }),
+				insert: () => ({
+					values: async (values: unknown) => {
+						inserted.push(values);
+					},
+				}),
+			};
+			return { db, inserted };
+		};
+		const svcFor = (dialect: "mysql" | "postgresql") =>
+			new Svc({
+				...(itemsSvc(stub([]).db) as any).config,
+				dialect,
+				sql: { ...base(undefined, codedItems).sql!, useReturning: false },
+			}) as any;
+		const stored = [{ id: "US" }];
+
+		const mysql = svcFor("mysql");
+		const keys = stub(stored);
+		expect(
+			(await mysql.keysOutsideScope(keys.db, [{ code: "us" }], t1)).size,
+		).toBe(0);
+		const links = stub(stored);
+		const relation = mysql.config.relations.links;
+		await mysql.linkTargets(links.db, relation, 1, ["us"], t1, true);
+		expect(links.inserted).toEqual([[{ item_id: 1, code: "us" }]]);
+
+		// PostgreSQL and SQLite compare exactly: the same answer is a miss.
+		const pg = svcFor("postgresql");
+		expect(
+			(await pg.keysOutsideScope(stub(stored).db, [{ code: "us" }], t1)).size,
+		).toBe(1);
+		await expect(
+			pg.linkTargets(stub(stored).db, relation, 1, ["us"], t1, true),
+		).rejects.toBeInstanceOf(BulkOperationException);
+	});
 });
 
 describe("3.8.1 D-03: nested children get the tenant key check", () => {

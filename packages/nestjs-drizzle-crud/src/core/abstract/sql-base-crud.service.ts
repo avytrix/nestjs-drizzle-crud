@@ -3195,11 +3195,15 @@ export abstract class SqlBaseCrudService<
 
 	// A comparable key for a value of `column`: numbers from the driver
 	// against strings from a request. A text key compares exactly, the way
-	// Postgres and SQLite compare it ("US" and "us" are two rows); only a uuid
-	// column folds case, as keyOf does for the primary key.
+	// Postgres and SQLite compare it ("US" and "us" are two rows). A uuid
+	// column folds case, as keyOf does for the primary key, and so does
+	// MySQL, whose default collations match "us" to a stored "US" and cannot
+	// hold both as distinct unique values.
 	private valueKey(value: unknown, column?: any): string {
 		const key = String(value);
-		return column?.columnType === "PgUUID" ? key.toLowerCase() : key;
+		return column?.columnType === "PgUUID" || this.config.dialect === "mysql"
+			? key.toLowerCase()
+			: key;
 	}
 
 	private uniqueValues(values: unknown[], column?: any): unknown[] {

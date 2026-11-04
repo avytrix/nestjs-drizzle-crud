@@ -28,8 +28,8 @@ and nested children that skipped the key check. No public API or override point 
 - Text keys compare exactly in the tenant key check, `attach` and `sync`: `"US"` and `"us"` are
   two keys, as they are two rows on PostgreSQL and SQLite. Before, every key was lowercased, so a
   batch holding both could point a row at another tenant's `"us"` and get a 201 where `"us"`
-  alone was a 400. Only a uuid column still ignores case. On MySQL, whose default collations
-  compare text without case, a key now has to be sent in the case it is stored in.
+  alone was a 400. A uuid column still ignores case, and so does MySQL, to follow its default
+  collations, which match `"us"` to a stored `"US"` and cannot hold both as distinct keys.
 - On a scoped entity, a nested create checks the belongs-to keys of the rows it writes (a
   belongs-to parent, has-many children, new many-to-many targets) against the caller's tenant,
   using the nested relation's own `relations`. A child key to another tenant's row is the same
