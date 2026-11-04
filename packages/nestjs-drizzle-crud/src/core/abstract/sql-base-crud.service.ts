@@ -101,8 +101,11 @@ type ScopeMemo = Map<object, Map<unknown, CrudScopeValues | null>> & {
 	ended?: boolean;
 };
 
-// A counter that makes each SQL value in a massUpdate SET unique (fingerprint).
-let fingerprintTag = 0;
+// The tag of each value that is not plain data in a massUpdate SET, such as
+// an SQL expression (fingerprint): one per object, so the same object in
+// every SET still groups into one UPDATE, and two equal-looking ones never do.
+const fingerprintTags = new WeakMap<object, string>();
+let fingerprintCount = 0;
 
 // Thrown inside a savepoint to roll it back on purpose; never escapes.
 const ROLLBACK = Symbol("rollback");
@@ -4561,9 +4564,9 @@ export abstract class SqlBaseCrudService<
 	// not its ISO string, and a byte array by its bytes. Strings are
 	// prefixed, so the tags never equal a real value: bigints, NaN and
 	// Infinity (which JSON writes as null), and any other value that is not
-	// plain data (Drizzle's SQL, Param, a Column), which gets a tag of its own
-	// so a SET carrying one never shares an UPDATE and is never walked (an
-	// SQL object is circular).
+	// plain data (Drizzle's SQL, Param, a Column), which is never walked (an
+	// SQL object is circular) and gets its object's tag: the same object
+	// shares an UPDATE, another one never does.
 	private fingerprint(value: unknown): string {
 		return JSON.stringify(
 			value,
@@ -4582,7 +4585,12 @@ export abstract class SqlBaseCrudService<
 				if (v !== null && typeof v === "object" && !Array.isArray(v)) {
 					const proto = Object.getPrototypeOf(v);
 					if (proto !== Object.prototype && proto !== null) {
-						return `opaque:${++fingerprintTag}`;
+						let tag = fingerprintTags.get(v);
+						if (!tag) {
+							tag = `opaque:${++fingerprintCount}`;
+							fingerprintTags.set(v, tag);
+						}
+						return tag;
 					}
 				}
 				return json;

@@ -4596,7 +4596,7 @@ INSERT INTO scores (score) VALUES (1), (2);`;
 		expect(rows.map((row: any) => row.score)).toEqual([Number.NaN, null]);
 	});
 
-	it("takes an SQL expression as a value, never grouping it", async () => {
+	it("takes an SQL expression as a value", async () => {
 		const db = await freshDb();
 		const svc = postsService(db);
 		const rows = await svc.massUpdate([1, 2], {

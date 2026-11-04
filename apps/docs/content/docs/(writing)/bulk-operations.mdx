@@ -43,7 +43,7 @@ A fixed number, whatever the number of ids:
 | Method | Statements |
 | --- | --- |
 | `massCreate` | one multi-row `INSERT ... RETURNING` |
-| `massUpdate` | one `SELECT` to check every id exists, one `UPDATE ... WHERE id IN (...)` per distinct SET (one, unless `beforeUpdate` returns different data per id) |
+| `massUpdate` | one `SELECT` to check every id exists, one `UPDATE ... WHERE id IN (...)` per distinct SET (one, unless `beforeUpdate` returns different data per id; one shared `sql` expression object counts as one value) |
 | `massSoftDelete`, `massRestore` | one `SELECT`, one `UPDATE ... WHERE id IN (...)` |
 | `massDelete`, `massForceDelete` | one `SELECT`, one `DELETE ... WHERE id IN (...)` |
 | `massUpsert` | one `INSERT ... ON CONFLICT DO UPDATE` |
