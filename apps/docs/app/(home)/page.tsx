@@ -1,6 +1,7 @@
 import { TopBanner } from "@/components/home/top-banner";
 import { HeroTagChips } from "@/components/home/hero-tag-chips";
 import { HeroCtaPills } from "@/components/home/hero-cta-pills";
+import { HeroBadges } from "@/components/home/hero-badges";
 import { QuickConfigSnippet } from "@/components/home/quick-config-snippet";
 import { FeatureGrid } from "@/components/home/feature-grid";
 import { CompatibleWith } from "@/components/home/compatible-with";
@@ -31,6 +32,7 @@ export default function HomePage() {
 					</p>
 					<HeroTagChips />
 					<HeroCtaPills />
+					<HeroBadges />
 				</div>
 			</section>
 

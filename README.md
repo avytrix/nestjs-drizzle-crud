@@ -3,6 +3,8 @@
 [![docs](https://img.shields.io/badge/docs-crud.avytrix.dev-E0234E)](https://crud.avytrix.dev)
 [![npm](https://img.shields.io/npm/v/@avytrix/nestjs-drizzle-crud?color=E0234E)](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud)
 [![license](https://img.shields.io/npm/l/@avytrix/nestjs-drizzle-crud)](./LICENSE)
+[![npm downloads](https://img.shields.io/npm/dw/@avytrix/nestjs-drizzle-crud?color=E0234E)](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud)
+[![GitHub stars](https://img.shields.io/github/stars/avytrix/nestjs-drizzle-crud?style=social)](https://github.com/avytrix/nestjs-drizzle-crud)
 [![CI](https://github.com/avytrix/nestjs-drizzle-crud/actions/workflows/ci.yml/badge.svg)](https://github.com/avytrix/nestjs-drizzle-crud/actions/workflows/ci.yml)
 [![Sponsor @avytrix](https://img.shields.io/badge/Sponsor-%40avytrix-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/avytrix)
 
