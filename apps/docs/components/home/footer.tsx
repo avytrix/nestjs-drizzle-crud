@@ -1,7 +1,7 @@
 import { Heart } from "lucide-react";
+import Link from "next/link";
 import { GithubMark } from "@/components/github-mark";
 import { NpmMark } from "@/components/npm-mark";
-import Link from "next/link";
 import { avytrixUrl, siteConfig } from "@/lib/seo";
 
 export function Footer() {
@@ -50,6 +50,18 @@ export function Footer() {
 						</ul>
 					</div>
 					<div className="flex flex-wrap items-center gap-1 text-sm">
+						<a
+							href={avytrixUrl("/", "footer-home")}
+							className="inline-flex items-center -mx-2 rounded-lg px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
+						>
+							Avytrix home
+						</a>
+						<a
+							href={avytrixUrl("/opensource", "footer")}
+							className="inline-flex items-center -mx-2 rounded-lg px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
+						>
+							Open source
+						</a>
 						<Link
 							href="/docs"
 							className="inline-flex items-center -mx-2 rounded-lg px-2 py-1.5 text-fd-muted-foreground transition-colors hover:bg-fd-accent/40 hover:text-fd-foreground"
