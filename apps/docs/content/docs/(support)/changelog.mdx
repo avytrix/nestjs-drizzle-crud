@@ -17,6 +17,20 @@ The 3.0.x line is PostgreSQL-first. MySQL-specific paths (non-`RETURNING` restor
 3.3.1, 3.4.0, 3.5.0 and 3.5.2 were tagged but never published to npm. Their changes reached npm
 in 3.5.1 (3.3.1 to 3.5.0) and 3.6.0 (3.5.2). The unscoped `nestjs-drizzle-crud` stops at 3.3.0.
 
+## [3.8.3] - 2026-11-16
+
+Docs and package metadata only. The runtime code is the same as 3.8.2.
+
+### Docs
+
+- The docs moved to [avytrix.dev/opensource/nestjs-drizzle-crud](https://avytrix.dev/opensource/nestjs-drizzle-crud/).
+  The old docs subdomain is gone and does not redirect, so update any bookmark or link that still
+  points at it. The package `homepage`, both READMEs, `AGENT.md` and the repository
+  guides link to the new address.
+- The docs site is built with the `/opensource/nestjs-drizzle-crud` base path and published by
+  avytrix.dev. This repo no longer deploys it; its docs workflow builds the site and runs the SEO
+  gate on every pull request instead.
+
 ## [3.8.2] - 2026-11-04
 
 Fixes from the 3.8.1 audit (G-01 to G-08). The tenant key check now lets the database compare keys,
@@ -143,7 +157,7 @@ do `softDelete`, `restore` and `delete`; no public API, override point or messag
   coalesced for several. On 200,000 rows a search on the stored column with its index took
   0.6 ms, against 600 to 900 ms computing `to_tsvector` per row without one. The full-text page
   shows the index for each shape.
-- A docs page, [Database indexes for fast Drizzle queries](https://crud.avytrix.dev/docs/indexes/),
+- A docs page, [Database indexes for fast Drizzle queries](https://avytrix.dev/opensource/nestjs-drizzle-crud/docs/indexes/),
   lists the index each query shape needs: `lower(col)` (or `citext`, or `caseSensitive: true`) for
   the default case-insensitive equality, the sort columns plus the primary key for cursor pages,
   GIN for full-text search, `pg_trgm` for `contains` and `search`, foreign keys and both join

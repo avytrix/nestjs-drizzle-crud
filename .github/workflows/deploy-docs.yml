@@ -1,25 +1,31 @@
-name: Deploy Docs
+name: Docs
 
-# Builds apps/docs as a static export and publishes it to GitHub Pages.
-# One-time setup: repo Settings → Pages → Source = "GitHub Actions".
+# Builds apps/docs exactly the way avytrix.dev's CI does and runs the SEO gate over the export.
+# Nothing is deployed from this repo: avytrix.dev checks out main, runs these same commands and
+# copies apps/docs/out into its own site at https://avytrix.dev/opensource/nestjs-drizzle-crud/.
+# A red run here means the next avytrix.dev deploy would fail on the docs.
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-# Never cancel an in-flight Pages deploy; queue instead.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
+    name: Docs build and SEO gate
     runs-on: ubuntu-latest
+    env:
+      # The origin only, and the path prefix; the same values avytrix.dev passes.
+      NEXT_PUBLIC_SITE_URL: https://avytrix.dev
+      NEXT_PUBLIC_BASE_PATH: /opensource/nestjs-drizzle-crud
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -41,29 +47,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build docs (static export)
         # turbo builds the library first (docs depends on its types via twoslash).
-        # Custom domain (CNAME) serves at root, so no basePath.
-        run: |
-          export NEXT_PUBLIC_SITE_URL="https://$(cat CNAME)"
-          pnpm turbo run build --filter=nestjs-drizzle-crud-docs
+        run: pnpm turbo run build --filter=nestjs-drizzle-crud-docs
       - name: SEO gate
-        # Fails the deploy on any SEO/AEO regression (apps/docs/scripts/seo_check.py).
-        run: |
-          export NEXT_PUBLIC_SITE_URL="https://$(cat CNAME)"
-          python3 apps/docs/scripts/seo_check.py apps/docs/out
-      - name: Preserve custom domain + disable Jekyll
-        run: |
-          cp CNAME apps/docs/out/CNAME
-          touch apps/docs/out/.nojekyll
-      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0 (pins upload-artifact by SHA, required by the repo)
-        with:
-          path: apps/docs/out
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+        # Fails on any SEO/AEO regression and on any site path outside the basePath
+        # (apps/docs/scripts/seo_check.py).
+        run: python3 apps/docs/scripts/seo_check.py apps/docs/out

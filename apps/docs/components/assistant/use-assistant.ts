@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { loadMessages, saveMessages } from "@/lib/assistant/session";
 import notes from "@/lib/assistant/page-notes.json";
 import { talk } from "@/lib/assistant/talk";
+import { withBasePath } from "@/lib/seo";
 
 export type Status = "idle" | "loading" | "ready" | "failed";
 
@@ -285,7 +286,7 @@ export function useAssistant() {
 			parts.push(
 				`${covers}:\n` +
 					page.topics
-						.map((t) => `- [${t.heading}](${url}#${t.anchor})`)
+						.map((t) => `- [${t.heading}](${withBasePath(url)}#${t.anchor})`)
 						.join("\n"),
 			);
 		}

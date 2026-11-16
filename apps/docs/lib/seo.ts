@@ -1,5 +1,25 @@
 import type { Metadata } from "next";
 
+/*
+ * The docs are served under a path on avytrix.dev. The origin and the prefix come from the env
+ * (next.config.mjs passes the same production defaults through to the browser), and every
+ * absolute URL is origin + basePath + path.
+ */
+const origin = (
+	process.env.NEXT_PUBLIC_SITE_URL ?? "https://avytrix.dev"
+).replace(/\/+$/, "");
+const basePath = (
+	process.env.NEXT_PUBLIC_BASE_PATH ?? "/opensource/nestjs-drizzle-crud"
+).replace(/\/+$/, "");
+
+/**
+ * A site path with the basePath in front, for anything Next does not prefix by itself: a plain
+ * `<a>` or `<img>`, a `fetch`, a URL handed to a third-party component.
+ */
+export function withBasePath(path: string): string {
+	return `${basePath}${path}`;
+}
+
 export const siteConfig = {
 	name: "@avytrix/nestjs-drizzle-crud", // the npm package: structured data, llms.txt, install commands
 	project: "nestjs-drizzle-crud", // the project and repository name, used in prose
@@ -7,17 +27,19 @@ export const siteConfig = {
 	formerName: "nestjs-drizzle-crud",
 	mcpBin: "nestjs-drizzle-crud-mcp",
 	displayName: "Nestjs Drizzle", // what readers see: header, tab titles, site name
-	logo: "/avytrix-icon.png", // Avytrix Technologies mark
-	version: "3.8.2",
+	logo: withBasePath("/avytrix-icon.png"), // Avytrix Technologies mark
+	version: "3.8.3",
 	tagline: "Type-safe CRUD for Drizzle ORM in NestJS",
 	/** The home page <title>: the primary query first, the display name last, at most 60 characters. */
 	homeTitle: "NestJS + Drizzle ORM CRUD library | Nestjs Drizzle",
 	description:
 		"NestJS + Drizzle ORM CRUD: type-safe services with filtering, pagination, relations, soft delete, upsert and multi-tenancy for PostgreSQL, MySQL and SQLite.",
-	url: (process.env.NEXT_PUBLIC_SITE_URL ?? "https://crud.avytrix.dev").replace(
-		/\/+$/,
-		"",
-	),
+	/** The origin the site is served from, without the basePath. */
+	origin,
+	/** The basePath, empty or starting with a slash, no trailing slash. */
+	basePath,
+	/** The site root: origin + basePath, no trailing slash. */
+	url: `${origin}${basePath}`,
 	github: "https://github.com/avytrix/nestjs-drizzle-crud",
 	npm: "https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud",
 	sponsor: "https://github.com/sponsors/avytrix",

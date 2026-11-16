@@ -2,9 +2,9 @@
 
 <img src="./public/avytrix-icon.png" width="80" alt="Avytrix Technologies" />
 
-The documentation site for the [nestjs-drizzle-crud](https://www.npmjs.com/package/nestjs-drizzle-crud) npm package, live at [crud.avytrix.dev](https://crud.avytrix.dev). The version it documents is `siteConfig.version` in `lib/seo.ts`.
+The documentation site for the [nestjs-drizzle-crud](https://www.npmjs.com/package/nestjs-drizzle-crud) npm package, live at [avytrix.dev/opensource/nestjs-drizzle-crud](https://avytrix.dev/opensource/nestjs-drizzle-crud/). The version it documents is `siteConfig.version` in `lib/seo.ts`.
 
-It is a Next.js 16 app built with [Fumadocs](https://fumadocs.dev/), exported as static HTML and served from GitHub Pages.
+It is a Next.js 16 app built with [Fumadocs](https://fumadocs.dev/), exported as static HTML and served by avytrix.dev under `/opensource/nestjs-drizzle-crud`.
 
 ## Stack
 
@@ -83,7 +83,7 @@ It is not a workspace dependency because adding it makes pnpm re-check `semver@6
 
 ## Deployment
 
-Pushing to `main` runs `.github/workflows/deploy-docs.yml`. It builds the library (Twoslash needs its types), exports this site with `NEXT_PUBLIC_SITE_URL` taken from the root `CNAME`, and publishes `out/` to GitHub Pages. It checks out the full git history so each page can show when it last changed.
+Nothing is deployed from this repo. avytrix.dev's CI checks out `main` with full git history (so each page can show when it last changed), builds this app with `NEXT_PUBLIC_SITE_URL=https://avytrix.dev` and `NEXT_PUBLIC_BASE_PATH=/opensource/nestjs-drizzle-crud`, runs `scripts/seo_check.py` and copies `out/` into its site under that path. Both variables default to those values, so a plain `pnpm build` produces the production site. `.github/workflows/deploy-docs.yml` runs the same build and gate on every PR and push to `main`. The full contract is in `AGENTS.md`.
 
 ## License
 

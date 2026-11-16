@@ -6,7 +6,7 @@ import { siteConfig } from "@/lib/seo";
  *
  * The release history above it on the changelog page is the package's; this list is the record
  * of the pages. Empty in a shallow checkout, which renders a short note instead of an empty
- * table. deploy-docs.yml checks out with `fetch-depth: 0` so the published site has the list.
+ * table. avytrix.dev's CI checks out with `fetch-depth: 0` so the published site has the list.
  */
 export function DocsChangelog({ limit = 40 }: { limit?: number }) {
 	const commits = recentDocCommits(limit);

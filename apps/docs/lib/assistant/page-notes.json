@@ -130,16 +130,16 @@
 		"summary": "The nestjs-drizzle-crud changelog, every release since 3.0.0 with what was added, changed, fixed and deprecated, newest first, mirroring CHANGELOG.md.",
 		"topics": [
 			{
+				"heading": "[3.8.3] - 2026-11-16",
+				"anchor": "383---2026-11-16"
+			},
+			{
+				"heading": "Docs",
+				"anchor": "docs"
+			},
+			{
 				"heading": "[3.8.2] - 2026-11-04",
 				"anchor": "382---2026-11-04"
-			},
-			{
-				"heading": "Changed",
-				"anchor": "changed"
-			},
-			{
-				"heading": "Fixed",
-				"anchor": "fixed"
 			}
 		]
 	},
@@ -494,12 +494,12 @@
 				"anchor": "how-do-i-install-it"
 			},
 			{
-				"heading": "Install the package and its required peers",
-				"anchor": "install-the-package-and-its-required-peers"
+				"heading": "How do I install it?",
+				"anchor": "how-do-i-install-it"
 			},
 			{
-				"heading": "Add the driver for your database",
-				"anchor": "add-the-driver-for-your-database"
+				"heading": "Install the package and its required peers",
+				"anchor": "install-the-package-and-its-required-peers"
 			}
 		]
 	},

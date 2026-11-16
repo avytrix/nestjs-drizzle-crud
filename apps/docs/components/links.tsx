@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { avytrixUrl, siteConfig } from "@/lib/seo";
+import { absoluteUrl, avytrixUrl, siteConfig } from "@/lib/seo";
 
 /**
  * Links to the project's other homes, for MDX.
@@ -10,7 +10,7 @@ import { avytrixUrl, siteConfig } from "@/lib/seo";
  */
 const TARGETS = {
 	/** This docs site. */
-	docs: siteConfig.url,
+	docs: absoluteUrl("/"),
 	/** The GitHub repository. */
 	github: siteConfig.github,
 	/** The issue tracker. */

@@ -38,7 +38,8 @@ jobs:
       - name: Docs SEO gate
         run: python3 apps/docs/scripts/seo_check.py apps/docs/out
         env:
-          NEXT_PUBLIC_SITE_URL: https://crud.avytrix.dev
+          NEXT_PUBLIC_SITE_URL: https://avytrix.dev
+          NEXT_PUBLIC_BASE_PATH: /opensource/nestjs-drizzle-crud
       # Unit tests, plus the apps/api e2e suite. The e2e run needs no secret and
       # no database service: Playwright boots the app against PGlite (Postgres
       # compiled to WASM) with a seeded fixture, and drives it over HTTP.

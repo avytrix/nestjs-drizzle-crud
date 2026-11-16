@@ -23,8 +23,8 @@ const organization = {
 	logo: {
 		"@type": "ImageObject",
 		"@id": `${origin}/#logo`,
-		url: `${origin}${siteConfig.logo}`,
-		contentUrl: `${origin}${siteConfig.logo}`,
+		url: `${siteConfig.origin}${siteConfig.logo}`,
+		contentUrl: `${siteConfig.origin}${siteConfig.logo}`,
 	},
 	image: { "@id": `${origin}/#logo` },
 	sameAs: siteConfig.organization.profiles.map((p) => p.url),

@@ -8,8 +8,9 @@ export const metadata = {
 };
 
 /**
- * The 404, which GitHub Pages serves from the exported 404.html. Old links land here, so it
- * offers the two ways back in: the home page and the docs index. Cmd+K search works here too.
+ * The exported 404.html. avytrix.dev serves its own 404 at the root, so this one is only reached
+ * on a local or standalone serve. It offers the two ways back in: the home page and the docs
+ * index. Cmd+K search works here too.
  */
 export default function NotFound() {
 	return (

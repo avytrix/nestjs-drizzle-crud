@@ -4,6 +4,12 @@ import { ArrowRight } from "lucide-react";
 // Newest first; the top banner announces RELEASES[0].
 export const RELEASES = [
 	{
+		version: "3.8.3",
+		date: "Nov 16, 2026",
+		title: "The docs have a new home",
+		body: "The docs moved to avytrix.dev/opensource/nestjs-drizzle-crud. The old docs subdomain is gone and does not redirect, so update your bookmarks. The package code is the same as 3.8.2; only the docs links and package metadata changed.",
+	},
+	{
 		version: "3.8.2",
 		date: "Nov 4, 2026",
 		title: "Keys compared by the database",

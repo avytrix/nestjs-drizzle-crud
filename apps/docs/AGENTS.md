@@ -2,8 +2,9 @@
 
 Documentation site for [`nestjs-drizzle-crud`](https://www.npmjs.com/package/nestjs-drizzle-crud)
 (version: `lib/seo.ts::siteConfig.version`). Next.js 16 + Fumadocs, **static-exported**
-(`output: "export"`) and deployed to **GitHub Pages** via `.github/workflows/deploy-docs.yml`
-on push to `main`. Lives at `apps/docs/` in the `nestjs-drizzle-crud` monorepo (pnpm workspace +
+(`output: "export"`) and served by avytrix.dev at
+[avytrix.dev/opensource/nestjs-drizzle-crud](https://avytrix.dev/opensource/nestjs-drizzle-crud/),
+whose CI builds it from `main` and copies `out/` under that path. Lives at `apps/docs/` in the `nestjs-drizzle-crud` monorepo (pnpm workspace +
 Turborepo).
 
 Repo-wide rules are in the root [`AGENTS.md`](../../AGENTS.md), including the
@@ -22,8 +23,9 @@ app/                       App Router (Next.js 16)
   llms.mdx/docs/           One page as Markdown: /llms.mdx/docs/<slug>/content.md
   og/docs/                 Per-page sharing card: /og/docs/<slug>/image.png
   opengraph-image.tsx      Site-wide sharing card (same renderer, lib/og.tsx)
-  not-found.tsx            The 404 GitHub Pages serves
-  sitemap.ts, robots.ts    Metadata routes; sitemap lastmod comes from git
+  not-found.tsx            404 page (exported, but avytrix.dev serves its own root 404)
+  sitemap.ts               <basePath>/sitemap.xml; lastmod comes from git. No robots.ts: the
+                           only robots.txt is avytrix.dev's, which points at this sitemap
   global.css               The theme (tokens, prose rhythm, dark code blocks, assistant motion)
 components/
   docs-shell.tsx           Notebook DocsLayout + sponsor card + assistant panel
@@ -93,14 +95,19 @@ sections, a `PropsTable` per option set, titled code blocks, `## Common question
 `Accordions` (the page's FAQPage schema is extracted from them by `lib/page-schema.ts`, so only
 write questions the page answers) and `## Next steps` as `Cards`.
 
-- URLs: use `absoluteUrl()` from `lib/seo.ts` for anything absolute. It returns the trailing-slash
-  form the export serves; a URL without the slash is a 301 on GitHub Pages.
+- URLs: use `absoluteUrl()` from `lib/seo.ts` for anything absolute. It returns origin + basePath +
+  path in the trailing-slash form the export serves; a URL without the slash is a 301 on GitHub Pages.
+- Site paths: the site lives under a basePath (`/opensource/nestjs-drizzle-crud`) and the root
+  belongs to avytrix.dev. `next/link`, Fumadocs layout links, metadata and file-based icons get the
+  prefix from Next. Anything else (a plain `<a>` or `<img>`, a `fetch`, a URL handed to a Fumadocs
+  component that only knows Vite's base) goes through `withBasePath()` from `lib/seo.ts`.
 - Links to avytrix.dev go through `avytrixUrl(path, campaign)` in code, or carry
   `?utm_source=nestjs-drizzle-crud&utm_medium=docs&utm_campaign=<page-slug>` in MDX.
-- `scripts/seo_check.py` (ported from avytrix.dev) runs on `out/` in CI and before every deploy:
+- `scripts/seo_check.py` (ported from avytrix.dev) runs on `out/` in CI and in avytrix.dev's deploy:
   title and description limits, uniqueness, one H1, no skipped heading level, one JSON-LD
   `@graph`, FAQ and HowTo text visible on the page, canonical equal to the sitemap entry, no
-  redirecting URL anywhere, image alt and size, no em or en dash in rendered text. Run it locally
+  redirecting URL anywhere, image alt and size, no em or en dash in rendered text, no site path
+  outside the basePath, and no robots.txt in the export. Run it locally
   with `python3 scripts/seo_check.py` after `pnpm build`.
 
 ## Code-fence accent convention
@@ -158,15 +165,31 @@ pnpm dev                                          # :3000 (root `dev` runs this 
 The build uses webpack, not Turbopack: Turbopack emits the assistant's `new Worker(new URL(...))`
 as a raw `.ts` asset instead of compiling it.
 
-Deploy is automatic: pushing to `main` runs `.github/workflows/deploy-docs.yml`, which checks out
-full history (page dates and the docs changelog come from git), builds the library first
-(Twoslash needs its types), exports the site, and publishes `apps/docs/out` to GitHub Pages. The
-workflow copies the root `CNAME` into the output and adds `.nojekyll`, so the site serves at
-[crud.avytrix.dev](https://crud.avytrix.dev).
+Nothing deploys from this repo. avytrix.dev's CI checks out `main` with full history (page dates
+and the docs changelog come from git), then runs at the repo root:
 
-Env: `NEXT_PUBLIC_SITE_URL` (consumed by `lib/seo.ts` and everything built on `siteConfig.url`);
-the workflow sets it from `CNAME`. `NEXT_PUBLIC_BASE_PATH` stays empty because the custom domain
-serves at root.
+```bash
+pnpm install --frozen-lockfile
+NEXT_PUBLIC_SITE_URL=https://avytrix.dev NEXT_PUBLIC_BASE_PATH=/opensource/nestjs-drizzle-crud \
+  pnpm turbo run build --filter=nestjs-drizzle-crud-docs
+NEXT_PUBLIC_SITE_URL=https://avytrix.dev NEXT_PUBLIC_BASE_PATH=/opensource/nestjs-drizzle-crud \
+  python3 apps/docs/scripts/seo_check.py apps/docs/out
+```
+
+and copies `apps/docs/out/*` to `/opensource/nestjs-drizzle-crud/` in its own site. Turbo builds
+the library first (Twoslash needs its types). `.github/workflows/deploy-docs.yml` runs the same
+commands on every PR and push to `main`, so treat them as a contract: do not rename the package,
+the output folder or the env vars without changing avytrix.dev at the same time.
+
+Env: `NEXT_PUBLIC_SITE_URL` is the origin only (default `https://avytrix.dev`) and
+`NEXT_PUBLIC_BASE_PATH` the path prefix (default `/opensource/nestjs-drizzle-crud`), so a plain
+`pnpm build` produces the production site. `next.config.mjs` sets the basePath and passes both to
+the browser bundle; `lib/seo.ts` builds `siteConfig.url` (origin + basePath) from them;
+`scripts/build-search-index.mjs` and `scripts/seo_check.py` read the same variables with the same
+defaults.
+
+To check a build the way it is served, copy `out/` into `<tmp>/opensource/nestjs-drizzle-crud/`,
+run `python3 -m http.server` in `<tmp>` and open `http://localhost:8000/opensource/nestjs-drizzle-crud/`.
 
 ## Gotchas
 

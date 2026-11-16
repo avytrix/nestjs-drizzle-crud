@@ -5,8 +5,8 @@ import { siteConfig } from "./seo";
  * When a docs page last changed, read from git at build time.
  *
  * Nothing here is hand maintained, because a hand-kept "last updated" is wrong the first time
- * someone forgets it. It needs real history: deploy-docs.yml checks out with `fetch-depth: 0`
- * for this. In a shallow clone (CI's verify job) the dates are missing or wrong-looking, and a
+ * someone forgets it. It needs real history: deploy-docs.yml and avytrix.dev's CI check out with
+ * `fetch-depth: 0` for this. In a shallow clone (CI's verify job) the dates are missing or wrong-looking, and a
  * missing date renders nothing rather than a guess.
  *
  * Paths are relative to apps/docs, which is the working directory of `next build`.

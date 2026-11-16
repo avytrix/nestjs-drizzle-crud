@@ -36,10 +36,15 @@ export const NOTES_FILE = join(ROOT, "lib", "assistant", "page-notes.json");
 export const MODEL = "Xenova/all-MiniLM-L6-v2";
 export const DIMENSIONS = 384;
 
-/** Links inside chunks are made absolute against the live site. */
-export const ORIGIN = (
-	process.env.NEXT_PUBLIC_SITE_URL ?? "https://crud.avytrix.dev"
-).replace(/\/+$/, "");
+/**
+ * Links inside chunks are made absolute against the live site: origin + basePath, with the
+ * same defaults as next.config.mjs.
+ */
+export const ORIGIN = `${(
+	process.env.NEXT_PUBLIC_SITE_URL ?? "https://avytrix.dev"
+).replace(/\/+$/, "")}${(
+	process.env.NEXT_PUBLIC_BASE_PATH ?? "/opensource/nestjs-drizzle-crud"
+).replace(/\/+$/, "")}`;
 
 /** Every page, chunked. Shared with the verify and eval scripts. */
 export function allChunks(pages) {

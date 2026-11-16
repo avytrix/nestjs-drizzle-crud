@@ -4,12 +4,19 @@
 Ported from avytrix.dev (my-avytrix/scripts/seo_check.py), which implements section 8 of the
 SEO and AEO engineering standard. Adapted for this site: trailing-slash routes
 (`docs/<page>/index.html`), the "| Nestjs Drizzle" title suffix, external links in llms.txt,
-and extra gates: no em or en dashes in rendered text; llms-full.txt and security.txt present;
-and one URL form everywhere: every sitemap <loc> equals its page's canonical, and no sitemap
-entry, canonical, JSON-LD URL, internal link or llms link would be answered with a redirect.
+and extra gates: no em or en dashes in rendered text; llms-full.txt present; one URL form
+everywhere: every sitemap <loc> equals its page's canonical, and no sitemap entry, canonical,
+JSON-LD URL, internal link or llms link would be answered with a redirect; and every site path
+an HTML file references sits under the basePath.
+
+The site is served under a path of avytrix.dev, which owns the root: robots.txt and the 404 page
+are avytrix.dev's, so this export must not emit a robots.txt, and a root path such as `/docs/`
+or `/_next/...` would 404 there.
 
 Usage: python3 apps/docs/scripts/seo_check.py [out_dir]   (exits 1 on any failure)
-The origin comes from NEXT_PUBLIC_SITE_URL and defaults to https://crud.avytrix.dev.
+The origin comes from NEXT_PUBLIC_SITE_URL (default https://avytrix.dev) and the path prefix from
+NEXT_PUBLIC_BASE_PATH (default /opensource/nestjs-drizzle-crud), the same defaults as
+next.config.mjs.
 """
 import json
 import os
@@ -19,7 +26,9 @@ from collections import defaultdict
 from html.parser import HTMLParser
 from pathlib import Path
 
-ORIGIN = (os.environ.get("NEXT_PUBLIC_SITE_URL") or "https://crud.avytrix.dev").rstrip("/")
+ORIGIN = (os.environ.get("NEXT_PUBLIC_SITE_URL") or "https://avytrix.dev").rstrip("/")
+BASE = os.environ.get("NEXT_PUBLIC_BASE_PATH", "/opensource/nestjs-drizzle-crud").rstrip("/")
+SITE = ORIGIN + BASE  # every page URL starts with this
 SUFFIX = " | Nestjs Drizzle"  # siteConfig.displayName in apps/docs/lib/seo.ts
 GENERIC_ANCHORS = {"click here", "here", "read more", "link", "more", "learn more"}
 ROBOTS_INDEX = "index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1"
@@ -38,12 +47,16 @@ class Page(HTMLParser):
         self.imgs = []
         self.anchors = []
         self.hrefs = []
+        self.refs = []  # every href and src, on any tag
         self.text = []
         self._stack = []  # tags whose text we're collecting
         self._buf = defaultdict(str)
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
+        for key in ("href", "src"):
+            if a.get(key):
+                self.refs.append(a[key])
         if tag == "html":
             self.lang = a.get("lang")
         elif tag == "meta":
@@ -120,7 +133,7 @@ def redirects(url):
 def url_for(out, path):
     rel = path.relative_to(out).as_posix()
     rel = re.sub(r"(^|/)index\.html$", "", rel).removesuffix(".html")
-    return f"{ORIGIN}/{rel}".rstrip("/")
+    return f"{SITE}/{rel}".rstrip("/")
 
 
 def check(out):
@@ -152,8 +165,8 @@ def check(out):
             e(f"description too wide for search results: {px:.0f}px (max 990, Arial 14px)")
         # Canonical
         c = p.canonical or ""
-        if not c.startswith(ORIGIN):
-            e(f"canonical {c!r} not on {ORIGIN}")
+        if not c.startswith(SITE):
+            e(f"canonical {c!r} not on {SITE}")
         elif c.rstrip("/") != url:
             e(f"canonical {c!r} is not self-referential")
         if p.meta.get("og:url") and p.meta["og:url"].rstrip("/") != c.rstrip("/"):
@@ -189,8 +202,13 @@ def check(out):
                 e(f"generic anchor text {label!r}")
         # One URL form: no same-site link that GitHub Pages would redirect
         for href in p.hrefs:
-            if (href.startswith("/") or href.startswith(ORIGIN)) and redirects(href):
+            if (href.startswith("/") or href.startswith(SITE)) and redirects(href):
                 e(f"internal link {href!r} would redirect (add the trailing slash)")
+                break
+        # Under the basePath: the root belongs to avytrix.dev
+        for ref in p.refs:
+            if ref.startswith("/") and not ref.startswith("//") and BASE and not (ref == BASE or ref.startswith(BASE + "/")):
+                e(f"site path {ref!r} is outside the basePath {BASE!r}")
                 break
         if c and redirects(c):
             e(f"canonical {c!r} would redirect")
@@ -212,7 +230,7 @@ def check(out):
             if "@graph" not in data:
                 e("JSON-LD has no @graph")
             for u in re.findall(r'"(?:url|item|@id)":\s*"([^"]+)"', raw):
-                if u.startswith(ORIGIN) and redirects(u):
+                if u.startswith(SITE) and redirects(u):
                     e(f"JSON-LD URL {u!r} would redirect")
             nodes = data.get("@graph", [data])
             ids = [n["@id"] for n in nodes if "@id" in n]
@@ -228,7 +246,7 @@ def check(out):
                     for s in n.get("step", []):
                         if squash(s["name"]) not in flat:
                             e(f"HowTo step not visible on page: {s['name'][:60]!r}")
-                if n.get("@type") == "BreadcrumbList" and url == ORIGIN:
+                if n.get("@type") == "BreadcrumbList" and url == SITE:
                     e("home page carries a BreadcrumbList")
 
     for key, vals in seen.items():
@@ -237,9 +255,11 @@ def check(out):
                 errors.append(f"duplicate {key} {val[:60]!r} on {urls}")
 
     # Crawl files
-    for name in ("robots.txt", "sitemap.xml", "llms.txt", "llms-full.txt", ".well-known/security.txt"):
+    for name in ("sitemap.xml", "llms.txt", "llms-full.txt"):
         if not (out / name).exists():
             errors.append(f"missing /{name}")
+    if (out / "robots.txt").exists():
+        errors.append("robots.txt emitted: avytrix.dev serves the only one, at its root")
     sm = out / "sitemap.xml"
     if sm.exists():
         locs = re.findall(r"<loc>(.*?)</loc>", sm.read_text())
@@ -257,23 +277,20 @@ def check(out):
         for url in sorted(missing):
             if "noindex" not in pages[url].meta.get("robots", ""):
                 errors.append(f"sitemap: indexable {url} missing")
-    robots = out / "robots.txt"
-    if robots.exists() and f"Sitemap: {ORIGIN}/sitemap.xml" not in robots.read_text():
-        errors.append("robots.txt does not name the absolute sitemap URL")
     llms = out / "llms.txt"
     if llms.exists():
         text = llms.read_text()
         for link in re.findall(r"\]\((.*?)\)", text):
-            if link.startswith(ORIGIN) and link.rstrip("/") not in pages:
+            if link.startswith(SITE) and link.rstrip("/") not in pages:
                 errors.append(f"llms.txt links to non-page {link}")
-            elif link.startswith(ORIGIN) and redirects(link):
+            elif link.startswith(SITE) and redirects(link):
                 errors.append(f"llms.txt link {link} would redirect")
         if m := DASHES.search(text):
             errors.append(f"llms.txt has a dash: {text[max(0, m.start() - 40):m.end() + 40]!r}")
 
     full = out / "llms-full.txt"
     if full.exists():
-        for link in sorted(set(re.findall(r"\]\((%s[^)\s]*)\)" % re.escape(ORIGIN), full.read_text()))):
+        for link in sorted(set(re.findall(r"\]\((%s[^)\s]*)\)" % re.escape(SITE), full.read_text()))):
             if redirects(link):
                 errors.append(f"llms-full.txt link {link} would redirect")
                 break
