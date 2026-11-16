@@ -13,12 +13,12 @@
 >
 > Or let the agent read these docs on demand: `npx -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp` is an
 > MCP server shipped with the package. See
-> [crud.avytrix.dev/docs/ai-agents](https://crud.avytrix.dev/docs/ai-agents).
+> [avytrix.dev/opensource/nestjs-drizzle-crud/docs/ai-agents](https://avytrix.dev/opensource/nestjs-drizzle-crud/docs/ai-agents).
 >
 > To *contribute to* the package itself, see
 > [CONTRIBUTING.md](https://github.com/avytrix/nestjs-drizzle-crud/blob/main/CONTRIBUTING.md)
 > and [AGENTS.md](https://github.com/avytrix/nestjs-drizzle-crud/blob/main/AGENTS.md).
-> Full docs: [crud.avytrix.dev](https://crud.avytrix.dev).
+> Full docs: [avytrix.dev/opensource/nestjs-drizzle-crud](https://avytrix.dev/opensource/nestjs-drizzle-crud/).
 
 You are a backend engineer building NestJS APIs on Drizzle ORM. Your job is to
 ship endpoints that are type safe, consistent and production ready by leaning on
@@ -193,7 +193,7 @@ case-insensitive), and on PostgreSQL only `arrayContains`, `arrayOverlaps` and
 `jsonContains`. Any other operator is a 400. A bare string is an exact match,
 not a pattern, and `%` in it is a literal character. On a text column it is
 `lower(col) = lower($1)` in `findAll` and `count` (index `lower(col)`), but a
-plain, case-sensitive `=` in `findOne`. https://crud.avytrix.dev/docs/indexes/
+plain, case-sensitive `=` in `findOne`. https://avytrix.dev/opensource/nestjs-drizzle-crud/docs/indexes/
 lists the index each query shape needs; the package creates none. `isNull` and `isNotNull`
 take `true` / `false` or the strings `"true"` / `"false"`.
 

@@ -2,7 +2,7 @@ import { docs } from "../.source/server";
 import { llms, loader } from "fumadocs-core/source";
 import { icons } from "lucide-react";
 import { createElement } from "react";
-import { absoluteUrl } from "./seo";
+import { absoluteUrl, withBasePath } from "./seo";
 
 /** A lucide icon by name, for frontmatter `icon:` (sidebar and page header) and meta.json. */
 export function lucideIcon(name: string | undefined) {
@@ -29,13 +29,16 @@ export const docsLlms = llms(source, {
 ${await page.data.getText("processed")}`,
 });
 
-/** Where a page's Markdown lives: /llms.mdx/docs/<slug>/content.md */
+/**
+ * Where a page's Markdown lives: /llms.mdx/docs/<slug>/content.md. `markdownUrl` carries the
+ * basePath because the Fumadocs page actions fetch and link it as given.
+ */
 export function markdownSegments(page: { slugs: string[] }) {
 	return [...page.slugs, "content.md"];
 }
 
 export function markdownUrl(page: { slugs: string[] }) {
-	return `/llms.mdx/docs/${markdownSegments(page).join("/")}`;
+	return withBasePath(`/llms.mdx/docs/${markdownSegments(page).join("/")}`);
 }
 
 /** Where a page's sharing card lives: /og/docs/<slug>/image.png */

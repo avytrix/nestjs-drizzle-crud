@@ -1,6 +1,6 @@
 # nestjs-drizzle-crud
 
-[![docs](https://img.shields.io/badge/docs-crud.avytrix.dev-E0234E)](https://crud.avytrix.dev)
+[![docs](https://img.shields.io/badge/docs-avytrix.dev-E0234E)](https://avytrix.dev/opensource/nestjs-drizzle-crud/)
 [![npm](https://img.shields.io/npm/v/@avytrix/nestjs-drizzle-crud?color=E0234E)](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud)
 [![license](https://img.shields.io/npm/l/@avytrix/nestjs-drizzle-crud)](./LICENSE)
 [![npm downloads](https://img.shields.io/npm/dw/@avytrix/nestjs-drizzle-crud?color=E0234E)](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud)
@@ -8,7 +8,7 @@
 [![CI](https://github.com/avytrix/nestjs-drizzle-crud/actions/workflows/ci.yml/badge.svg)](https://github.com/avytrix/nestjs-drizzle-crud/actions/workflows/ci.yml)
 [![Sponsor @avytrix](https://img.shields.io/badge/Sponsor-%40avytrix-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/avytrix)
 
-Built and maintained by **[Avytrix Technologies](https://avytrix.dev/?utm_source=nestjs-drizzle-crud&utm_medium=docs&utm_campaign=readme)**. Need help shipping? [Hire the team behind the library](https://crud.avytrix.dev/docs/commercial-support/).
+Built and maintained by **[Avytrix Technologies](https://avytrix.dev/?utm_source=nestjs-drizzle-crud&utm_medium=docs&utm_campaign=readme)**. Need help shipping? [Hire the team behind the library](https://avytrix.dev/opensource/nestjs-drizzle-crud/docs/commercial-support/).
 
 ## ❤️ Sponsoring is what keeps this free
 
@@ -20,7 +20,7 @@ and TypeScript releases takes steady work.
 
 **Even $1 a month helps.** It pays for bug fixes, new guides and the next release.
 
-> Sponsors are listed on the [sponsor page](https://crud.avytrix.dev/docs/sponsor).
+> Sponsors are listed on the [sponsor page](https://avytrix.dev/opensource/nestjs-drizzle-crud/docs/sponsor).
 
 ### [Sponsor on GitHub →](https://github.com/sponsors/avytrix) &nbsp;·&nbsp; thank you
 
@@ -32,7 +32,7 @@ type-safe CRUD for [Drizzle ORM](https://orm.drizzle.team/) in
 
 It uses Turborepo, pnpm and TypeScript 7, with [Biome](https://biomejs.dev/) for lint and format.
 
-**Docs:** [crud.avytrix.dev](https://crud.avytrix.dev) ·
+**Docs:** [avytrix.dev/opensource/nestjs-drizzle-crud](https://avytrix.dev/opensource/nestjs-drizzle-crud/) ·
 **npm:** [@avytrix/nestjs-drizzle-crud](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud) ·
 **Sponsor:** [github.com/sponsors/avytrix](https://github.com/sponsors/avytrix)
 
@@ -63,7 +63,7 @@ export class UsersService extends SqlBaseCrudService<
 DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
 ```
 
-Guides, the API reference and an FAQ are at [crud.avytrix.dev](https://crud.avytrix.dev).
+Guides, the API reference and an FAQ are at [avytrix.dev/opensource/nestjs-drizzle-crud](https://avytrix.dev/opensource/nestjs-drizzle-crud/).
 
 ## Layout
 
@@ -71,7 +71,7 @@ Guides, the API reference and an FAQ are at [crud.avytrix.dev](https://crud.avyt
 packages/
   nestjs-drizzle-crud/   The published npm package (the only public artifact)
 apps/
-  docs/                  Next.js 16 + Fumadocs docs site → GitHub Pages (static export)
+  docs/                  Next.js 16 + Fumadocs docs site (static export, served by avytrix.dev)
   api/                   Example NestJS 11 app; doubles as the Playwright e2e testbed
 ```
 
@@ -125,7 +125,7 @@ cp node_modules/@avytrix/nestjs-drizzle-crud/CLAUDE.template.md ./CLAUDE.md   # 
 
 The package also ships an MCP server, so an agent can search the docs while it
 works: `npx -p @avytrix/nestjs-drizzle-crud nestjs-drizzle-crud-mcp`. Setup per client is in
-[the AI agents guide](https://crud.avytrix.dev/docs/ai-agents).
+[the AI agents guide](https://avytrix.dev/opensource/nestjs-drizzle-crud/docs/ai-agents).
 
 ## TypeScript 7 toolchain notes
 
@@ -166,9 +166,11 @@ real connection string is for `pnpm dev:api` only.
 ## CI / CD
 
 - **CI** (`.github/workflows/ci.yml`): lint, typecheck, build and test on push and PR.
-- **Docs** (`deploy-docs.yml`): static export to GitHub Pages on push to `main`,
-  served at [crud.avytrix.dev](https://crud.avytrix.dev). One-time setup is
-  Settings → Pages → Source = GitHub Actions. The site has Cmd+K search and an
+- **Docs** (`deploy-docs.yml`): builds the static export and runs the SEO gate on
+  every PR and push to `main`, exactly as avytrix.dev's CI does before it copies
+  `apps/docs/out` into its site at
+  [avytrix.dev/opensource/nestjs-drizzle-crud](https://avytrix.dev/opensource/nestjs-drizzle-crud/).
+  Nothing is deployed from this repo. The site has Cmd+K search and an
   "Ask the docs" assistant that runs entirely in the browser.
 - **Release** (`release.yml`): on a `v*` tag, re-runs the verify set and publishes
   [`@avytrix/nestjs-drizzle-crud`](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud) to npm

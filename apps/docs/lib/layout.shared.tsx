@@ -67,7 +67,7 @@ export function baseOptions(): BaseLayoutProps {
 				label: siteConfig.organization.name,
 				icon: <Globe className="text-fd-primary" />,
 				text: siteConfig.organization.name,
-				url: avytrixUrl("/", "header"),
+				url: avytrixUrl("/opensource", "header"),
 				external: true,
 			},
 			// Our own mark rather than `githubUrl`: Fumadocs renders that one as an unlabelled

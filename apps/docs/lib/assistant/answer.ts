@@ -1,3 +1,4 @@
+import { withBasePath } from "../seo";
 import type { Hit } from "./retrieve";
 
 /**
@@ -41,8 +42,11 @@ function excerpt(text: string, max = 520): string {
 	return `${stop > max * 0.5 ? cut.slice(0, stop + 1) : cut}…`;
 }
 
+// The index keys pages by site path; a link in the panel is a plain <a>, so it needs the basePath.
 const link = (h: Hit) =>
-	h.chunk.anchor ? `${h.chunk.url}#${h.chunk.anchor}` : h.chunk.url;
+	withBasePath(
+		h.chunk.anchor ? `${h.chunk.url}#${h.chunk.anchor}` : h.chunk.url,
+	);
 
 export function compose(hits: Hit[]): Answer {
 	const [top, ...rest] = hits;

@@ -143,7 +143,7 @@ do `softDelete`, `restore` and `delete`; no public API, override point or messag
   coalesced for several. On 200,000 rows a search on the stored column with its index took
   0.6 ms, against 600 to 900 ms computing `to_tsvector` per row without one. The full-text page
   shows the index for each shape.
-- A docs page, [Database indexes for fast Drizzle queries](https://crud.avytrix.dev/docs/indexes/),
+- A docs page, [Database indexes for fast Drizzle queries](https://avytrix.dev/opensource/nestjs-drizzle-crud/docs/indexes/),
   lists the index each query shape needs: `lower(col)` (or `citext`, or `caseSensitive: true`) for
   the default case-insensitive equality, the sort columns plus the primary key for cursor pages,
   GIN for full-text search, `pg_trgm` for `contains` and `search`, foreign keys and both join

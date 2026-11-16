@@ -69,7 +69,7 @@
 	"bugs": {
 		"url": "https://github.com/avytrix/nestjs-drizzle-crud/issues"
 	},
-	"homepage": "https://crud.avytrix.dev",
+	"homepage": "https://avytrix.dev/opensource/nestjs-drizzle-crud/",
 	"funding": {
 		"type": "github",
 		"url": "https://github.com/sponsors/avytrix"

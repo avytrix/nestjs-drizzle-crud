@@ -1,6 +1,6 @@
 # nestjs-drizzle-crud
 
-[![docs](https://img.shields.io/badge/docs-crud.avytrix.dev-E0234E)](https://crud.avytrix.dev)
+[![docs](https://img.shields.io/badge/docs-avytrix.dev-E0234E)](https://avytrix.dev/opensource/nestjs-drizzle-crud/)
 [![npm](https://img.shields.io/npm/v/@avytrix/nestjs-drizzle-crud?color=E0234E)](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud)
 [![license](https://img.shields.io/npm/l/@avytrix/nestjs-drizzle-crud)](./LICENSE)
 [![npm downloads](https://img.shields.io/npm/dw/@avytrix/nestjs-drizzle-crud?color=E0234E)](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud)
@@ -32,9 +32,9 @@ export class UsersService extends SqlBaseCrudService<
 DrizzleCrudModule.forFeature([{ service: UsersService, table: users }]);
 ```
 
-**[Read the docs at crud.avytrix.dev](https://crud.avytrix.dev)**, starting with the [quick start](https://crud.avytrix.dev/docs/quick-start/). Also on [npm](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud) and [GitHub](https://github.com/avytrix/nestjs-drizzle-crud).
+**[Read the docs at avytrix.dev/opensource/nestjs-drizzle-crud](https://avytrix.dev/opensource/nestjs-drizzle-crud/)**, starting with the [quick start](https://avytrix.dev/opensource/nestjs-drizzle-crud/docs/quick-start/). Also on [npm](https://www.npmjs.com/package/@avytrix/nestjs-drizzle-crud) and [GitHub](https://github.com/avytrix/nestjs-drizzle-crud).
 
-Built and maintained by **[Avytrix Technologies](https://avytrix.dev/?utm_source=nestjs-drizzle-crud&utm_medium=docs&utm_campaign=readme)**. Need help shipping? [Hire the team behind the library](https://crud.avytrix.dev/docs/commercial-support/).
+Built and maintained by **[Avytrix Technologies](https://avytrix.dev/?utm_source=nestjs-drizzle-crud&utm_medium=docs&utm_campaign=readme)**. Need help shipping? [Hire the team behind the library](https://avytrix.dev/opensource/nestjs-drizzle-crud/docs/commercial-support/).
 
 ## ❤️ Sponsoring is what keeps this package free
 
@@ -48,7 +48,7 @@ sponsors are what make keeping it free sustainable.
 
 **Even $1 a month helps.** It funds bug fixes, new guides, and the next release.
 
-> Sponsors get a spot on the [sponsor page](https://crud.avytrix.dev/docs/sponsor/)
+> Sponsors get a spot on the [sponsor page](https://avytrix.dev/opensource/nestjs-drizzle-crud/docs/sponsor/)
 > and our thanks.
 
 ### 👉 [Sponsor on GitHub →](https://github.com/sponsors/avytrix) &nbsp;·&nbsp; thank you 🙏
@@ -572,7 +572,7 @@ instead of returning an arbitrary row.
 `findOne` is the exception: it compiles a string to a plain `=`, so it is
 case-sensitive whatever `sql.caseSensitive` says. A plain index on the column
 cannot serve `lower(column) = lower($1)`; create one on `lower(column)`. The
-[indexes page](https://crud.avytrix.dev/docs/indexes/) lists the index each
+[indexes page](https://avytrix.dev/opensource/nestjs-drizzle-crud/docs/indexes/) lists the index each
 filter, sort, search and relation needs.
 
 ---
@@ -1263,7 +1263,7 @@ Windsurf, Gemini CLI and Cline. VS Code and Copilot use `.vscode/mcp.json` with
 the entries under `servers`; Codex uses `[mcp_servers.*]` in
 `~/.codex/config.toml`; Zed uses a `context_servers` entry. The server is
 read-only and never touches your database. Full setup:
-[crud.avytrix.dev/docs/ai-agents](https://crud.avytrix.dev/docs/ai-agents).
+[avytrix.dev/opensource/nestjs-drizzle-crud/docs/ai-agents](https://avytrix.dev/opensource/nestjs-drizzle-crud/docs/ai-agents).
 
 ### Facts for code generation
 
@@ -1350,8 +1350,8 @@ interface SqlCrudConfig {
 
 ## Support
 
-- **Docs:** [crud.avytrix.dev](https://crud.avytrix.dev), including a
-  [FAQ and where-to-ask guide](https://crud.avytrix.dev/docs/getting-help).
+- **Docs:** [avytrix.dev/opensource/nestjs-drizzle-crud](https://avytrix.dev/opensource/nestjs-drizzle-crud/), including a
+  [FAQ and where-to-ask guide](https://avytrix.dev/opensource/nestjs-drizzle-crud/docs/getting-help).
 - **Questions:** [GitHub Discussions](https://github.com/avytrix/nestjs-drizzle-crud/discussions).
 - **Bugs:** [open an issue](https://github.com/avytrix/nestjs-drizzle-crud/issues/new/choose)
   with the version, dialect, table definition and the call you made.

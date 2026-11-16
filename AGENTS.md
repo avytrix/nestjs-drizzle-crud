@@ -7,7 +7,7 @@ Deterministic rules for AI agents working in this repo. Read this first.
 Turborepo + pnpm monorepo. One published library, two private apps:
 
 - `packages/nestjs-drizzle-crud` (npm: `@avytrix/nestjs-drizzle-crud`), the only public artifact. Built with `tsc` to `dist/`.
-- `apps/docs`, Next.js 16 + Fumadocs, static-exported to GitHub Pages at [crud.avytrix.dev](https://crud.avytrix.dev). This is what `pnpm dev` runs, on **:3000**. Its own rules live in `apps/docs/AGENTS.md`.
+- `apps/docs`, Next.js 16 + Fumadocs, static-exported and served by avytrix.dev at [avytrix.dev/opensource/nestjs-drizzle-crud](https://avytrix.dev/opensource/nestjs-drizzle-crud/). This is what `pnpm dev` runs, on **:3000**. Its own rules live in `apps/docs/AGENTS.md`.
 - `apps/api`, an example NestJS 11 app that doubles as the e2e testbed. `pnpm dev:api`, on **:4000**. `pnpm dev:all` runs both. Its e2e suite is Playwright over real HTTP against **PGlite** (Postgres compiled to WASM, in-process), so it needs no container, no credentials and no browser download.
 
 Node >= 20, pnpm 10, TypeScript 7 (except `apps/docs`, which pins 5.9). Lint and format are Biome, tabs, double quotes, 80 columns.
@@ -161,7 +161,7 @@ Prefer the smallest change that solves the problem. Reach for the standard libra
 
 - **Every workflow pins its actions to a commit SHA**, with the version in a trailing comment. Dependabot bumps them monthly (`chore(ci)` prefix). Never reintroduce a floating `@v4` tag.
 - **CI** (`ci.yml`) runs lint, typecheck, build and test on Node 20 and 24 for every push and PR to `main`. **CodeQL**, **Semgrep**, **Gitleaks** and a production `pnpm audit` run alongside it.
-- **Docs** deploy from `deploy-docs.yml` on push to `main`: a static export to GitHub Pages served at the `CNAME` domain.
+- **Docs** are not deployed from this repo. avytrix.dev's CI checks out `main`, builds `apps/docs` with `NEXT_PUBLIC_SITE_URL=https://avytrix.dev` and `NEXT_PUBLIC_BASE_PATH=/opensource/nestjs-drizzle-crud` (also the defaults), runs the SEO gate and copies `apps/docs/out` into its site under that path. `deploy-docs.yml` runs the same build and gate here on every PR and push to `main`, so a docs change that would break that deploy fails first in this repo.
 - **Releases publish on a `v*` tag**, not on a GitHub Release. The workflow re-runs the verify set, writes the npm token to `~/.npmrc` explicitly (pnpm does not reliably read `NODE_AUTH_TOKEN`), and publishes with provenance:
 
   ```bash
